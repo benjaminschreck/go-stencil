@@ -44,4 +44,4 @@ Thumbs.db
 !examples/**/*.pptx
 !test/**/*.docx
 !test/**/*.pptx
-examples/advanced/output/*
+# examples/advanced/output/*

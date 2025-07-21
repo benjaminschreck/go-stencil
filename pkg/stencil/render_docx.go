@@ -16,6 +16,13 @@ type contentRange struct {
 	tableToPosition map[int]int
 }
 
+// elseBranch represents an else/elsif branch in an if statement
+type elseBranch struct {
+	index      int    // Index of the branch paragraph
+	branchType string // "else", "elsif", "elif", "elseif"
+	condition  string // Condition for elsif branches
+}
+
 // analyzeBodyStructure analyzes the body to understand the relationship between paragraphs and tables
 // This is a simplified version - in production, we'd parse the raw XML to get exact ordering
 func analyzeBodyStructure(body *Body) *contentRange {
@@ -89,6 +96,77 @@ func containsInt(slice []int, item int) bool {
 	return false
 }
 
+// findMatchingEndInElements finds the matching {{end}} for a control structure in elements
+func findMatchingEndInElements(elements []BodyElement, startIdx int) (int, error) {
+	depth := 1
+	for i := startIdx + 1; i < len(elements); i++ {
+		if para, ok := elements[i].(Paragraph); ok {
+			controlType, _ := detectControlStructure(&para)
+			switch controlType {
+			case "for", "if", "unless":
+				depth++
+			case "end":
+				depth--
+				if depth == 0 {
+					return i, nil
+				}
+			}
+		}
+	}
+	return -1, fmt.Errorf("no matching end found")
+}
+
+// findIfStructureInElements finds the structure of an if statement including elsif/else branches
+func findIfStructureInElements(elements []BodyElement, startIdx int) (endIdx int, branches []elseBranch, err error) {
+	depth := 1
+	branches = []elseBranch{}
+	
+	for i := startIdx + 1; i < len(elements); i++ {
+		if para, ok := elements[i].(Paragraph); ok {
+			controlType, condition := detectControlStructure(&para)
+			
+			if depth == 1 {
+				switch controlType {
+				case "elsif", "elseif", "elif":
+					branches = append(branches, elseBranch{
+						index:      i,
+						branchType: "elsif",
+						condition:  condition,
+					})
+				case "else":
+					branches = append(branches, elseBranch{
+						index:      i,
+						branchType: "else",
+						condition:  "",
+					})
+				}
+			}
+			
+			switch controlType {
+			case "for", "if", "unless":
+				depth++
+			case "end":
+				depth--
+				if depth == 0 {
+					return i, branches, nil
+				}
+			}
+		}
+	}
+	
+	return -1, nil, fmt.Errorf("no matching end found")
+}
+
+// renderElementsWithContext renders a slice of elements with the given context
+func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *renderContext) ([]BodyElement, error) {
+	tempBody := &Body{Elements: elements}
+	rendered, err := renderBodyWithElementOrder(tempBody, data, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return rendered.Elements, nil
+}
+
 // mergeConsecutiveRuns merges consecutive runs in a paragraph to handle split template variables
 func mergeConsecutiveRuns(para *Paragraph) {
 	if len(para.Runs) <= 1 {
@@ -130,6 +208,337 @@ func mergeConsecutiveRuns(para *Paragraph) {
 
 // RenderBodyWithControlStructures renders a document body handling control structures
 func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
+	// Check if we should use the new element-order preserving logic
+	if len(body.Elements) > 0 {
+		return renderBodyWithElementOrder(body, data, ctx)
+	}
+	
+	// Fall back to legacy rendering for backward compatibility
+	return renderBodyLegacy(body, data, ctx)
+}
+
+// renderBodyWithElementOrder renders using the new Elements field that preserves order
+func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
+	// First, merge runs in all paragraphs to handle split template variables
+	for _, elem := range body.Elements {
+		if para, ok := elem.(Paragraph); ok {
+			p := para // Create a copy
+			mergeConsecutiveRuns(&p)
+		}
+	}
+	
+	rendered := &Body{
+		Elements: make([]BodyElement, 0),
+	}
+	
+	// Process elements in order
+	i := 0
+	for i < len(body.Elements) {
+		elem := body.Elements[i]
+		
+		switch el := elem.(type) {
+		case Paragraph:
+			para := el
+			
+			// Check if this paragraph contains a control structure
+			controlType, controlContent := detectControlStructure(&para)
+			
+			switch controlType {
+			case "inline-for":
+				// Handle inline for loop (entire loop in one paragraph)
+				renderedParas, err := renderInlineForLoop(&para, controlContent, data, ctx)
+				if err != nil {
+					return nil, err
+				}
+				for _, p := range renderedParas {
+					rendered.Elements = append(rendered.Elements, p)
+				}
+				i++
+				
+			case "for":
+				// Handle for loop
+				endIdx, err := findMatchingEndInElements(body.Elements, i)
+				if err != nil {
+					return nil, fmt.Errorf("no matching {{end}} for {{for}} at element %d", i)
+				}
+				
+				// Parse for loop syntax
+				forNode, err := parseForSyntax(controlContent)
+				if err != nil {
+					return nil, fmt.Errorf("invalid for syntax: %w", err)
+				}
+				
+				// Get the loop body (elements between for and end)
+				loopBody := body.Elements[i+1 : endIdx]
+				
+				// Evaluate the collection
+				collection, err := forNode.Collection.Evaluate(data)
+				if err != nil {
+					return nil, fmt.Errorf("failed to evaluate collection: %w", err)
+				}
+				
+				// Iterate over collection
+				items, err := toSlice(collection)
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert collection to slice: %w", err)
+				}
+				
+				for idx, item := range items {
+					// Create new data context for loop iteration
+					loopData := make(TemplateData)
+					for k, v := range data {
+						loopData[k] = v
+					}
+					loopData[forNode.Variable] = item
+					if forNode.IndexVar != "" {
+						loopData[forNode.IndexVar] = idx
+					}
+					
+					// Render loop body
+					loopRendered, err := renderElementsWithContext(loopBody, loopData, ctx)
+					if err != nil {
+						return nil, err
+					}
+					rendered.Elements = append(rendered.Elements, loopRendered...)
+				}
+				
+				// Skip to after the end marker
+				i = endIdx + 1
+				
+			case "if":
+				// Handle if statement
+				endIdx, elseBranches, err := findIfStructureInElements(body.Elements, i)
+				if err != nil {
+					return nil, fmt.Errorf("no matching {{end}} for {{if}} at element %d", i)
+				}
+				
+				// Parse if condition
+				expr, err := ParseExpression(controlContent)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse if condition: %w", err)
+				}
+				
+				// Evaluate condition
+				condValue, err := expr.Evaluate(data)
+				if err != nil {
+					return nil, fmt.Errorf("failed to evaluate if condition: %w", err)
+				}
+				
+				branchRendered := false
+				
+				if isTruthy(condValue) {
+					// Render the if branch
+					var branchEnd int
+					if len(elseBranches) > 0 {
+						branchEnd = elseBranches[0].index
+					} else {
+						branchEnd = endIdx
+					}
+					
+					branchBody := body.Elements[i+1 : branchEnd]
+					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
+					if err != nil {
+						return nil, err
+					}
+					rendered.Elements = append(rendered.Elements, branchElements...)
+					branchRendered = true
+				} else {
+					// Check elsif branches
+					for j, branch := range elseBranches {
+						if branch.branchType == "elsif" || branch.branchType == "elif" || branch.branchType == "elseif" {
+							expr, err := ParseExpression(branch.condition)
+							if err != nil {
+								return nil, fmt.Errorf("failed to parse elsif condition: %w", err)
+							}
+							
+							condValue, err := expr.Evaluate(data)
+							if err != nil {
+								return nil, fmt.Errorf("failed to evaluate elsif condition: %w", err)
+							}
+							
+							if isTruthy(condValue) {
+								// Render this elsif branch
+								var branchEnd int
+								if j+1 < len(elseBranches) {
+									branchEnd = elseBranches[j+1].index
+								} else {
+									branchEnd = endIdx
+								}
+								
+								branchBody := body.Elements[branch.index+1 : branchEnd]
+								branchElements, err := renderElementsWithContext(branchBody, data, ctx)
+								if err != nil {
+									return nil, err
+								}
+								rendered.Elements = append(rendered.Elements, branchElements...)
+								branchRendered = true
+								break
+							}
+						} else if branch.branchType == "else" && !branchRendered {
+							// Render else branch
+							branchBody := body.Elements[branch.index+1 : endIdx]
+							branchElements, err := renderElementsWithContext(branchBody, data, ctx)
+							if err != nil {
+								return nil, err
+							}
+							rendered.Elements = append(rendered.Elements, branchElements...)
+							break
+						}
+					}
+				}
+				
+				// Skip to after the end marker
+				i = endIdx + 1
+				
+			case "unless":
+				// Handle unless statement (similar to if but inverted)
+				endIdx, elseBranches, err := findIfStructureInElements(body.Elements, i)
+				if err != nil {
+					return nil, fmt.Errorf("no matching {{end}} for {{unless}} at element %d", i)
+				}
+				
+				// Parse unless condition
+				expr, err := ParseExpression(controlContent)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse unless condition: %w", err)
+				}
+				
+				// Evaluate condition
+				condValue, err := expr.Evaluate(data)
+				if err != nil {
+					return nil, fmt.Errorf("failed to evaluate unless condition: %w", err)
+				}
+				
+				// Unless renders if condition is falsy (opposite of if)
+				if !isTruthy(condValue) {
+					// Render the unless branch
+					var branchEnd int
+					if len(elseBranches) > 0 && elseBranches[0].branchType == "else" {
+						branchEnd = elseBranches[0].index
+					} else {
+						branchEnd = endIdx
+					}
+					
+					branchBody := body.Elements[i+1 : branchEnd]
+					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
+					if err != nil {
+						return nil, err
+					}
+					rendered.Elements = append(rendered.Elements, branchElements...)
+				} else if len(elseBranches) > 0 && elseBranches[0].branchType == "else" {
+					// Render else branch
+					branchBody := body.Elements[elseBranches[0].index+1 : endIdx]
+					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
+					if err != nil {
+						return nil, err
+					}
+					rendered.Elements = append(rendered.Elements, branchElements...)
+				}
+				
+				// Skip to after the end marker
+				i = endIdx + 1
+				
+			case "include":
+				// Handle include directive
+				// Parse the fragment name expression
+				expr, err := ParseExpression(controlContent)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse include expression: %w", err)
+				}
+				
+				// Evaluate the fragment name
+				fragmentNameValue, err := expr.Evaluate(data)
+				if err != nil {
+					return nil, fmt.Errorf("failed to evaluate fragment name: %w", err)
+				}
+				
+				fragmentName, ok := fragmentNameValue.(string)
+				if !ok {
+					return nil, fmt.Errorf("fragment name must be a string, got %T", fragmentNameValue)
+				}
+				
+				// Get fragments from context
+				if ctx.fragments == nil {
+					return nil, fmt.Errorf("fragments not available in render context")
+				}
+				
+				// Find the fragment
+				frag, exists := ctx.fragments[fragmentName]
+				if !exists {
+					return nil, fmt.Errorf("fragment not found: %s", fragmentName)
+				}
+				
+				// Render the fragment content
+				if frag.parsed != nil && frag.parsed.Body != nil {
+					// Push fragment to stack for circular reference detection
+					ctx.fragmentStack = append(ctx.fragmentStack, fragmentName)
+					defer func() {
+						ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
+					}()
+					
+					// Check for circular references
+					for _, f := range ctx.fragmentStack[:len(ctx.fragmentStack)-1] {
+						if f == fragmentName {
+							return nil, fmt.Errorf("circular fragment reference detected: %s", fragmentName)
+						}
+					}
+					
+					// Check render depth
+					maxDepth := 10
+					if ctx.renderDepth > 0 {
+						maxDepth = ctx.renderDepth
+					}
+					if len(ctx.fragmentStack) > maxDepth {
+						return nil, fmt.Errorf("maximum render depth exceeded")
+					}
+					
+					// Render the fragment body with the current data context
+					renderedBody, err := RenderBodyWithControlStructures(frag.parsed.Body, data, ctx)
+					if err != nil {
+						return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
+					}
+					
+					// Append the rendered fragment elements
+					rendered.Elements = append(rendered.Elements, renderedBody.Elements...)
+				}
+				i++
+				
+			default:
+				// Regular paragraph, render normally
+				renderedPara, err := RenderParagraphWithContext(&para, data, ctx)
+				if err != nil {
+					return nil, err
+				}
+				rendered.Elements = append(rendered.Elements, *renderedPara)
+				i++
+			}
+			
+		case Table:
+			// Render table with control structures
+			renderedTable, err := RenderTableWithControlStructures(&el, data, ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to render table: %w", err)
+			}
+			rendered.Elements = append(rendered.Elements, *renderedTable)
+			i++
+		}
+	}
+	
+	// Also populate legacy fields for backward compatibility
+	for _, elem := range rendered.Elements {
+		switch el := elem.(type) {
+		case Paragraph:
+			rendered.Paragraphs = append(rendered.Paragraphs, el)
+		case Table:
+			rendered.Tables = append(rendered.Tables, el)
+		}
+	}
+	
+	return rendered, nil
+}
+
+// renderBodyLegacy is the old rendering function for backward compatibility
+func renderBodyLegacy(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
 	// First, merge runs in all paragraphs to handle split template variables
 	for i := range body.Paragraphs {
 		mergeConsecutiveRuns(&body.Paragraphs[i])
@@ -413,6 +822,8 @@ func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderC
 				
 				// Append the rendered fragment paragraphs
 				rendered.Paragraphs = append(rendered.Paragraphs, renderedBody.Paragraphs...)
+				// Also append any tables from the fragment
+				rendered.Tables = append(rendered.Tables, renderedBody.Tables...)
 			}
 			i++
 			
