@@ -1,0 +1,47 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# Build output
+/stencil
+/cmd/stencil/stencil
+/debug/*/main
+/debug/*/*
+
+# IDE files
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+
+# Claude Code settings are tracked
+!.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+*.docx
+*.pptx
+!examples/**/*.docx
+!examples/**/*.pptx
+!test/**/*.docx
+!test/**/*.pptx
+examples/advanced/output/*

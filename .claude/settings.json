@@ -1,0 +1,35 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "#!/bin/bash\n# Run tests after editing Go files\nif echo \"$CLAUDE_FILE_PATHS\" | grep -q '\\.go$'; then\n  echo '🧪 Running tests for modified Go files...'\n  go test ./... -v\n  if [ $? -ne 0 ]; then\n    echo '❌ Tests failed! Please fix the failing tests.'\n    exit 1\n  else\n    echo '✅ All tests passed!'\n  fi\nfi"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command", 
+            "command": "#!/bin/bash\n# Check if we're about to commit\nif echo \"$CLAUDE_USER_PROMPT\" | grep -iE '(commit|git commit)' > /dev/null; then\n  echo '📋 Pre-commit checklist:'\n  echo '  1. Run tests: go test ./... -v'\n  echo '  2. Update README.md if API changed'\n  echo '  3. Update CLAUDE.md if process changed'\n  echo '  4. Add/update godoc comments'\n  echo '  5. Update examples if needed'\nfi"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "#!/bin/bash\n# Documentation review reminder after session\necho ''\necho '📝 Session Complete - Documentation Review:'\necho '====================================='\necho ''\necho 'Please review if any documentation needs updating:'\necho '  - README.md: New features or API changes?'\necho '  - CLAUDE.md: Development process updates?'\necho '  - Package docs: Godoc comments current?'\necho '  - Examples: Do they reflect the current API?'\necho ''\necho 'Recent files modified:'\nfind . -name '*.go' -mmin -60 -type f 2>/dev/null | grep -v '.git' | head -10"
+          }
+        ]
+      }
+    ]
+  }
+}
