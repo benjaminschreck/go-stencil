@@ -57,7 +57,18 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 		if err != nil {
 			return nil, err
 		}
-		rendered.Runs = append(rendered.Runs, *renderedRun)
+		
+		// Check if the run contains OOXML fragments that need to be expanded
+		if renderedRun.Text != nil && ooxmlFragmentRegex.MatchString(renderedRun.Text.Content) {
+			// Process the run to handle OOXML fragments
+			expandedRuns, err := expandOOXMLFragments(renderedRun, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			rendered.Runs = append(rendered.Runs, expandedRuns...)
+		} else {
+			rendered.Runs = append(rendered.Runs, *renderedRun)
+		}
 	}
 	
 	return rendered, nil
@@ -83,47 +94,166 @@ func RenderRunWithContext(run *Run, data TemplateData, ctx *renderContext) (*Run
 		if err != nil {
 			return nil, err
 		}
-		
-		// Check if the rendered text contains OOXML fragment placeholders
-		if ooxmlFragmentRegex.MatchString(renderedText.Content) {
-			// Extract fragments and create separate runs/elements
-			return processOOXMLFragments(rendered, renderedText, data)
-		}
-		
 		rendered.Text = renderedText
 	}
 	
 	return rendered, nil
 }
 
-// processOOXMLFragments processes OOXML fragments in text and creates appropriate elements
-func processOOXMLFragments(run *Run, text *Text, data TemplateData) (*Run, error) {
-	content := text.Content
+// expandOOXMLFragments processes OOXML fragments in a run and returns multiple runs if needed
+func expandOOXMLFragments(run *Run, data TemplateData, ctx *renderContext) ([]Run, error) {
+	content := run.Text.Content
 	
-	// For simplicity, if there's a page break fragment, create a run with just the break
-	if strings.Contains(content, "{{OOXML_FRAGMENT:*stencil.Break}}") {
-		// Remove the placeholder text and set the break
-		cleanContent := ooxmlFragmentRegex.ReplaceAllString(content, "")
-		
-		// If there's remaining text, keep it
-		if strings.TrimSpace(cleanContent) != "" {
-			run.Text = &Text{
-				XMLName: text.XMLName,
-				Space:   text.Space,
-				Content: cleanContent,
-			}
-		} else {
-			run.Text = nil
-		}
-		
-		// Add the page break
-		run.Break = &Break{Type: "page"}
-	} else {
-		// No OOXML fragments, keep the original text
-		run.Text = text
+	// Find all OOXML fragment placeholders
+	matches := ooxmlFragmentRegex.FindAllStringSubmatchIndex(content, -1)
+	if len(matches) == 0 {
+		return []Run{*run}, nil
 	}
 	
-	return run, nil
+	var runs []Run
+	lastEnd := 0
+	
+	for _, match := range matches {
+		// match[0] and match[1] are the start and end of the full match
+		// match[2] and match[3] are the start and end of the submatch (fragment type)
+		fragmentStart := match[0]
+		fragmentEnd := match[1]
+		fragmentType := content[match[2]:match[3]]
+		
+		// Add any text before the fragment as a regular run
+		if fragmentStart > lastEnd {
+			beforeText := content[lastEnd:fragmentStart]
+			if strings.TrimSpace(beforeText) != "" {
+				textRun := Run{
+					Properties: run.Properties,
+					Text: &Text{
+						XMLName: run.Text.XMLName,
+						Space:   run.Text.Space,
+						Content: beforeText,
+					},
+				}
+				runs = append(runs, textRun)
+			}
+		}
+		
+		// Handle the fragment based on its key
+		// Try to retrieve the actual fragment from context
+		var fragmentContent interface{}
+		if ctx != nil && ctx.ooxmlFragments != nil {
+			fragmentContent = ctx.ooxmlFragments[fragmentType]
+		}
+		
+		if fragmentContent != nil {
+			switch content := fragmentContent.(type) {
+			case *Break:
+				// Page break
+				breakRun := Run{
+					Properties: run.Properties,
+					Break:      content,
+				}
+				runs = append(runs, breakRun)
+				
+			case *HTMLRuns:
+				// HTML runs - expand into multiple runs
+				for _, htmlRun := range content.Runs {
+					newRun := Run{
+						Properties: htmlRun.Properties,
+					}
+					
+					// Convert HTML run elements to text/breaks
+					for _, elem := range htmlRun.Content {
+						switch elem.Type {
+						case "text":
+							if newRun.Text == nil {
+								newRun.Text = &Text{
+									XMLName: run.Text.XMLName,
+									Space:   run.Text.Space,
+									Content: elem.Text,
+								}
+							} else {
+								newRun.Text.Content += elem.Text
+							}
+						case "break":
+							// If there's already text, create a new run for the break
+							if newRun.Text != nil {
+								runs = append(runs, newRun)
+								newRun = Run{
+									Properties: htmlRun.Properties,
+									Break:      &Break{}, // Empty break for line break
+								}
+							} else {
+								newRun.Break = &Break{} // Empty break for line break
+							}
+						}
+					}
+					
+					// Add the final run if it has content
+					if newRun.Text != nil || newRun.Break != nil {
+						runs = append(runs, newRun)
+					}
+				}
+				
+			default:
+				// Unknown fragment type, preserve as text
+				fragmentRun := Run{
+					Properties: run.Properties,
+					Text: &Text{
+						XMLName: run.Text.XMLName,
+						Space:   run.Text.Space,
+						Content: fmt.Sprintf("{{OOXML_FRAGMENT:%s}}", fragmentType),
+					},
+				}
+				runs = append(runs, fragmentRun)
+			}
+		} else {
+			// Fragment not found in context - this might be a legacy placeholder
+			// Check if it's one of the known types
+			if fragmentType == "*stencil.Break" {
+				// Legacy page break placeholder
+				breakRun := Run{
+					Properties: run.Properties,
+					Break:      &Break{Type: "page"},
+				}
+				runs = append(runs, breakRun)
+			} else {
+				// Unknown fragment, preserve as text
+				fragmentRun := Run{
+					Properties: run.Properties,
+					Text: &Text{
+						XMLName: run.Text.XMLName,
+						Space:   run.Text.Space,
+						Content: fmt.Sprintf("{{OOXML_FRAGMENT:%s}}", fragmentType),
+					},
+				}
+				runs = append(runs, fragmentRun)
+			}
+		}
+		
+		lastEnd = fragmentEnd
+	}
+	
+	// Add any remaining text after the last fragment
+	if lastEnd < len(content) {
+		afterText := content[lastEnd:]
+		if strings.TrimSpace(afterText) != "" {
+			textRun := Run{
+				Properties: run.Properties,
+				Text: &Text{
+					XMLName: run.Text.XMLName,
+					Space:   run.Text.Space,
+					Content: afterText,
+				},
+			}
+			runs = append(runs, textRun)
+		}
+	}
+	
+	// If no runs were created, return the original run
+	if len(runs) == 0 {
+		return []Run{*run}, nil
+	}
+	
+	return runs, nil
 }
 
 // RenderText renders text content with variable substitution
@@ -152,9 +282,16 @@ func RenderTextWithContext(text *Text, data TemplateData, ctx *renderContext) (*
 				}
 				// Check if the value is an OOXML fragment that needs special handling
 				if fragment, ok := value.(*OOXMLFragment); ok {
-					// For now, we'll just store a placeholder - the actual OOXML injection
-					// will be handled at a higher level in the rendering pipeline
-					result.WriteString(fmt.Sprintf("{{OOXML_FRAGMENT:%T}}", fragment.Content))
+					// Store the fragment in context and create a placeholder
+					var fragmentKey string
+					if ctx != nil && ctx.ooxmlFragments != nil {
+						fragmentKey = fmt.Sprintf("fragment_%d", len(ctx.ooxmlFragments))
+						ctx.ooxmlFragments[fragmentKey] = fragment.Content
+					} else {
+						// Fallback to type-based placeholder when no context
+						fragmentKey = fmt.Sprintf("%T", fragment.Content)
+					}
+					result.WriteString(fmt.Sprintf("{{OOXML_FRAGMENT:%s}}", fragmentKey))
 				} else if marker, ok := value.(*TableRowMarker); ok {
 					// Handle table row markers
 					result.WriteString(fmt.Sprintf("{{TABLE_ROW_MARKER:%s}}", marker.Action))
@@ -187,9 +324,16 @@ func RenderTextWithContext(text *Text, data TemplateData, ctx *renderContext) (*
 				}
 				// Check if the value is an OOXML fragment that needs special handling
 				if fragment, ok := value.(*OOXMLFragment); ok {
-					// For now, we'll just store a placeholder - the actual OOXML injection
-					// will be handled at a higher level in the rendering pipeline
-					result.WriteString(fmt.Sprintf("{{OOXML_FRAGMENT:%T}}", fragment.Content))
+					// Store the fragment in context and create a placeholder
+					var fragmentKey string
+					if ctx != nil && ctx.ooxmlFragments != nil {
+						fragmentKey = fmt.Sprintf("fragment_%d", len(ctx.ooxmlFragments))
+						ctx.ooxmlFragments[fragmentKey] = fragment.Content
+					} else {
+						// Fallback to type-based placeholder when no context
+						fragmentKey = fmt.Sprintf("%T", fragment.Content)
+					}
+					result.WriteString(fmt.Sprintf("{{OOXML_FRAGMENT:%s}}", fragmentKey))
 				} else if marker, ok := value.(*TableRowMarker); ok {
 					// Handle table row markers
 					result.WriteString(fmt.Sprintf("{{TABLE_ROW_MARKER:%s}}", marker.Action))

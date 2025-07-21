@@ -501,7 +501,15 @@ func TestPageBreakRendering(t *testing.T) {
 			if len(para.Runs) == 0 {
 				t.Fatal("No runs in paragraph")
 			}
-			gotText := para.Runs[0].GetText()
+			
+			// Collect all text from all runs
+			var allText strings.Builder
+			for _, run := range para.Runs {
+				if run.Text != nil {
+					allText.WriteString(run.Text.Content)
+				}
+			}
+			gotText := allText.String()
 			if gotText != tt.wantText {
 				t.Errorf("RenderDocument() text = %q, want %q", gotText, tt.wantText)
 			}
@@ -523,29 +531,45 @@ func TestPageBreakRendering(t *testing.T) {
 }
 
 func TestPageBreakOOXMLFragmentHandling(t *testing.T) {
-	// Test the OOXML fragment processing logic directly
+	// Test the OOXML fragment expansion logic
 	text := &Text{
-		Content: "Before{{OOXML_FRAGMENT:*stencil.Break}}After",
+		Content: "Before{{OOXML_FRAGMENT:fragment_0}}After",
 	}
 	
 	run := &Run{
 		Text: text,
 	}
 	
-	result, err := processOOXMLFragments(run, text, TemplateData{})
+	// Create a render context with a page break fragment
+	ctx := &renderContext{
+		ooxmlFragments: map[string]interface{}{
+			"fragment_0": &Break{Type: "page"},
+		},
+	}
+	
+	results, err := expandOOXMLFragments(run, TemplateData{}, ctx)
 	if err != nil {
-		t.Fatalf("processOOXMLFragments() error = %v", err)
+		t.Fatalf("expandOOXMLFragments() error = %v", err)
 	}
 	
-	// Check that the break was added
-	if result.Break == nil {
-		t.Error("processOOXMLFragments() should have added a break")
-	} else if result.Break.Type != "page" {
-		t.Errorf("processOOXMLFragments() break type = %s, want 'page'", result.Break.Type)
+	// Should have 3 runs: "Before", page break, "After"
+	if len(results) != 3 {
+		t.Errorf("expandOOXMLFragments() returned %d runs, want 3", len(results))
+		return
 	}
 	
-	// Check that the text was cleaned
-	if result.Text != nil && strings.Contains(result.Text.Content, "OOXML_FRAGMENT") {
-		t.Error("processOOXMLFragments() should have removed OOXML_FRAGMENT placeholder")
+	// Check first run contains "Before"
+	if results[0].Text == nil || results[0].Text.Content != "Before" {
+		t.Error("First run should contain 'Before'")
+	}
+	
+	// Check second run is a page break
+	if results[1].Break == nil || results[1].Break.Type != "page" {
+		t.Error("Second run should be a page break")
+	}
+	
+	// Check third run contains "After"
+	if results[2].Text == nil || results[2].Text.Content != "After" {
+		t.Error("Third run should contain 'After'")
 	}
 }

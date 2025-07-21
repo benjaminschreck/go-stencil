@@ -204,7 +204,7 @@ type VerticalAlign struct {
 
 // Break represents a line break
 type Break struct {
-	Type string `xml:"type,attr"`
+	Type string `xml:"type,attr,omitempty"`
 }
 
 // TableProperties represents table formatting properties
