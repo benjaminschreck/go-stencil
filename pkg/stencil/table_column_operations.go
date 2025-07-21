@@ -84,19 +84,23 @@ func ProcessTableColumnMarkers(doc *Document) error {
 		return nil
 	}
 	
-	// Process each table in the document
-	var newTables []Table
-	for _, table := range doc.Body.Tables {
-		processedTable, err := processTableColumnMarkersInTable(&table)
-		if err != nil {
-			return err
-		}
-		if processedTable != nil {
-			newTables = append(newTables, *processedTable)
+	// Process each element in the document
+	var newElements []BodyElement
+	for _, elem := range doc.Body.Elements {
+		if table, ok := elem.(Table); ok {
+			processedTable, err := processTableColumnMarkersInTable(&table)
+			if err != nil {
+				return err
+			}
+			if processedTable != nil {
+				newElements = append(newElements, *processedTable)
+			}
+		} else {
+			newElements = append(newElements, elem)
 		}
 	}
 	
-	doc.Body.Tables = newTables
+	doc.Body.Elements = newElements
 	return nil
 }
 

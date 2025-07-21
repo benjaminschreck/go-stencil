@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+
 func TestRenderDocument(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -19,15 +20,13 @@ func TestRenderDocument(t *testing.T) {
 		{
 			name: "render simple variable",
 			document: &Document{
-				Body: &Body{
-					Paragraphs: []Paragraph{
-						{
-							Runs: []Run{
-								{Text: &Text{Content: "Hello {{name}}!"}},
-							},
+				Body: createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
+							{Text: &Text{Content: "Hello {{name}}!"}},
 						},
 					},
-				},
+				}),
 			},
 			data: TemplateData{
 				"name": "World",
@@ -38,15 +37,13 @@ func TestRenderDocument(t *testing.T) {
 		{
 			name: "render multiple variables",
 			document: &Document{
-				Body: &Body{
-					Paragraphs: []Paragraph{
-						{
-							Runs: []Run{
-								{Text: &Text{Content: "{{greeting}} {{name}}, you have {{count}} messages"}},
-							},
+				Body: createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
+							{Text: &Text{Content: "{{greeting}} {{name}}, you have {{count}} messages"}},
 						},
 					},
-				},
+				}),
 			},
 			data: TemplateData{
 				"greeting": "Hello",
@@ -59,15 +56,13 @@ func TestRenderDocument(t *testing.T) {
 		{
 			name: "render with missing variable",
 			document: &Document{
-				Body: &Body{
-					Paragraphs: []Paragraph{
-						{
-							Runs: []Run{
-								{Text: &Text{Content: "Hello {{name}}!"}},
-							},
+				Body: createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
+							{Text: &Text{Content: "Hello {{name}}!"}},
 						},
 					},
-				},
+				}),
 			},
 			data:     TemplateData{},
 			wantText: "Hello !",
@@ -76,17 +71,15 @@ func TestRenderDocument(t *testing.T) {
 		{
 			name: "render multiple runs",
 			document: &Document{
-				Body: &Body{
-					Paragraphs: []Paragraph{
-						{
-							Runs: []Run{
-								{Text: &Text{Content: "Hello "}},
-								{Text: &Text{Content: "{{name}}"}},
-								{Text: &Text{Content: "!"}},
-							},
+				Body: createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
+							{Text: &Text{Content: "Hello "}},
+							{Text: &Text{Content: "{{name}}"}},
+							{Text: &Text{Content: "!"}},
 						},
 					},
-				},
+				}),
 			},
 			data: TemplateData{
 				"name": "World",
@@ -97,15 +90,13 @@ func TestRenderDocument(t *testing.T) {
 		{
 			name: "render with no templates",
 			document: &Document{
-				Body: &Body{
-					Paragraphs: []Paragraph{
-						{
-							Runs: []Run{
-								{Text: &Text{Content: "Plain text without templates"}},
-							},
+				Body: createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
+							{Text: &Text{Content: "Plain text without templates"}},
 						},
 					},
-				},
+				}),
 			},
 			data:     TemplateData{},
 			wantText: "Plain text without templates",
@@ -218,8 +209,10 @@ func TestRenderRun(t *testing.T) {
 func extractText(t *testing.T, doc *Document) string {
 	var texts []string
 	if doc.Body != nil {
-		for _, para := range doc.Body.Paragraphs {
-			texts = append(texts, para.GetText())
+		for _, elem := range doc.Body.Elements {
+			if para, ok := elem.(Paragraph); ok {
+				texts = append(texts, para.GetText())
+			}
 		}
 	}
 	return strings.Join(texts, "\n")
@@ -341,19 +334,17 @@ func TestRenderExpressions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a simple document with one paragraph and one run
 			doc := &Document{
-				Body: &Body{
-					Paragraphs: []Paragraph{
-						{
-							Runs: []Run{
+				Body: createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
 								{
 									Text: &Text{
 										Content: tt.input,
 									},
 								},
-							},
 						},
 					},
-				},
+				}),
 			}
 
 			result, err := RenderDocument(doc, tt.data)
@@ -361,7 +352,18 @@ func TestRenderExpressions(t *testing.T) {
 				t.Fatalf("RenderDocument() error = %v", err)
 			}
 
-			got := result.Body.Paragraphs[0].Runs[0].Text.Content
+			// Extract the first paragraph from Elements
+			if len(result.Body.Elements) == 0 {
+				t.Fatal("No elements in result body")
+			}
+			para, ok := result.Body.Elements[0].(Paragraph)
+			if !ok {
+				t.Fatal("First element is not a Paragraph")
+			}
+			if len(para.Runs) == 0 || para.Runs[0].Text == nil {
+				t.Fatal("No runs or text in paragraph")
+			}
+			got := para.Runs[0].Text.Content
 			if got != tt.want {
 				t.Errorf("RenderDocument() = %q, want %q\nDescription: %s", got, tt.want, tt.description)
 			}
@@ -470,19 +472,17 @@ func TestPageBreakRendering(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a document with the test content
 			doc := &Document{
-				Body: &Body{
-					Paragraphs: []Paragraph{
-						{
-							Runs: []Run{
+				Body: createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
 								{
 									Text: &Text{
 										Content: tt.input,
 									},
 								},
-							},
 						},
 					},
-				},
+				}),
 			}
 
 			result, err := RenderDocument(doc, tt.data)
@@ -491,14 +491,24 @@ func TestPageBreakRendering(t *testing.T) {
 			}
 
 			// Check the rendered text content
-			gotText := result.Body.Paragraphs[0].Runs[0].GetText()
+			if len(result.Body.Elements) == 0 {
+				t.Fatal("No elements in result body")
+			}
+			para, ok := result.Body.Elements[0].(Paragraph)
+			if !ok {
+				t.Fatal("First element is not a Paragraph")
+			}
+			if len(para.Runs) == 0 {
+				t.Fatal("No runs in paragraph")
+			}
+			gotText := para.Runs[0].GetText()
 			if gotText != tt.wantText {
 				t.Errorf("RenderDocument() text = %q, want %q", gotText, tt.wantText)
 			}
 
 			// Check if a page break was created
 			hasBreak := false
-			for _, run := range result.Body.Paragraphs[0].Runs {
+			for _, run := range para.Runs {
 				if run.Break != nil && run.Break.Type == "page" {
 					hasBreak = true
 					break

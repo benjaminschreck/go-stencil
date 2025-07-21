@@ -29,7 +29,8 @@ type Token struct {
 
 var (
 	// Regular expression to match template tokens
-	tokenRegex = regexp.MustCompile(`\{\{([^}]*)\}\}`)
+	// The regex uses a non-greedy match (.*?) to capture content between {{ and }}
+	tokenRegex = regexp.MustCompile(`\{\{(.*?)\}\}`)
 )
 
 // Tokenize parses a template string into tokens
