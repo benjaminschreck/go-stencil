@@ -267,8 +267,9 @@ func formatValue(spec formatSpec, value interface{}, locale string) (string, err
 	// Apply formatting
 	result := fmt.Sprintf(formatStr.String(), converted)
 	
-	// Apply locale-specific formatting for numeric values with comma flag
-	if strings.Contains(spec.flags, ",") && locale != "" {
+	// Apply locale-specific formatting for numeric values when locale is specified
+	if locale != "" && (spec.verb == 'd' || spec.verb == 'b' || spec.verb == 'o' || spec.verb == 'x' || spec.verb == 'X' || 
+		spec.verb == 'e' || spec.verb == 'E' || spec.verb == 'f' || spec.verb == 'F' || spec.verb == 'g' || spec.verb == 'G') {
 		result = applyLocaleNumberFormatting(result, locale)
 	}
 	
@@ -280,33 +281,56 @@ func applyLocaleNumberFormatting(formatted string, locale string) string {
 	// Extract language from locale
 	lang := strings.Split(locale, "-")[0]
 	
-	switch lang {
-	case "de": // German - period for thousands, comma for decimal
-		// Replace commas with a temporary marker
-		result := strings.ReplaceAll(formatted, ",", "§")
-		// Replace periods with commas (decimal separator)
-		result = strings.ReplaceAll(result, ".", ",")
-		// Replace temporary markers with periods (thousands separator)
-		result = strings.ReplaceAll(result, "§", ".")
-		return result
-		
-	case "fr": // French - space for thousands, comma for decimal
-		// Replace commas with spaces (thousands separator)
-		result := strings.ReplaceAll(formatted, ",", " ")
-		// Replace periods with commas (decimal separator)
-		result = strings.ReplaceAll(result, ".", ",")
-		return result
-		
-	case "hu": // Hungarian - space for thousands, comma for decimal
-		// Same as French
-		result := strings.ReplaceAll(formatted, ",", " ")
-		result = strings.ReplaceAll(result, ".", ",")
-		return result
-		
-	default:
-		// Keep default formatting
-		return formatted
+	// Parse the number to add thousands separators if needed
+	parts := strings.Split(formatted, ".")
+	intPart := parts[0]
+	decPart := ""
+	if len(parts) > 1 {
+		decPart = parts[1]
 	}
+	
+	// Handle negative numbers
+	negative := false
+	if strings.HasPrefix(intPart, "-") {
+		negative = true
+		intPart = intPart[1:]
+	}
+	
+	// Add thousands separators if the integer part is long enough
+	if len(intPart) > 3 {
+		var formatted strings.Builder
+		for i, digit := range intPart {
+			if i > 0 && (len(intPart)-i)%3 == 0 {
+				switch lang {
+				case "de":
+					formatted.WriteRune('.')
+				case "fr", "hu":
+					formatted.WriteRune(' ')
+				default:
+					formatted.WriteRune(',')
+				}
+			}
+			formatted.WriteRune(digit)
+		}
+		intPart = formatted.String()
+	}
+	
+	// Rebuild the number with locale-specific decimal separator
+	result := intPart
+	if decPart != "" {
+		switch lang {
+		case "de", "fr", "hu":
+			result += "," + decPart
+		default:
+			result += "." + decPart
+		}
+	}
+	
+	if negative {
+		result = "-" + result
+	}
+	
+	return result
 }
 
 // getNumberFormatter returns a function to format numbers for a specific locale
