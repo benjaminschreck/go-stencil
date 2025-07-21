@@ -56,7 +56,7 @@ Returns the entire template data context
 
 **Examples:**
 ```
-{{data}}  // Outputs all template data (useful for debugging)
+{{data()}}  // Outputs all template data (useful for debugging)
 ```
 
 ### map
