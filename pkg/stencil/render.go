@@ -359,6 +359,33 @@ func RenderTextWithContext(text *Text, data TemplateData, ctx *renderContext) (*
 					result.WriteString(FormatValue(value))
 				}
 			}
+		case TokenPageBreak:
+			// Handle pageBreak token - call the pageBreak function
+			registry := GetDefaultFunctionRegistry()
+			if fn, exists := registry.GetFunction("pageBreak"); exists {
+				value, err := fn.Call()
+				if err != nil {
+					return nil, fmt.Errorf("failed to call pageBreak function: %w", err)
+				}
+				// Check if the value is an OOXML fragment that needs special handling
+				if fragment, ok := value.(*OOXMLFragment); ok {
+					// Store the fragment in context and create a placeholder
+					var fragmentKey string
+					if ctx != nil && ctx.ooxmlFragments != nil {
+						fragmentKey = fmt.Sprintf("fragment_%d", len(ctx.ooxmlFragments))
+						ctx.ooxmlFragments[fragmentKey] = fragment.Content
+					} else {
+						// Fallback to type-based placeholder when no context
+						fragmentKey = fmt.Sprintf("%T", fragment.Content)
+					}
+					result.WriteString(fmt.Sprintf("{{OOXML_FRAGMENT:%s}}", fragmentKey))
+				} else {
+					result.WriteString(FormatValue(value))
+				}
+			} else {
+				// If pageBreak function is not registered, just add empty
+				result.WriteString("")
+			}
 		default:
 			// For now, other token types are preserved as-is
 			result.WriteString("{{")
