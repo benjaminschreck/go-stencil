@@ -37,6 +37,7 @@ type renderContext struct {
 	fragments        map[string]*fragment
 	fragmentStack    []string // Track fragment inclusion stack for circular reference detection
 	renderDepth      int      // Track render depth to prevent excessive nesting
+	ooxmlFragments   map[string]interface{} // Store OOXML fragments for later processing
 }
 
 // PreparedTemplate represents a compiled template ready for rendering.
@@ -138,6 +139,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		fragments:        pt.template.fragments,
 		fragmentStack:    make([]string, 0),
 		renderDepth:      0,
+		ooxmlFragments:   make(map[string]interface{}),
 	}
 	
 	// First pass: render the document with variable substitution

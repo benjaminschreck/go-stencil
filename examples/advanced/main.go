@@ -111,6 +111,10 @@ func main() {
 	// Example 5: Table operations
 	fmt.Println("\n=== Example 5: Table Operations ===")
 	tableExample(engine)
+	
+	// Example 6: HTML formatting showcase
+	fmt.Println("\n=== Example 6: HTML Formatting ===")
+	htmlExample(engine)
 }
 
 func basicExample(engine *stencil.Engine) {
@@ -387,4 +391,66 @@ func saveOutput(reader io.Reader, filename string) {
 	}
 
 	fmt.Printf("Output saved to: %s\n", filename)
+}
+
+func htmlExample(engine *stencil.Engine) {
+	tmpl, err := engine.PrepareFile("html_showcase.docx")
+	if err != nil {
+		log.Fatalf("Failed to prepare template: %v", err)
+	}
+	defer tmpl.Close()
+	
+	// Create data with various HTML examples
+	data := stencil.TemplateData{
+		// Dynamic HTML content
+		"htmlContent": `<b>Dynamic content</b> with <i>various</i> <u>formatting</u> options and <sup>special</sup> characters`,
+		
+		// Formatted items for loop
+		"formattedItems": []map[string]interface{}{
+			{"formatted": "<b>First item</b> - Important"},
+			{"formatted": "<i>Second item</i> - Emphasis added"},
+			{"formatted": "<u>Third item</u> - Underlined for attention"},
+			{"formatted": "<s>Fourth item</s> - Deprecated"},
+			{"formatted": "<b><i>Fifth item</i></b> - Bold and italic"},
+		},
+		
+		// Conditional flag
+		"showImportant": true,
+		
+		// Variables for HTML with variables example
+		"greeting": "<b>Hello</b>",
+		"customerName": "John Doe",
+		"message": "<i>we have an important update for you</i>",
+		
+		// HTML table data
+		"htmlTable": []map[string]interface{}{
+			{
+				"col1": "<b>Product</b>",
+				"col2": "<i>Description</i>",
+				"col3": "<u>Price</u>",
+			},
+			{
+				"col1": "<strong>Widget A</strong>",
+				"col2": "High-quality widget with <sup>premium</sup> features",
+				"col3": "$19<sup>99</sup>",
+			},
+			{
+				"col1": "<strong>Gadget B</strong>",
+				"col2": "Standard gadget with H<sub>2</sub>O resistance",
+				"col3": "$29<sup>99</sup>",
+			},
+			{
+				"col1": "<strong>Tool C</strong>",
+				"col2": "<em>Professional</em> tool with <b>lifetime</b> warranty",
+				"col3": "<s>$49<sup>99</sup></s> $39<sup>99</sup>",
+			},
+		},
+	}
+	
+	output, err := tmpl.Render(data)
+	if err != nil {
+		log.Fatalf("Failed to render template: %v", err)
+	}
+	
+	saveOutput(output, "output/html_showcase_output.docx")
 }

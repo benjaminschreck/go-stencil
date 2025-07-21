@@ -57,9 +57,29 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	xmlStr = strings.ReplaceAll(xmlStr, "<rPr>", `<w:rPr>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "</rPr>", `</w:rPr>`)
 	
+	// Handle formatting elements in run properties
+	xmlStr = strings.ReplaceAll(xmlStr, "<b></b>", `<w:b/>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<b/>", `<w:b/>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<i></i>", `<w:i/>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<i/>", `<w:i/>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<u ", `<w:u `)
+	xmlStr = strings.ReplaceAll(xmlStr, "</u>", `</w:u>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<strike></strike>", `<w:strike/>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<strike/>", `<w:strike/>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<vertAlign ", `<w:vertAlign `)
+	xmlStr = strings.ReplaceAll(xmlStr, "</vertAlign>", `</w:vertAlign>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<color ", `<w:color `)
+	xmlStr = strings.ReplaceAll(xmlStr, "</color>", `</w:color>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<sz ", `<w:sz `)
+	xmlStr = strings.ReplaceAll(xmlStr, "</sz>", `</w:sz>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<lang ", `<w:lang `)
+	xmlStr = strings.ReplaceAll(xmlStr, "</lang>", `</w:lang>`)
+	
 	// Handle style elements
 	xmlStr = strings.ReplaceAll(xmlStr, "<pStyle ", `<w:pStyle `)
 	xmlStr = strings.ReplaceAll(xmlStr, "</pStyle>", `</w:pStyle>`)
+	// Remove empty pStyle elements
+	xmlStr = strings.ReplaceAll(xmlStr, `<w:pStyle w:val=""></w:pStyle>`, ``)
 	xmlStr = strings.ReplaceAll(xmlStr, "<rFonts ", `<w:rFonts `)
 	xmlStr = strings.ReplaceAll(xmlStr, "</rFonts>", `</w:rFonts>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<tblStyle ", `<w:tblStyle `)
@@ -72,6 +92,10 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	// Handle attributes
 	xmlStr = strings.ReplaceAll(xmlStr, `space="preserve"`, `xml:space="preserve"`)
 	xmlStr = strings.ReplaceAll(xmlStr, `space=""`, ``)
+	
+	// Remove empty property elements that might cause issues
+	xmlStr = strings.ReplaceAll(xmlStr, `<w:pPr></w:pPr>`, ``)
+	xmlStr = strings.ReplaceAll(xmlStr, `<w:rPr></w:rPr>`, ``)
 	
 	// Fix attribute namespaces
 	xmlStr = strings.ReplaceAll(xmlStr, ` val="`, ` w:val="`)

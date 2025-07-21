@@ -205,9 +205,10 @@ func ProcessTemplateWithFragments(content string, data TemplateData, fragments m
 	
 	// Create render context with fragments
 	ctx := &renderContext{
-		fragments:     fragments,
-		fragmentStack: make([]string, 0),
-		renderDepth:   0,
+		fragments:      fragments,
+		fragmentStack:  make([]string, 0),
+		renderDepth:    0,
+		ooxmlFragments: make(map[string]interface{}),
 	}
 	
 	// Render with context

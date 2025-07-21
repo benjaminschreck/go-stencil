@@ -44,8 +44,9 @@ func TestLinkReplacementIntegration(t *testing.T) {
 
 	// Create render context
 	ctx := &renderContext{
-		imageMarkers: make(map[string]*imageReplacementMarker),
-		linkMarkers:  make(map[string]*LinkReplacementMarker),
+		imageMarkers:   make(map[string]*imageReplacementMarker),
+		linkMarkers:    make(map[string]*LinkReplacementMarker),
+		ooxmlFragments: make(map[string]interface{}),
 	}
 
 	// Render the document
