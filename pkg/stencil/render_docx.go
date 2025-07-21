@@ -486,6 +486,15 @@ func detectControlStructure(para *Paragraph) (string, string) {
 		}
 	}
 
+	if strings.HasPrefix(text, "{{unless ") {
+		// Extract just the unless part
+		endIdx := strings.Index(text, "}}")
+		if endIdx > 0 {
+			content := text[8:endIdx] // Remove {{unless
+			return "unless", strings.TrimSpace(content)
+		}
+	}
+
 	if strings.HasPrefix(text, "{{end}}") {
 		return "end", ""
 	}
