@@ -133,10 +133,24 @@ func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderC
 func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
 	// First, merge runs in all paragraphs to handle split template variables
 	for i, elem := range body.Elements {
-		if para, ok := elem.(Paragraph); ok {
-			p := para // Create a copy
+		switch el := elem.(type) {
+		case Paragraph:
+			p := el // Create a copy
 			mergeConsecutiveRuns(&p)
 			body.Elements[i] = p // Update the element with merged runs
+		case Table:
+			// Also merge runs in table cells
+			t := el // Create a copy
+			for rowIdx, row := range t.Rows {
+				for cellIdx, cell := range row.Cells {
+					for paraIdx, para := range cell.Paragraphs {
+						p := para // Create a copy
+						mergeConsecutiveRuns(&p)
+						t.Rows[rowIdx].Cells[cellIdx].Paragraphs[paraIdx] = p
+					}
+				}
+			}
+			body.Elements[i] = t // Update the element with merged runs
 		}
 	}
 
@@ -755,7 +769,12 @@ func RenderTableCell(cell *TableCell, data TemplateData, ctx *renderContext) (*T
 
 	// Render each paragraph in the cell
 	for _, para := range cell.Paragraphs {
-		renderedPara, err := RenderParagraphWithContext(&para, data, ctx)
+		// Create a copy of the paragraph and merge consecutive runs
+		// This is necessary because Word often splits template expressions across multiple runs
+		p := para
+		mergeConsecutiveRuns(&p)
+		
+		renderedPara, err := RenderParagraphWithContext(&p, data, ctx)
 		if err != nil {
 			return nil, err
 		}
