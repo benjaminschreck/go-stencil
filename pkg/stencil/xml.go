@@ -207,6 +207,24 @@ type Break struct {
 	Type string `xml:"type,attr,omitempty"`
 }
 
+// MarshalXML implements xml.Marshaler to ensure Break is self-closing
+func (b *Break) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	// Use w:br since the w namespace is already defined in the document
+	start.Name = xml.Name{
+		Local: "w:br",
+	}
+	// Clear any attributes that might have been set
+	start.Attr = nil
+	if b.Type != "" {
+		start.Attr = append(start.Attr, xml.Attr{
+			Name:  xml.Name{Local: "w:type"},
+			Value: b.Type,
+		})
+	}
+	// Encode as an empty element (self-closing)
+	return e.EncodeElement(struct{}{}, start)
+}
+
 // TableProperties represents table formatting properties
 type TableProperties struct {
 	Style *Style `xml:"tblStyle"`
