@@ -100,6 +100,92 @@ func RenderRunWithContext(run *Run, data TemplateData, ctx *renderContext) (*Run
 	return rendered, nil
 }
 
+// convertXMLElementToRuns converts an XML element to DOCX runs
+func convertXMLElementToRuns(elem XMLElement, templateRun *Run) []Run {
+	var runs []Run
+	
+	switch elem.Type {
+	case "text":
+		// Simple text element
+		if elem.Text != "" {
+			textRun := Run{
+				Properties: templateRun.Properties,
+				Text: &Text{
+					XMLName: templateRun.Text.XMLName,
+					Space:   templateRun.Text.Space,
+					Content: elem.Text,
+				},
+			}
+			runs = append(runs, textRun)
+		}
+		
+	case "element":
+		// Check if it's a known OOXML element
+		switch elem.Name.Local {
+		case "br":
+			// Line break or page break
+			breakType := ""
+			for _, attr := range elem.Attrs {
+				if attr.Name.Local == "type" {
+					breakType = attr.Value
+					break
+				}
+			}
+			breakRun := Run{
+				Properties: templateRun.Properties,
+				Break:      &Break{Type: breakType},
+			}
+			runs = append(runs, breakRun)
+			
+		case "t":
+			// Text element - extract text content
+			textContent := extractTextFromXMLElement(elem)
+			if textContent != "" {
+				textRun := Run{
+					Properties: templateRun.Properties,
+					Text: &Text{
+						XMLName: templateRun.Text.XMLName,
+						Space:   templateRun.Text.Space,
+						Content: textContent,
+					},
+				}
+				runs = append(runs, textRun)
+			}
+			
+		case "r":
+			// Run element - process its children
+			for _, child := range elem.Content {
+				childRuns := convertXMLElementToRuns(child, templateRun)
+				runs = append(runs, childRuns...)
+			}
+			
+		default:
+			// For other elements, process children
+			for _, child := range elem.Content {
+				childRuns := convertXMLElementToRuns(child, templateRun)
+				runs = append(runs, childRuns...)
+			}
+		}
+	}
+	
+	return runs
+}
+
+// extractTextFromXMLElement extracts all text content from an XML element and its children
+func extractTextFromXMLElement(elem XMLElement) string {
+	var text string
+	
+	if elem.Type == "text" {
+		return elem.Text
+	}
+	
+	for _, child := range elem.Content {
+		text += extractTextFromXMLElement(child)
+	}
+	
+	return text
+}
+
 // expandOOXMLFragments processes OOXML fragments in a run and returns multiple runs if needed
 func expandOOXMLFragments(run *Run, data TemplateData, ctx *renderContext) ([]Run, error) {
 	content := run.Text.Content
@@ -191,6 +277,13 @@ func expandOOXMLFragments(run *Run, data TemplateData, ctx *renderContext) ([]Ru
 					if newRun.Text != nil || newRun.Break != nil {
 						runs = append(runs, newRun)
 					}
+				}
+				
+			case *XMLFragment:
+				// XML fragment - convert XML elements to runs
+				for _, elem := range content.Elements {
+					expandedRuns := convertXMLElementToRuns(elem, run)
+					runs = append(runs, expandedRuns...)
 				}
 				
 			default:
