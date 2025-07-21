@@ -1,7 +1,6 @@
 package stencil
 
 import (
-	"bytes"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -21,14 +20,7 @@ type BodyElement interface {
 
 // Body represents the document body
 type Body struct {
-	// Legacy fields for backward compatibility (deprecated)
-	Paragraphs []Paragraph `xml:"p"`
-	Tables     []Table     `xml:"tbl"`
-	// Alternative tags with namespace prefix
-	WParagraphs []Paragraph `xml:"http://schemas.openxmlformats.org/wordprocessingml/2006/main p"`
-	WTables     []Table     `xml:"http://schemas.openxmlformats.org/wordprocessingml/2006/main tbl"`
-	
-	// New field that maintains element order
+	// Elements maintains the order of all body elements
 	Elements []BodyElement `xml:"-"`
 }
 
@@ -87,59 +79,9 @@ func (t Table) isBodyElement() {}
 
 // UnmarshalXML implements custom XML unmarshaling to preserve element order
 func (b *Body) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
-	// First, use default unmarshaling to populate legacy fields
-	type bodyAlias Body
-	alias := (*bodyAlias)(b)
-	
-	// Collect the raw XML content
-	var buf bytes.Buffer
-	encoder := xml.NewEncoder(&buf)
-	
-	// Encode the start element
-	if err := encoder.EncodeToken(start); err != nil {
-		return err
-	}
-	
-	// Copy all tokens until we reach the end element
-	depth := 1
-	for depth > 0 {
-		token, err := d.Token()
-		if err != nil {
-			return err
-		}
-		
-		if err := encoder.EncodeToken(token); err != nil {
-			return err
-		}
-		
-		switch token.(type) {
-		case xml.StartElement:
-			depth++
-		case xml.EndElement:
-			depth--
-		}
-	}
-	
-	if err := encoder.Flush(); err != nil {
-		return err
-	}
-	
-	// Now unmarshal the buffered content using default unmarshaling
-	if err := xml.Unmarshal(buf.Bytes(), alias); err != nil {
-		return err
-	}
-	
-	// Parse again to maintain element order
-	decoder := xml.NewDecoder(bytes.NewReader(buf.Bytes()))
-	
-	// Skip the body start element
-	if _, err := decoder.Token(); err != nil {
-		return err
-	}
-	
 	// Process elements in order
 	for {
-		token, err := decoder.Token()
+		token, err := d.Token()
 		if err == io.EOF {
 			break
 		}
@@ -152,13 +94,13 @@ func (b *Body) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 			switch t.Name.Local {
 			case "p":
 				var para Paragraph
-				if err := decoder.DecodeElement(&para, &t); err != nil {
+				if err := d.DecodeElement(&para, &t); err != nil {
 					return err
 				}
 				b.Elements = append(b.Elements, para)
 			case "tbl":
 				var table Table
-				if err := decoder.DecodeElement(&table, &t); err != nil {
+				if err := d.DecodeElement(&table, &t); err != nil {
 					return err
 				}
 				b.Elements = append(b.Elements, table)
@@ -180,42 +122,15 @@ func (b Body) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 		return err
 	}
 	
-	// If we have ordered elements, use them
-	if len(b.Elements) > 0 {
-		for _, elem := range b.Elements {
-			switch el := elem.(type) {
-			case Paragraph:
-				if err := e.EncodeElement(el, xml.StartElement{Name: xml.Name{Local: "w:p"}}); err != nil {
-					return err
-				}
-			case Table:
-				if err := e.EncodeElement(el, xml.StartElement{Name: xml.Name{Local: "w:tbl"}}); err != nil {
-					return err
-				}
-			}
-		}
-	} else {
-		// Fall back to legacy fields for backward compatibility
-		// Encode paragraphs
-		for _, p := range b.Paragraphs {
-			if err := e.EncodeElement(p, xml.StartElement{Name: xml.Name{Local: "w:p"}}); err != nil {
+	// Encode elements in order
+	for _, elem := range b.Elements {
+		switch el := elem.(type) {
+		case Paragraph:
+			if err := e.EncodeElement(el, xml.StartElement{Name: xml.Name{Local: "w:p"}}); err != nil {
 				return err
 			}
-		}
-		for _, p := range b.WParagraphs {
-			if err := e.EncodeElement(p, xml.StartElement{Name: xml.Name{Local: "w:p"}}); err != nil {
-				return err
-			}
-		}
-		
-		// Encode tables
-		for _, t := range b.Tables {
-			if err := e.EncodeElement(t, xml.StartElement{Name: xml.Name{Local: "w:tbl"}}); err != nil {
-				return err
-			}
-		}
-		for _, t := range b.WTables {
-			if err := e.EncodeElement(t, xml.StartElement{Name: xml.Name{Local: "w:tbl"}}); err != nil {
+		case Table:
+			if err := e.EncodeElement(el, xml.StartElement{Name: xml.Name{Local: "w:tbl"}}); err != nil {
 				return err
 			}
 		}

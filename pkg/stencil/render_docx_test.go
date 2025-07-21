@@ -4,6 +4,17 @@ import (
 	"testing"
 )
 
+// Helper function to create a Body with Elements from paragraphs
+func createBodyWithParagraphs(paragraphs []Paragraph) *Body {
+	body := &Body{
+		Elements: make([]BodyElement, len(paragraphs)),
+	}
+	for i, para := range paragraphs {
+		body.Elements[i] = para
+	}
+	return body
+}
+
 func TestRenderBodyWithControlStructures(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -13,19 +24,17 @@ func TestRenderBodyWithControlStructures(t *testing.T) {
 	}{
 		{
 			name: "inline for loop",
-			body: &Body{
-				Paragraphs: []Paragraph{
-					{
-						Runs: []Run{
-							{
-								Text: &Text{
-									Content: "Items: {{for item in items}} - {{item.name}}{{end}}",
-								},
+			body: createBodyWithParagraphs([]Paragraph{
+				{
+					Runs: []Run{
+						{
+							Text: &Text{
+								Content: "Items: {{for item in items}} - {{item.name}}{{end}}",
 							},
 						},
 					},
 				},
-			},
+			}),
 			data: TemplateData{
 				"items": []map[string]interface{}{
 					{"name": "Item 1"},
@@ -39,37 +48,35 @@ func TestRenderBodyWithControlStructures(t *testing.T) {
 		},
 		{
 			name: "multi-paragraph for loop",
-			body: &Body{
-				Paragraphs: []Paragraph{
-					{
-						Runs: []Run{
-							{
-								Text: &Text{
-									Content: "{{for item in items}}",
-								},
-							},
-						},
-					},
-					{
-						Runs: []Run{
-							{
-								Text: &Text{
-									Content: "- {{item.name}}: {{item.status}}",
-								},
-							},
-						},
-					},
-					{
-						Runs: []Run{
-							{
-								Text: &Text{
-									Content: "{{end}}",
-								},
+			body: createBodyWithParagraphs([]Paragraph{
+				{
+					Runs: []Run{
+						{
+							Text: &Text{
+								Content: "{{for item in items}}",
 							},
 						},
 					},
 				},
-			},
+				{
+					Runs: []Run{
+						{
+							Text: &Text{
+								Content: "- {{item.name}}: {{item.status}}",
+							},
+						},
+					},
+				},
+				{
+					Runs: []Run{
+						{
+							Text: &Text{
+								Content: "{{end}}",
+							},
+						},
+					},
+				},
+			}),
 			data: TemplateData{
 				"items": []map[string]interface{}{
 					{"name": "Task 1", "status": "Complete"},
@@ -83,62 +90,60 @@ func TestRenderBodyWithControlStructures(t *testing.T) {
 		},
 		{
 			name: "for loop with surrounding content",
-			body: &Body{
-				Paragraphs: []Paragraph{
-					{
-						Runs: []Run{
-							{
-								Text: &Text{
-									Content: "Tasks:",
-								},
-							},
-						},
-					},
-					{
-						Runs: []Run{
-							{
-								Text: &Text{
-									Content: "{{for task in tasks}}",
-								},
-							},
-						},
-					},
-					{
-						Runs: []Run{
-							{
-								Text: &Text{
-									Content: "• {{task}}",
-								},
-							},
-						},
-					},
-					{
-						Runs: []Run{
-							{
-								Text: &Text{
-									Content: "{{end}}",
-								},
-							},
-						},
-					},
-					{
-						Runs: []Run{
-							{
-								Text: &Text{
-									Content: "End of tasks.",
-								},
+			body: createBodyWithParagraphs([]Paragraph{
+				{
+					Runs: []Run{
+						{
+							Text: &Text{
+								Content: "Tasks:",
 							},
 						},
 					},
 				},
-			},
+				{
+					Runs: []Run{
+						{
+							Text: &Text{
+								Content: "{{for task in tasks}}",
+							},
+						},
+					},
+				},
+				{
+					Runs: []Run{
+						{
+							Text: &Text{
+								Content: "• {{task}}",
+							},
+						},
+					},
+				},
+				{
+					Runs: []Run{
+						{
+							Text: &Text{
+								Content: "{{end}}",
+							},
+						},
+					},
+				},
+				{
+					Runs: []Run{
+						{
+							Text: &Text{
+								Content: "End of tasks.",
+							},
+						},
+					},
+				},
+			}),
 			data: TemplateData{
 				"tasks": []string{"Write code", "Test code", "Deploy code"},
 			},
 			wantText: []string{
 				"Tasks:",
 				"• Write code",
-				"• Test code", 
+				"• Test code",
 				"• Deploy code",
 				"End of tasks.",
 			},
@@ -154,7 +159,11 @@ func TestRenderBodyWithControlStructures(t *testing.T) {
 
 			// Extract text from rendered paragraphs
 			var gotText []string
-			for _, para := range rendered.Paragraphs {
+			for _, elem := range rendered.Elements {
+				para, ok := elem.(Paragraph)
+				if !ok {
+					continue
+				}
 				text := getParagraphText(&para)
 				if text != "" {
 					gotText = append(gotText, text)
@@ -169,9 +178,9 @@ func TestRenderBodyWithControlStructures(t *testing.T) {
 				return
 			}
 
-			for i, want := range tt.wantText {
-				if i < len(gotText) && gotText[i] != want {
-					t.Errorf("Paragraph %d: got %q, want %q", i, gotText[i], want)
+			for i, got := range gotText {
+				if got != tt.wantText[i] {
+					t.Errorf("Paragraph %d: got %q, want %q", i, got, tt.wantText[i])
 				}
 			}
 		})
@@ -180,64 +189,84 @@ func TestRenderBodyWithControlStructures(t *testing.T) {
 
 func TestDetectControlStructure(t *testing.T) {
 	tests := []struct {
-		name         string
-		para         *Paragraph
-		wantType     string
-		wantContent  string
+		name        string
+		paragraph   *Paragraph
+		wantType    string
+		wantContent string
 	}{
 		{
 			name: "for loop",
-			para: &Paragraph{
-				Runs: []Run{
+			paragraph: func() *Paragraph {
+				p := createBodyWithParagraphs([]Paragraph{
 					{
-						Text: &Text{
-							Content: "{{for item in items}}",
+						Runs: []Run{
+							{
+								Text: &Text{
+									Content: "{{for item in items}}",
+								},
+							},
 						},
 					},
-				},
-			},
+				}).Elements[0].(Paragraph)
+				return &p
+			}(),
 			wantType:    "for",
 			wantContent: "item in items",
 		},
 		{
 			name: "inline for loop",
-			para: &Paragraph{
-				Runs: []Run{
+			paragraph: func() *Paragraph {
+				p := createBodyWithParagraphs([]Paragraph{
 					{
-						Text: &Text{
-							Content: "List: {{for x in list}} {{x}}{{end}}",
+						Runs: []Run{
+							{
+								Text: &Text{
+									Content: "List: {{for x in list}} {{x}}{{end}}",
+								},
+							},
 						},
 					},
-				},
-			},
+				}).Elements[0].(Paragraph)
+				return &p
+			}(),
 			wantType:    "inline-for",
 			wantContent: "List: {{for x in list}} {{x}}{{end}}",
 		},
 		{
 			name: "end marker",
-			para: &Paragraph{
-				Runs: []Run{
+			paragraph: func() *Paragraph {
+				p := createBodyWithParagraphs([]Paragraph{
 					{
-						Text: &Text{
-							Content: "{{end}}",
+						Runs: []Run{
+							{
+								Text: &Text{
+									Content: "{{end}}",
+								},
+							},
 						},
 					},
-				},
-			},
+				}).Elements[0].(Paragraph)
+				return &p
+			}(),
 			wantType:    "end",
 			wantContent: "",
 		},
 		{
 			name: "regular paragraph",
-			para: &Paragraph{
-				Runs: []Run{
+			paragraph: func() *Paragraph {
+				p := createBodyWithParagraphs([]Paragraph{
 					{
-						Text: &Text{
-							Content: "This is regular text with {{variable}}",
+						Runs: []Run{
+							{
+								Text: &Text{
+									Content: "This is regular text with {{variable}}",
+								},
+							},
 						},
 					},
-				},
-			},
+				}).Elements[0].(Paragraph)
+				return &p
+			}(),
 			wantType:    "",
 			wantContent: "",
 		},
@@ -245,7 +274,7 @@ func TestDetectControlStructure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotType, gotContent := detectControlStructure(tt.para)
+			gotType, gotContent := detectControlStructure(tt.paragraph)
 			if gotType != tt.wantType {
 				t.Errorf("detectControlStructure() type = %v, want %v", gotType, tt.wantType)
 			}

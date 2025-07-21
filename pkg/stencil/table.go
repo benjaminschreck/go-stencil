@@ -6,7 +6,8 @@ func detectTables(doc *Document) bool {
 		return false
 	}
 	
-	return len(doc.Body.Tables) > 0 || hasNestedTables(doc.Body.Tables)
+	tables := extractTables(doc)
+	return len(tables) > 0 || hasNestedTables(tables)
 }
 
 // hasNestedTables recursively checks for tables nested within table cells
@@ -32,7 +33,13 @@ func extractTables(doc *Document) []Table {
 		return []Table{}
 	}
 	
-	return doc.Body.Tables
+	var tables []Table
+	for _, elem := range doc.Body.Elements {
+		if table, ok := elem.(Table); ok {
+			tables = append(tables, table)
+		}
+	}
+	return tables
 }
 
 // getCellSpan returns the column span of a table cell
@@ -169,10 +176,11 @@ func GetTableInfo(table *Table) *TableInfo {
 func FindTablesWithTemplates(doc *Document) []*Table {
 	var tablesWithTemplates []*Table
 	
-	for i := range doc.Body.Tables {
-		table := &doc.Body.Tables[i]
-		if tableHasTemplates(table) {
-			tablesWithTemplates = append(tablesWithTemplates, table)
+	for _, elem := range doc.Body.Elements {
+		if table, ok := elem.(Table); ok {
+			if tableHasTemplates(&table) {
+				tablesWithTemplates = append(tablesWithTemplates, &table)
+			}
 		}
 	}
 	
