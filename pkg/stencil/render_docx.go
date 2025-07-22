@@ -467,6 +467,20 @@ func detectControlStructure(para *Paragraph) (string, string) {
 		return "inline-for", text
 	}
 
+	// Check for inline if statements
+	if strings.Contains(text, "{{if ") && strings.Contains(text, "{{end}}") {
+		// This paragraph contains a complete if statement
+		// Let RenderParagraphWithContext handle it
+		return "", ""
+	}
+
+	// Check for inline unless statements
+	if strings.Contains(text, "{{unless ") && strings.Contains(text, "{{end}}") {
+		// This paragraph contains a complete unless statement
+		// Let RenderParagraphWithContext handle it
+		return "", ""
+	}
+
 	// Check if text starts with a control structure (even if other content follows)
 	if strings.HasPrefix(text, "{{for ") {
 		// Extract just the for part
