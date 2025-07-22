@@ -576,6 +576,8 @@ All template expressions use double curly braces `{{}}` with descriptive keyword
 
 #### Built-in Functions
 
+**Important**: All functions require parentheses `()`, even when called with no arguments.
+
 - String functions: `{{uppercase(name)}}`, `{{lowercase(text)}}`, `{{join(items, ", ")}}`
 - Math functions: `{{round(price)}}`, `{{sum(numbers)}}`, `{{floor(value)}}`
 - Formatting: `{{format("%.2f", price)}}`, `{{date("YYYY-MM-DD", dateValue)}}`
@@ -583,7 +585,7 @@ All template expressions use double curly braces `{{}}` with descriptive keyword
 
 #### Document Operations
 
-- Page breaks: `{{pageBreak}}`
+- Page breaks: `{{pageBreak()}}` (note: requires parentheses)
 - HTML content: `{{html("<b>Bold text</b>")}}`
 - Raw XML: `{{xml("<w:br/>")}}`
 - Table operations: `{{hideRow()}}`, `{{hideColumn()}}`, `{{hideColumn(1, "redistribute")}}`

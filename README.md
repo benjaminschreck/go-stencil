@@ -104,9 +104,12 @@ Your age is {{age}}.
 
 ### Functions
 
+**Important**: All functions require parentheses `()`, even when called with no arguments.
+
 ```
 Total: {{format("%.2f", total)}}
 Date: {{date("2006-01-02", orderDate)}}
+No arguments: {{timestamp()}}
 ```
 
 #### Understanding Template Functions
@@ -203,6 +206,9 @@ func (f GreetingFunction) Call(args ...interface{}) (interface{}, error) {
 // Register the function
 stencil.RegisterGlobalFunction("greeting", GreetingFunction{})
 
+// Use in template: {{greeting("World")}} or {{greeting()}}
+// Note: Functions always require parentheses, even with no arguments
+
 // Or use a function provider for multiple functions
 type MyFunctionProvider struct{}
 
@@ -256,7 +262,7 @@ go-stencil includes a comprehensive set of built-in functions:
 - `empty(value)` - Check if a value is empty
 - `coalesce(value1, value2, ...)` - Return the first non-empty value
 - `list(items...)` - Create a list from arguments
-- `data()` - Access the entire template data context
+- `data()` - Access the entire template data context (no arguments required)
 - `map(key, collection)` - Extract a specific field from each item in a collection
 
 ### String Functions
@@ -295,9 +301,9 @@ go-stencil includes a comprehensive set of built-in functions:
 
 ### Document Functions
 
-- `pageBreak()` - Insert a page break
-- `hideRow()` - Hide the current table row
-- `hideColumn()` - Hide the current table column
+- `pageBreak()` - Insert a page break (no arguments required)
+- `hideRow()` - Hide the current table row (no arguments required)
+- `hideColumn()` - Hide the current table column (no arguments required)
 - `html(content)` - Insert HTML-formatted content
 - `xml(content)` - Insert raw XML content
 - `replaceImage(base64Data)` - Replace an image

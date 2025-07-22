@@ -115,9 +115,16 @@ func (e *Engine) PrepareFile(path string) (*PreparedTemplate, error) {
 
 // Prepare loads and compiles a template from an io.Reader.
 func (e *Engine) Prepare(r io.Reader) (*PreparedTemplate, error) {
-	// For now, use the global prepare function
-	// In future, we might want to inject engine-specific settings
-	return prepare(r)
+	// Use the global prepare function
+	tmpl, err := prepare(r)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Set the engine's function registry on the template
+	tmpl.registry = e.registry
+	
+	return tmpl, nil
 }
 
 // RegisterFunction adds a custom function that can be used in templates.

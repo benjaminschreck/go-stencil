@@ -46,6 +46,7 @@ type PreparedTemplate struct {
 	template *template
 	closed   bool
 	mu       sync.Mutex
+	registry FunctionRegistry // Function registry to use during rendering
 }
 
 // TemplateData represents the data context for rendering templates.
@@ -131,6 +132,17 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		return nil, NewTemplateError("invalid or nil template", 0, 0)
 	}
 	
+	// Create a copy of the data to avoid modifying the original
+	renderData := make(TemplateData)
+	for k, v := range data {
+		renderData[k] = v
+	}
+	
+	// Inject the function registry if available and not already present
+	if pt.registry != nil && renderData["__functions__"] == nil {
+		renderData["__functions__"] = pt.registry
+	}
+	
 	// Create render context to collect image markers
 	renderCtx := &renderContext{
 		imageReplacements: make(map[string]*ImageReplacement),
@@ -144,7 +156,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	
 	// First pass: render the document with variable substitution
 	// This will collect any image replacement markers
-	renderedDoc, err := RenderDocumentWithContext(pt.template.document, data, renderCtx)
+	renderedDoc, err := RenderDocumentWithContext(pt.template.document, renderData, renderCtx)
 	if err != nil {
 		return nil, WithContext(err, "rendering document", map[string]interface{}{"hasData": data != nil})
 	}
