@@ -10,7 +10,8 @@ func createBodyWithParagraphs(paragraphs []Paragraph) *Body {
 		Elements: make([]BodyElement, len(paragraphs)),
 	}
 	for i, para := range paragraphs {
-		body.Elements[i] = para
+		p := para // Create a copy to get a new address
+		body.Elements[i] = &p
 	}
 	return body
 }
@@ -160,11 +161,11 @@ func TestRenderBodyWithControlStructures(t *testing.T) {
 			// Extract text from rendered paragraphs
 			var gotText []string
 			for _, elem := range rendered.Elements {
-				para, ok := elem.(Paragraph)
+				para, ok := elem.(*Paragraph)
 				if !ok {
 					continue
 				}
-				text := getParagraphText(&para)
+				text := getParagraphText(para)
 				if text != "" {
 					gotText = append(gotText, text)
 				}
@@ -207,8 +208,8 @@ func TestDetectControlStructure(t *testing.T) {
 							},
 						},
 					},
-				}).Elements[0].(Paragraph)
-				return &p
+				}).Elements[0].(*Paragraph)
+				return p
 			}(),
 			wantType:    "for",
 			wantContent: "item in items",
@@ -226,8 +227,8 @@ func TestDetectControlStructure(t *testing.T) {
 							},
 						},
 					},
-				}).Elements[0].(Paragraph)
-				return &p
+				}).Elements[0].(*Paragraph)
+				return p
 			}(),
 			wantType:    "inline-for",
 			wantContent: "List: {{for x in list}} {{x}}{{end}}",
@@ -245,8 +246,8 @@ func TestDetectControlStructure(t *testing.T) {
 							},
 						},
 					},
-				}).Elements[0].(Paragraph)
-				return &p
+				}).Elements[0].(*Paragraph)
+				return p
 			}(),
 			wantType:    "end",
 			wantContent: "",
@@ -264,8 +265,8 @@ func TestDetectControlStructure(t *testing.T) {
 							},
 						},
 					},
-				}).Elements[0].(Paragraph)
-				return &p
+				}).Elements[0].(*Paragraph)
+				return p
 			}(),
 			wantType:    "",
 			wantContent: "",

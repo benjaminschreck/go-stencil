@@ -97,13 +97,13 @@ func (b *Body) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 				if err := d.DecodeElement(&para, &t); err != nil {
 					return err
 				}
-				b.Elements = append(b.Elements, para)
+				b.Elements = append(b.Elements, &para)
 			case "tbl":
 				var table Table
 				if err := d.DecodeElement(&table, &t); err != nil {
 					return err
 				}
-				b.Elements = append(b.Elements, table)
+				b.Elements = append(b.Elements, &table)
 			}
 		case xml.EndElement:
 			if t.Name.Local == "body" {
@@ -125,11 +125,11 @@ func (b Body) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	// Encode elements in order
 	for _, elem := range b.Elements {
 		switch el := elem.(type) {
-		case Paragraph:
+		case *Paragraph:
 			if err := e.EncodeElement(el, xml.StartElement{Name: xml.Name{Local: "w:p"}}); err != nil {
 				return err
 			}
-		case Table:
+		case *Table:
 			if err := e.EncodeElement(el, xml.StartElement{Name: xml.Name{Local: "w:tbl"}}); err != nil {
 				return err
 			}

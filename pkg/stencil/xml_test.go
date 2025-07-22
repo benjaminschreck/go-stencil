@@ -36,9 +36,9 @@ func TestParseDocument(t *testing.T) {
 					t.Errorf("expected 1 element, got %d", len(doc.Body.Elements))
 					return
 				}
-				para, ok := doc.Body.Elements[0].(Paragraph)
+				para, ok := doc.Body.Elements[0].(*Paragraph)
 				if !ok {
-					t.Errorf("expected first element to be Paragraph, got %T", doc.Body.Elements[0])
+					t.Errorf("expected first element to be *Paragraph, got %T", doc.Body.Elements[0])
 					return
 				}
 				if len(para.Runs) != 1 {
@@ -70,9 +70,9 @@ func TestParseDocument(t *testing.T) {
 					t.Errorf("expected 1 element, got %d", len(doc.Body.Elements))
 					return
 				}
-				para, ok := doc.Body.Elements[0].(Paragraph)
+				para, ok := doc.Body.Elements[0].(*Paragraph)
 				if !ok {
-					t.Errorf("expected first element to be Paragraph, got %T", doc.Body.Elements[0])
+					t.Errorf("expected first element to be *Paragraph, got %T", doc.Body.Elements[0])
 					return
 				}
 				if len(para.Runs) != 2 {
@@ -110,8 +110,8 @@ func TestParseDocument(t *testing.T) {
 				}
 				// Verify both elements are paragraphs
 				for i, elem := range doc.Body.Elements {
-					if _, ok := elem.(Paragraph); !ok {
-						t.Errorf("expected element %d to be Paragraph, got %T", i, elem)
+					if _, ok := elem.(*Paragraph); !ok {
+						t.Errorf("expected element %d to be *Paragraph, got %T", i, elem)
 					}
 				}
 			},
@@ -133,9 +133,9 @@ func TestParseDocument(t *testing.T) {
 				if len(doc.Body.Elements) == 0 {
 					t.Fatal("expected at least one element")
 				}
-				para, ok := doc.Body.Elements[0].(Paragraph)
+				para, ok := doc.Body.Elements[0].(*Paragraph)
 				if !ok {
-					t.Fatalf("expected first element to be Paragraph, got %T", doc.Body.Elements[0])
+					t.Fatalf("expected first element to be *Paragraph, got %T", doc.Body.Elements[0])
 				}
 				if len(para.Runs) == 0 {
 					t.Fatal("expected at least one run")

@@ -210,7 +210,7 @@ func extractText(t *testing.T, doc *Document) string {
 	var texts []string
 	if doc.Body != nil {
 		for _, elem := range doc.Body.Elements {
-			if para, ok := elem.(Paragraph); ok {
+			if para, ok := elem.(*Paragraph); ok {
 				texts = append(texts, para.GetText())
 			}
 		}
@@ -356,7 +356,7 @@ func TestRenderExpressions(t *testing.T) {
 			if len(result.Body.Elements) == 0 {
 				t.Fatal("No elements in result body")
 			}
-			para, ok := result.Body.Elements[0].(Paragraph)
+			para, ok := result.Body.Elements[0].(*Paragraph)
 			if !ok {
 				t.Fatal("First element is not a Paragraph")
 			}
@@ -494,7 +494,7 @@ func TestPageBreakRendering(t *testing.T) {
 			if len(result.Body.Elements) == 0 {
 				t.Fatal("No elements in result body")
 			}
-			para, ok := result.Body.Elements[0].(Paragraph)
+			para, ok := result.Body.Elements[0].(*Paragraph)
 			if !ok {
 				t.Fatal("First element is not a Paragraph")
 			}

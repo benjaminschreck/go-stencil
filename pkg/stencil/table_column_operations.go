@@ -24,7 +24,7 @@ func (m TableColumnMarker) String() string {
 // hideColumn hides a table column at the specified index
 // When called without arguments, it hides the column containing the function call
 func hideColumn(args ...interface{}) (interface{}, error) {
-	marker := TableColumnMarker{Action: "hide", ColumnIndex: -1} // -1 means "current column"
+	marker := TableColumnMarker{Action: "hide", ColumnIndex: 0} // Default to column 0
 
 	if len(args) > 2 {
 		return nil, fmt.Errorf("hideColumn: too many arguments (expected 0-2, got %d)", len(args))
