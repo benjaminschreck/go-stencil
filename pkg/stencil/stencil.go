@@ -155,6 +155,11 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		return nil, WithContext(err, "processing table row markers", nil)
 	}
 	
+	// Process table column markers (hideColumn() functions)
+	err = ProcessTableColumnMarkers(renderedDoc)
+	if err != nil {
+		return nil, WithContext(err, "processing table column markers", nil)
+	}
 	
 	// Convert the rendered document back to XML with proper namespaces
 	renderedXML, err := marshalDocumentWithNamespaces(renderedDoc)
