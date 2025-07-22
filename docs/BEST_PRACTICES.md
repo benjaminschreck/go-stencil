@@ -172,7 +172,7 @@ if err := validateInvoiceData(data); err != nil {
 {{if item.isVisible}}
 | {{item.name}} | {{item.value}} |
 {{else}}
-{{hideRow}}
+{{hideRow()}}
 {{end}}
 {{end}}
 ```

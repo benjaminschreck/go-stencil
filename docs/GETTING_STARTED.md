@@ -220,7 +220,7 @@ Hide rows conditionally:
 {{if item.quantity > 0}}
 | {{item.product}} | {{item.quantity}} |
 {{else}}
-{{hideRow}}
+{{hideRow()}}
 {{end}}
 {{end}}
 ```

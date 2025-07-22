@@ -369,7 +369,7 @@ Hides the current table row (used within table loops)
 ```
 {{for item in items}}
 {{if item.hidden}}
-{{hideRow}}
+{{hideRow()}}
 {{else}}
 | {{item.name}} | {{item.price}} |
 {{end}}

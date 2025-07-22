@@ -109,7 +109,13 @@ func (n *ExpressionContentNode) RenderWithContext(data TemplateData, ctx *render
 	}
 	
 	// Check for special marker types that need context
-	if marker, ok := value.(*imageReplacementMarker); ok && ctx != nil {
+	if marker, ok := value.(*TableRowMarker); ok {
+		// Handle table row markers
+		return fmt.Sprintf("{{TABLE_ROW_MARKER:%s}}", marker.Action), nil
+	} else if marker, ok := value.(*TableColumnMarker); ok {
+		// Handle table column markers
+		return marker.String(), nil
+	} else if marker, ok := value.(*imageReplacementMarker); ok && ctx != nil {
 		// Handle image replacement markers
 		markerKey := fmt.Sprintf("img_%d", len(ctx.imageMarkers))
 		ctx.imageMarkers[markerKey] = marker
