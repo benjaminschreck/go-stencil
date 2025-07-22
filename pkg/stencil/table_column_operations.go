@@ -22,8 +22,9 @@ func (m TableColumnMarker) String() string {
 }
 
 // hideColumn hides a table column at the specified index
+// When called without arguments, it hides the column containing the function call
 func hideColumn(args ...interface{}) (interface{}, error) {
-	marker := TableColumnMarker{Action: "hide", ColumnIndex: 0}
+	marker := TableColumnMarker{Action: "hide", ColumnIndex: -1} // -1 means "current column"
 
 	if len(args) > 2 {
 		return nil, fmt.Errorf("hideColumn: too many arguments (expected 0-2, got %d)", len(args))
@@ -80,14 +81,18 @@ func registerTableColumnFunctions(registry *DefaultFunctionRegistry) {
 
 // ProcessTableColumnMarkers processes column markers in the document
 func ProcessTableColumnMarkers(doc *Document) error {
+	logger := GetLogger()
+	logger.Debug("ProcessTableColumnMarkers called")
 	if doc == nil || doc.Body == nil {
+		logger.Debug("Document or body is nil")
 		return nil
 	}
 	
 	// Process each element in the document
 	var newElements []BodyElement
-	for _, elem := range doc.Body.Elements {
+	for i, elem := range doc.Body.Elements {
 		if table, ok := elem.(Table); ok {
+			logger.Debug("Found table at element %d", i)
 			processedTable, err := processTableColumnMarkersInTable(&table)
 			if err != nil {
 				return err
@@ -95,17 +100,29 @@ func ProcessTableColumnMarkers(doc *Document) error {
 			if processedTable != nil {
 				newElements = append(newElements, *processedTable)
 			}
+		} else if tablePtr, ok := elem.(*Table); ok {
+			logger.Debug("Found table pointer at element %d", i)
+			processedTable, err := processTableColumnMarkersInTable(tablePtr)
+			if err != nil {
+				return err
+			}
+			if processedTable != nil {
+				newElements = append(newElements, *processedTable)
+			}
 		} else {
+			logger.Debug("Element %d is type %T", i, elem)
 			newElements = append(newElements, elem)
 		}
 	}
 	
 	doc.Body.Elements = newElements
+	logger.Debug("ProcessTableColumnMarkers completed, processed %d elements", len(newElements))
 	return nil
 }
 
 // processTableColumnMarkersInTable processes column markers in a single table
 func processTableColumnMarkersInTable(table *Table) (*Table, error) {
+	logger := GetLogger()
 	if table == nil {
 		return nil, nil
 	}
@@ -113,12 +130,20 @@ func processTableColumnMarkersInTable(table *Table) (*Table, error) {
 	// Find column markers and determine which columns to hide
 	columnsToHide := make(map[int]string) // column index -> resize strategy
 	
-	for _, row := range table.Rows {
+	logger.Debug("Scanning table with %d rows for column markers", len(table.Rows))
+	for rowIdx, row := range table.Rows {
 		cellIndex := 0
-		for _, cell := range row.Cells {
+		for colIdx, cell := range row.Cells {
 			// Check if this cell contains a hide column marker
 			if marker, strategy := getCellColumnMarker(&cell); marker != nil {
-				columnsToHide[marker.ColumnIndex] = strategy
+				logger.Debug("Found marker in row %d, cell %d", rowIdx, colIdx)
+				// If ColumnIndex is -1, use the current cell's column index
+				columnIdx := marker.ColumnIndex
+				if columnIdx == -1 {
+					columnIdx = cellIndex
+				}
+				logger.Debug("Found hideColumn marker in cell %d (cellIndex=%d), will hide column %d", colIdx, cellIndex, columnIdx)
+				columnsToHide[columnIdx] = strategy
 			}
 			
 			// Account for grid span
@@ -131,6 +156,8 @@ func processTableColumnMarkersInTable(table *Table) (*Table, error) {
 		return table, nil
 	}
 	
+	logger.Debug("Columns to hide: %v", columnsToHide)
+	
 	// Create a new table with updated structure
 	newTable := &Table{
 		Properties: table.Properties,
@@ -139,9 +166,11 @@ func processTableColumnMarkersInTable(table *Table) (*Table, error) {
 	}
 	
 	// Process each row to remove hidden columns
-	for _, row := range table.Rows {
+	for rowIdx, row := range table.Rows {
+		logger.Debug("Processing row %d with %d cells", rowIdx, len(row.Cells))
 		processedRow := processTableRow(&row, columnsToHide)
 		if processedRow != nil {
+			logger.Debug("Processed row %d has %d cells", rowIdx, len(processedRow.Cells))
 			newTable.Rows = append(newTable.Rows, *processedRow)
 		}
 	}
@@ -151,10 +180,13 @@ func processTableColumnMarkersInTable(table *Table) (*Table, error) {
 
 // getCellColumnMarker checks if a cell contains a column marker and returns it
 func getCellColumnMarker(cell *TableCell) (*TableColumnMarker, string) {
-	for _, para := range cell.Paragraphs {
-		for _, run := range para.Runs {
+	logger := GetLogger()
+	for pIdx, para := range cell.Paragraphs {
+		for rIdx, run := range para.Runs {
 			if run.Text != nil {
+				logger.Debug("Checking cell text in para %d, run %d: %q", pIdx, rIdx, run.Text.Content)
 				if marker, strategy := parseColumnMarkerFromText(run.Text.Content); marker != nil {
+					logger.Debug("Found column marker!")
 					return marker, strategy
 				}
 			}
@@ -306,6 +338,7 @@ func calculateNewGridColumns(oldWidths []int, columnsToHide map[int]string) []in
 
 // processTableRow processes a table row to remove hidden columns
 func processTableRow(row *TableRow, columnsToHide map[int]string) *TableRow {
+	logger := GetLogger()
 	if row == nil || len(columnsToHide) == 0 {
 		return row
 	}
@@ -316,7 +349,7 @@ func processTableRow(row *TableRow, columnsToHide map[int]string) *TableRow {
 	}
 	
 	cellIndex := 0
-	for _, cell := range row.Cells {
+	for cellNum, cell := range row.Cells {
 		// Get grid span
 		gridSpan := getCellGridSpan(&cell)
 		
@@ -326,6 +359,7 @@ func processTableRow(row *TableRow, columnsToHide map[int]string) *TableRow {
 		
 		for col := cellIndex; col < cellIndex+gridSpan; col++ {
 			if _, hide := columnsToHide[col]; hide {
+				logger.Debug("Cell %d (cellIndex=%d, span=%d): column %d should be hidden", cellNum, cellIndex, gridSpan, col)
 				hideCell = true
 				newGridSpan--
 			}
@@ -333,6 +367,7 @@ func processTableRow(row *TableRow, columnsToHide map[int]string) *TableRow {
 		
 		if !hideCell {
 			// Keep the cell, but update grid span if necessary
+			logger.Debug("Cell %d: keeping (not hidden)", cellNum)
 			cellCopy := cell
 			if newGridSpan != gridSpan && newGridSpan > 0 {
 				cellCopy = updateCellGridSpan(&cell, newGridSpan)
@@ -344,9 +379,12 @@ func processTableRow(row *TableRow, columnsToHide map[int]string) *TableRow {
 			newRow.Cells = append(newRow.Cells, cellCopy)
 		} else if newGridSpan > 0 {
 			// Partially hide merged cell
+			logger.Debug("Cell %d: partially hiding (newSpan=%d)", cellNum, newGridSpan)
 			cellCopy := updateCellGridSpan(&cell, newGridSpan)
 			cellCopy = cleanColumnMarkersFromCell(&cellCopy)
 			newRow.Cells = append(newRow.Cells, cellCopy)
+		} else {
+			logger.Debug("Cell %d: hiding completely", cellNum)
 		}
 		
 		cellIndex += gridSpan
