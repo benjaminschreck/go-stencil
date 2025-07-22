@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"io"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -165,7 +166,6 @@ func TestFragmentInclude(t *testing.T) {
 }
 
 func TestFragmentInDOCX(t *testing.T) {
-	t.Skip("Fragment support in DOCX rendering will be implemented in a future commit")
 	// Create a simple DOCX with fragment includes
 	docxContent := createTestDOCXWithFragments(t)
 	
@@ -204,19 +204,41 @@ func TestFragmentInDOCX(t *testing.T) {
 	
 	// Verify the rendered content
 	content := extractTextFromDOCX(t, rendered)
+	t.Logf("Rendered content: %q", content)
+	
+	// Also log the raw document XML for debugging
+	r, _ := zip.NewReader(bytes.NewReader(rendered), int64(len(rendered)))
+	for _, f := range r.File {
+		if f.Name == "word/document.xml" {
+			rc, _ := f.Open()
+			docXML, _ := io.ReadAll(rc)
+			rc.Close()
+			t.Logf("Document XML:\n%s", docXML)
+			break
+		}
+	}
+	
 	if !strings.Contains(content, "Header: Test Document") {
-		t.Error("rendered content does not contain expected header")
+		t.Errorf("rendered content does not contain expected header, got: %q", content)
 	}
 	if !strings.Contains(content, "Main content here") {
-		t.Error("rendered content does not contain expected main content")
+		t.Errorf("rendered content does not contain expected main content, got: %q", content)
 	}
 	if !strings.Contains(content, "Footer: Page 1") {
-		t.Error("rendered content does not contain expected footer")
+		t.Errorf("rendered content does not contain expected footer, got: %q", content)
 	}
 }
 
 func TestFragmentStyleMerging(t *testing.T) {
-	t.Skip("Fragment style merging will be implemented in a future commit")
+	// TODO: Implement style merging for DOCX fragments
+	// This requires:
+	// 1. Extracting styles from fragment DOCX files
+	// 2. Merging them into the main document's styles.xml
+	// 3. Handling style ID conflicts
+	// 4. Updating style references in fragment content
+	// 
+	// For now, we'll mark this as a known limitation
+	t.Skip("Fragment style merging is not yet implemented - fragments inherit main document styles only")
 	// Create main document with a style
 	mainDoc := createDOCXWithStyle(t, "Main {{include \"fragment\"}}", "MainStyle", "color:blue")
 	
@@ -242,6 +264,8 @@ func TestFragmentStyleMerging(t *testing.T) {
 	
 	// Verify both styles are present in the rendered document
 	styles := extractStylesFromDOCX(t, rendered)
+	t.Logf("Found styles: %v", styles)
+	
 	hasMainStyle := false
 	hasFragStyle := false
 	for _, style := range styles {
@@ -291,10 +315,57 @@ func TestFragmentCircularReference(t *testing.T) {
 // Helper functions
 
 func createTestDOCXWithFragments(t *testing.T) []byte {
-	content := `{{include "header"}}
-{{content}}
-{{include "footer"}}`
-	return createSimpleDOCX(t, content)
+	// Create a DOCX with multiple paragraphs, each containing an include or content
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	
+	// Add _rels/.rels
+	rels, _ := w.Create("_rels/.rels")
+	io.WriteString(rels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`)
+	
+	// Add word/_rels/document.xml.rels
+	wordRels, _ := w.Create("word/_rels/document.xml.rels")
+	io.WriteString(wordRels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>`)
+	
+	// Add word/document.xml with three paragraphs
+	doc, _ := w.Create("word/document.xml")
+	io.WriteString(doc, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:t>{{include "header"}}</w:t>
+      </w:r>
+    </w:p>
+    <w:p>
+      <w:r>
+        <w:t>{{content}}</w:t>
+      </w:r>
+    </w:p>
+    <w:p>
+      <w:r>
+        <w:t>{{include "footer"}}</w:t>
+      </w:r>
+    </w:p>
+  </w:body>
+</w:document>`)
+	
+	// Add [Content_Types].xml
+	ct, _ := w.Create("[Content_Types].xml")
+	io.WriteString(ct, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`)
+	
+	w.Close()
+	return buf.Bytes()
 }
 
 func createFragmentDOCX(t *testing.T, content string) []byte {
@@ -376,11 +447,14 @@ func extractStylesFromDOCX(t *testing.T, docxBytes []byte) []string {
 				t.Fatalf("failed to read styles.xml: %v", err)
 			}
 			
-			// Extract style IDs (simplified)
+			// Extract style IDs using regex for more accurate extraction
 			text := string(content)
-			for _, match := range strings.Split(text, "w:styleId=\"") {
-				if idx := strings.Index(match, "\""); idx > 0 {
-					styles = append(styles, match[:idx])
+			// Look for w:styleId="..." patterns
+			re := regexp.MustCompile(`w:styleId="([^"]+)"`)
+			matches := re.FindAllStringSubmatch(text, -1)
+			for _, match := range matches {
+				if len(match) > 1 {
+					styles = append(styles, match[1])
 				}
 			}
 		}
