@@ -247,8 +247,13 @@ func FormatValue(value interface{}) string {
 		return fmt.Sprintf("%d", v)
 	case uint, uint8, uint16, uint32, uint64:
 		return fmt.Sprintf("%d", v)
-	case float32, float64:
-		return fmt.Sprintf("%v", v)
+	case float32:
+		// Use strconv.FormatFloat with 'g' format and precision 10 for cleaner representation
+		return strconv.FormatFloat(float64(v), 'g', 10, 32)
+	case float64:
+		// Use strconv.FormatFloat with 'g' format and precision 15 for cleaner representation
+		// This removes unnecessary trailing zeros and handles precision issues
+		return strconv.FormatFloat(v, 'g', 15, 64)
 	case bool:
 		return fmt.Sprintf("%v", v)
 	default:
