@@ -48,11 +48,14 @@ func RenderParagraph(para *Paragraph, data TemplateData) (*Paragraph, error) {
 // RenderParagraphWithContext renders a paragraph with context
 func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderContext) (*Paragraph, error) {
 	// First check if the paragraph contains control structures
-	// by getting the full text content
+	// by getting the full text content including line breaks
 	fullText := ""
 	for _, run := range para.Runs {
 		if run.Text != nil {
 			fullText += run.Text.Content
+		} else if run.Break != nil {
+			// Include line breaks in the full text
+			fullText += "\n"
 		}
 	}
 	
@@ -83,25 +86,42 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 			Properties: para.Properties,
 		}
 		
-		// If we have any runs, use the first run's properties for the new run
+		// Convert the rendered text into runs, preserving line breaks
 		if len(para.Runs) > 0 {
-			newRun := Run{
-				Properties: para.Runs[0].Properties,
-				Text: &Text{
-					Content: renderedText,
-				},
-			}
+			// Split the rendered text by newlines to preserve line breaks
+			lines := strings.Split(renderedText, "\n")
 			
-			// Check if the run contains OOXML fragments that need to be expanded
-			if ooxmlFragmentRegex.MatchString(renderedText) {
-				// Process the run to handle OOXML fragments
-				expandedRuns, err := expandOOXMLFragments(&newRun, data, ctx)
-				if err != nil {
-					return nil, err
+			for i, line := range lines {
+				if line != "" {
+					// Create a text run for this line
+					textRun := Run{
+						Properties: para.Runs[0].Properties,
+						Text: &Text{
+							Content: line,
+						},
+					}
+					
+					// Check if the run contains OOXML fragments that need to be expanded
+					if ooxmlFragmentRegex.MatchString(line) {
+						// Process the run to handle OOXML fragments
+						expandedRuns, err := expandOOXMLFragments(&textRun, data, ctx)
+						if err != nil {
+							return nil, err
+						}
+						rendered.Runs = append(rendered.Runs, expandedRuns...)
+					} else {
+						rendered.Runs = append(rendered.Runs, textRun)
+					}
 				}
-				rendered.Runs = append(rendered.Runs, expandedRuns...)
-			} else {
-				rendered.Runs = append(rendered.Runs, newRun)
+				
+				// Add a line break run between lines (but not after the last line)
+				if i < len(lines)-1 {
+					breakRun := Run{
+						Properties: para.Runs[0].Properties,
+						Break:      &Break{},
+					}
+					rendered.Runs = append(rendered.Runs, breakRun)
+				}
 			}
 		}
 		
