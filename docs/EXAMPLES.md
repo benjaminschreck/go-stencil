@@ -177,7 +177,7 @@ INVENTORY REPORT
 {{if product.stock > 0}}
 | {{product.name}} | {{product.stock}} | ${{format("%.2f", product.price)}} | {{if product.stock < 10}}Low Stock{{else}}Available{{end}} |
 {{else}}
-{{hideRow}}
+{{hideRow()}}
 {{end}}
 {{end}}
 

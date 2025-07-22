@@ -586,7 +586,7 @@ All template expressions use double curly braces `{{}}` with descriptive keyword
 - Page breaks: `{{pageBreak}}`
 - HTML content: `{{html("<b>Bold text</b>")}}`
 - Raw XML: `{{xml("<w:br/>")}}`
-- Table operations: `{{hideRow}}`, `{{hideColumn}}`, `{{hideColumn(1, "redistribute")}}`
+- Table operations: `{{hideRow()}}`, `{{hideColumn()}}`, `{{hideColumn(1, "redistribute")}}`
 - Image replacement: `{{replaceImage("data:image/png;base64,...")}}`
 - Link replacement: `{{replaceLink("https://example.com")}}`
 - Fragment inclusion: `{{include "Header Template"}}`

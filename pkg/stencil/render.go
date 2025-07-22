@@ -47,6 +47,69 @@ func RenderParagraph(para *Paragraph, data TemplateData) (*Paragraph, error) {
 
 // RenderParagraphWithContext renders a paragraph with context
 func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderContext) (*Paragraph, error) {
+	// First check if the paragraph contains control structures
+	// by getting the full text content
+	fullText := ""
+	for _, run := range para.Runs {
+		if run.Text != nil {
+			fullText += run.Text.Content
+		}
+	}
+	
+	// Check if we have control structures
+	tokens := Tokenize(fullText)
+	hasControlStructures := false
+	for _, token := range tokens {
+		switch token.Type {
+		case TokenIf, TokenFor, TokenUnless, TokenElse, TokenElsif, TokenEnd:
+			hasControlStructures = true
+			break
+		}
+	}
+	
+	// If we have control structures, parse and render them
+	if hasControlStructures {
+		// Parse the control structures
+		structures, err := ParseControlStructures(fullText)
+		if err == nil {
+			// Render the control structures
+			renderedText, err := renderControlBodyWithContext(structures, data, ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to render control structures in paragraph: %w", err)
+			}
+		
+		// Create a new paragraph with the rendered text
+		rendered := &Paragraph{
+			Properties: para.Properties,
+		}
+		
+		// If we have any runs, use the first run's properties for the new run
+		if len(para.Runs) > 0 {
+			newRun := Run{
+				Properties: para.Runs[0].Properties,
+				Text: &Text{
+					Content: renderedText,
+				},
+			}
+			
+			// Check if the run contains OOXML fragments that need to be expanded
+			if ooxmlFragmentRegex.MatchString(renderedText) {
+				// Process the run to handle OOXML fragments
+				expandedRuns, err := expandOOXMLFragments(&newRun, data, ctx)
+				if err != nil {
+					return nil, err
+				}
+				rendered.Runs = append(rendered.Runs, expandedRuns...)
+			} else {
+				rendered.Runs = append(rendered.Runs, newRun)
+			}
+		}
+		
+		return rendered, nil
+		}
+	}
+	
+	// Otherwise, render normally
 	rendered := &Paragraph{
 		Properties: para.Properties,
 	}
