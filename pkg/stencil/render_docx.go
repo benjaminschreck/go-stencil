@@ -103,7 +103,8 @@ func mergeConsecutiveRuns(para *Paragraph) {
 		}
 
 		// Check if this run can be merged with the previous one
-		if run.Text != nil && currentRun != nil && currentRun.Text != nil {
+		// Only merge if the current run has text AND no break
+		if run.Text != nil && run.Break == nil && currentRun != nil && currentRun.Text != nil {
 			// Merge text content
 			currentRun.Text.Content += run.Text.Content
 		} else {
@@ -111,8 +112,26 @@ func mergeConsecutiveRuns(para *Paragraph) {
 			if currentRun != nil {
 				mergedRuns = append(mergedRuns, *currentRun)
 			}
-			newRun := run
-			currentRun = &newRun
+			
+			// If this run has both break and text, we need to split it
+			if run.Break != nil && run.Text != nil {
+				// First add the break
+				breakRun := Run{
+					Properties: run.Properties,
+					Break:      run.Break,
+				}
+				mergedRuns = append(mergedRuns, breakRun)
+				
+				// Then create a new run with just the text
+				textRun := Run{
+					Properties: run.Properties,
+					Text:       run.Text,
+				}
+				currentRun = &textRun
+			} else {
+				newRun := run
+				currentRun = &newRun
+			}
 		}
 	}
 
