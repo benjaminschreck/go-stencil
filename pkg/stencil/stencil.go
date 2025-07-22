@@ -499,8 +499,8 @@ func extractTextFromDocument(doc *Document, result *strings.Builder) {
 // extractTextFromBody extracts text from document body
 func extractTextFromBody(body *Body, result *strings.Builder) {
 	for _, elem := range body.Elements {
-		if para, ok := elem.(Paragraph); ok {
-			extractTextFromParagraph(&para, result)
+		if para, ok := elem.(*Paragraph); ok {
+			extractTextFromParagraph(para, result)
 		}
 	}
 }

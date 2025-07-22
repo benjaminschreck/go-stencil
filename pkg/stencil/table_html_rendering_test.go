@@ -69,7 +69,7 @@ func TestHTMLFunctionInTableCells(t *testing.T) {
 	t.Logf("Cell 1 text: %q", cell1Text)
 	t.Logf("Cell 2 text: %q", cell2Text)
 
-	// The text should contain OOXML fragment markers, not the original HTML
+	// The template expressions should be processed
 	if strings.Contains(cell1Text, "html(") {
 		t.Errorf("Cell 1 still contains unprocessed template expression: %s", cell1Text)
 	}
@@ -77,12 +77,13 @@ func TestHTMLFunctionInTableCells(t *testing.T) {
 		t.Errorf("Cell 2 still contains unprocessed template expression: %s", cell2Text)
 	}
 
-	// Check if OOXML fragments were created
-	if !strings.Contains(cell1Text, "{{OOXML_FRAGMENT:") {
-		t.Errorf("Cell 1 should contain OOXML fragment marker, got: %s", cell1Text)
+	// Check that the HTML was properly rendered to text
+	// The HTML should be converted to plain text (just the content without tags)
+	if cell1Text != "Bold text" {
+		t.Errorf("Cell 1 text should be 'Bold text', got: %s", cell1Text)
 	}
-	if !strings.Contains(cell2Text, "{{OOXML_FRAGMENT:") {
-		t.Errorf("Cell 2 should contain OOXML fragment marker, got: %s", cell2Text)
+	if cell2Text != "Italic text" {
+		t.Errorf("Cell 2 text should be 'Italic text', got: %s", cell2Text)
 	}
 }
 
@@ -140,13 +141,14 @@ func TestHTMLFunctionInTableCellsWithSplitRuns(t *testing.T) {
 	cellText := rendered.Rows[0].Cells[0].GetText()
 	t.Logf("Cell text: %q", cellText)
 
-	// The text should contain OOXML fragment marker, not the original HTML
+	// The template expression should be processed
 	if strings.Contains(cellText, "html(") {
 		t.Errorf("Cell still contains unprocessed template expression: %s", cellText)
 	}
 
-	// Check if OOXML fragment was created
-	if !strings.Contains(cellText, "{{OOXML_FRAGMENT:") {
-		t.Errorf("Cell should contain OOXML fragment marker, got: %s", cellText)
+	// Check that the HTML was properly rendered to text
+	// The HTML should be converted to plain text (just the content without tags)
+	if cellText != "Bold text" {
+		t.Errorf("Cell text should be 'Bold text', got: %s", cellText)
 	}
 }

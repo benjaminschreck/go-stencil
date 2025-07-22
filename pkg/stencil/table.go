@@ -35,8 +35,8 @@ func extractTables(doc *Document) []Table {
 	
 	var tables []Table
 	for _, elem := range doc.Body.Elements {
-		if table, ok := elem.(Table); ok {
-			tables = append(tables, table)
+		if table, ok := elem.(*Table); ok {
+			tables = append(tables, *table)
 		}
 	}
 	return tables
@@ -177,9 +177,9 @@ func FindTablesWithTemplates(doc *Document) []*Table {
 	var tablesWithTemplates []*Table
 	
 	for _, elem := range doc.Body.Elements {
-		if table, ok := elem.(Table); ok {
-			if tableHasTemplates(&table) {
-				tablesWithTemplates = append(tablesWithTemplates, &table)
+		if table, ok := elem.(*Table); ok {
+			if tableHasTemplates(table) {
+				tablesWithTemplates = append(tablesWithTemplates, table)
 			}
 		}
 	}

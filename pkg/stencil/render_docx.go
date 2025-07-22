@@ -18,8 +18,8 @@ type elseBranch struct {
 func findMatchingEndInElements(elements []BodyElement, startIdx int) (int, error) {
 	depth := 1
 	for i := startIdx + 1; i < len(elements); i++ {
-		if para, ok := elements[i].(Paragraph); ok {
-			controlType, _ := detectControlStructure(&para)
+		if para, ok := elements[i].(*Paragraph); ok {
+			controlType, _ := detectControlStructure(para)
 			switch controlType {
 			case "for", "if", "unless":
 				depth++
@@ -40,8 +40,8 @@ func findIfStructureInElements(elements []BodyElement, startIdx int) (endIdx int
 	branches = []elseBranch{}
 
 	for i := startIdx + 1; i < len(elements); i++ {
-		if para, ok := elements[i].(Paragraph); ok {
-			controlType, condition := detectControlStructure(&para)
+		if para, ok := elements[i].(*Paragraph); ok {
+			controlType, condition := detectControlStructure(para)
 
 			if depth == 1 {
 				switch controlType {
@@ -83,21 +83,21 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 	
 	for _, elem := range elements {
 		switch el := elem.(type) {
-		case Paragraph:
-			para := el
+		case *Paragraph:
+			para := *el
 			rendered, err := RenderParagraphWithContext(&para, data, ctx)
 			if err != nil {
 				return nil, err
 			}
-			result = append(result, *rendered)
+			result = append(result, rendered)
 			
-		case Table:
-			table := el
+		case *Table:
+			table := *el
 			rendered, err := RenderTableWithControlStructures(&table, data, ctx)
 			if err != nil {
 				return nil, err
 			}
-			result = append(result, *rendered)
+			result = append(result, rendered)
 			
 		default:
 			// For unknown elements, keep as-is
@@ -176,13 +176,13 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 	// First, merge runs in all paragraphs to handle split template variables
 	for i, elem := range body.Elements {
 		switch el := elem.(type) {
-		case Paragraph:
-			p := el // Create a copy
+		case *Paragraph:
+			p := *el // Create a copy
 			mergeConsecutiveRuns(&p)
-			body.Elements[i] = p // Update the element with merged runs
-		case Table:
+			body.Elements[i] = &p // Update the element with merged runs
+		case *Table:
 			// Also merge runs in table cells
-			t := el // Create a copy
+			t := *el // Create a copy
 			for rowIdx, row := range t.Rows {
 				for cellIdx, cell := range row.Cells {
 					for paraIdx, para := range cell.Paragraphs {
@@ -192,7 +192,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					}
 				}
 			}
-			body.Elements[i] = t // Update the element with merged runs
+			body.Elements[i] = &t // Update the element with merged runs
 		}
 	}
 
@@ -203,11 +203,12 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 	// Process elements in order
 	i := 0
 	for i < len(body.Elements) {
+		
 		elem := body.Elements[i]
 
 		switch el := elem.(type) {
-		case Paragraph:
-			para := el
+		case *Paragraph:
+			para := *el
 
 			// Check if this paragraph contains a control structure
 			controlType, controlContent := detectControlStructure(&para)
@@ -220,7 +221,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					return nil, err
 				}
 				for _, p := range renderedParas {
-					rendered.Elements = append(rendered.Elements, p)
+					rendered.Elements = append(rendered.Elements, &p)
 				}
 				i++
 
@@ -272,7 +273,12 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				}
 
 				// Skip to after the end marker
-				i = endIdx + 1
+				if endIdx >= 0 && endIdx < len(body.Elements) {
+					i = endIdx + 1
+				} else {
+					// This should not happen if findMatchingEndInElements worked correctly
+					return nil, fmt.Errorf("invalid endIdx %d for for loop at element %d", endIdx, i)
+				}
 
 			case "if":
 				// Find runs before the {{if}} statement
@@ -301,7 +307,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				// Handle if statement
 				endIdx, elseBranches, err := findIfStructureInElements(body.Elements, i)
 				if err != nil {
-					return nil, fmt.Errorf("no matching {{end}} for {{if}} at element %d", i)
+					return nil, fmt.Errorf("no matching {{end}} for {{if}} at element %d: %w", i, err)
 				}
 
 				// Parse if condition
@@ -335,9 +341,9 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					
 					// If there were runs before the {{if}}, prepend them to the first element
 					if len(prefixRuns) > 0 && len(branchElements) > 0 {
-						if firstPara, ok := branchElements[0].(Paragraph); ok {
+						if firstPara, ok := branchElements[0].(*Paragraph); ok {
 							// Create a new paragraph with the prefix runs
-							newPara := Paragraph{
+							newPara := &Paragraph{
 								Properties: firstPara.Properties,
 							}
 							
@@ -351,7 +357,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 							branchElements[0] = newPara
 						} else if len(prefixRuns) > 0 {
 							// If the first element is not a paragraph, create a new paragraph with the prefix
-							prefixPara := Paragraph{
+							prefixPara := &Paragraph{
 								Properties: para.Properties,
 								Runs:       prefixRuns,
 							}
@@ -393,9 +399,9 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 								
 								// If there were runs before the {{if}}, prepend them to the first element
 								if len(prefixRuns) > 0 && len(branchElements) > 0 {
-									if firstPara, ok := branchElements[0].(Paragraph); ok {
+									if firstPara, ok := branchElements[0].(*Paragraph); ok {
 										// Create a new paragraph with the prefix runs
-										newPara := Paragraph{
+										newPara := &Paragraph{
 											Properties: firstPara.Properties,
 										}
 										
@@ -409,7 +415,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 										branchElements[0] = newPara
 									} else if len(prefixRuns) > 0 {
 										// If the first element is not a paragraph, create a new paragraph with the prefix
-										prefixPara := Paragraph{
+										prefixPara := &Paragraph{
 											Properties: para.Properties,
 											Runs:       prefixRuns,
 										}
@@ -432,9 +438,9 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 							
 							// If there were runs before the {{if}}, prepend them to the first element
 							if len(prefixRuns) > 0 && len(branchElements) > 0 {
-								if firstPara, ok := branchElements[0].(Paragraph); ok {
+								if firstPara, ok := branchElements[0].(*Paragraph); ok {
 									// Create a new paragraph with the prefix runs
-									newPara := Paragraph{
+									newPara := &Paragraph{
 										Properties: firstPara.Properties,
 									}
 									
@@ -448,7 +454,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 									branchElements[0] = newPara
 								} else if len(prefixRuns) > 0 {
 									// If the first element is not a paragraph, create a new paragraph with the prefix
-									prefixPara := Paragraph{
+									prefixPara := &Paragraph{
 										Properties: para.Properties,
 										Runs:       prefixRuns,
 									}
@@ -464,7 +470,12 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				}
 
 				// Skip to after the end marker
-				i = endIdx + 1
+				if endIdx >= 0 && endIdx < len(body.Elements) {
+					i = endIdx + 1
+				} else {
+					// This should not happen if findIfStructureInElements worked correctly
+					return nil, fmt.Errorf("invalid endIdx %d for if statement at element %d", endIdx, i)
+				}
 
 			case "unless":
 				// Handle unless statement (similar to if but inverted)
@@ -512,7 +523,12 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				}
 
 				// Skip to after the end marker
-				i = endIdx + 1
+				if endIdx >= 0 && endIdx < len(body.Elements) {
+					i = endIdx + 1
+				} else {
+					// This should not happen if findIfStructureInElements worked correctly
+					return nil, fmt.Errorf("invalid endIdx %d for unless statement at element %d", endIdx, i)
+				}
 
 			case "include":
 				// Handle include directive
@@ -579,23 +595,27 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				}
 				i++
 
+			case "end":
+				// Unmatched end marker - this should not happen in well-formed templates
+				return nil, fmt.Errorf("unmatched {{end}} at element %d", i)
+
 			default:
 				// Regular paragraph, render normally
 				renderedPara, err := RenderParagraphWithContext(&para, data, ctx)
 				if err != nil {
 					return nil, err
 				}
-				rendered.Elements = append(rendered.Elements, *renderedPara)
+				rendered.Elements = append(rendered.Elements, renderedPara)
 				i++
 			}
 
-		case Table:
+		case *Table:
 			// Render table with control structures
-			renderedTable, err := RenderTableWithControlStructures(&el, data, ctx)
+			renderedTable, err := RenderTableWithControlStructures(el, data, ctx)
 			if err != nil {
 				return nil, fmt.Errorf("failed to render table: %w", err)
 			}
-			rendered.Elements = append(rendered.Elements, *renderedTable)
+			rendered.Elements = append(rendered.Elements, renderedTable)
 			i++
 		}
 	}
