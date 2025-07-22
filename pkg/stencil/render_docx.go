@@ -77,12 +77,35 @@ func findIfStructureInElements(elements []BodyElement, startIdx int) (endIdx int
 
 // renderElementsWithContext renders a slice of elements with the given context
 func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *renderContext) ([]BodyElement, error) {
-	tempBody := &Body{Elements: elements}
-	rendered, err := renderBodyWithElementOrder(tempBody, data, ctx)
-	if err != nil {
-		return nil, err
+	// Render elements without processing control structures again
+	// This is called from within control structure processing, so we just render individual elements
+	result := make([]BodyElement, 0, len(elements))
+	
+	for _, elem := range elements {
+		switch el := elem.(type) {
+		case Paragraph:
+			para := el
+			rendered, err := RenderParagraphWithContext(&para, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, *rendered)
+			
+		case Table:
+			table := el
+			rendered, err := RenderTableWithControlStructures(&table, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, *rendered)
+			
+		default:
+			// For unknown elements, keep as-is
+			result = append(result, elem)
+		}
 	}
-	return rendered.Elements, nil
+	
+	return result, nil
 }
 
 // mergeConsecutiveRuns merges consecutive runs in a paragraph to handle split template variables
@@ -252,12 +275,27 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				i = endIdx + 1
 
 			case "if":
-				// Check if this paragraph has text before the {{if}}
-				paraText := getParagraphText(&para)
-				ifIndex := strings.Index(paraText, "{{if ")
-				var prefixText string
-				if ifIndex > 0 {
-					prefixText = paraText[:ifIndex]
+				// Find runs before the {{if}} statement
+				var prefixRuns []Run
+				ifFound := false
+				for _, run := range para.Runs {
+					if run.Text != nil && strings.Contains(run.Text.Content, "{{if ") {
+						// Check if there's text before {{if}} in this run
+						ifIndex := strings.Index(run.Text.Content, "{{if ")
+						if ifIndex > 0 {
+							// Split this run - keep the prefix
+							prefixRun := Run{
+								Properties: run.Properties,
+								Text: &Text{Content: run.Text.Content[:ifIndex]},
+							}
+							prefixRuns = append(prefixRuns, prefixRun)
+						}
+						ifFound = true
+						break
+					} else if !ifFound {
+						// This run comes before the {{if}}, keep it entirely
+						prefixRuns = append(prefixRuns, run)
+					}
 				}
 
 				// Handle if statement
@@ -295,41 +333,30 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 						return nil, err
 					}
 					
-					// If there was text before the {{if}}, prepend it to the first element
-					if prefixText != "" && len(branchElements) > 0 {
+					// If there were runs before the {{if}}, prepend them to the first element
+					if len(prefixRuns) > 0 && len(branchElements) > 0 {
 						if firstPara, ok := branchElements[0].(Paragraph); ok {
-							// Create a new paragraph with the prefix text
+							// Create a new paragraph with the prefix runs
 							newPara := Paragraph{
 								Properties: firstPara.Properties,
 							}
 							
-							// Add a run with the prefix text
-							if len(para.Runs) > 0 {
-								prefixRun := Run{
-									Properties: para.Runs[0].Properties,
-									Text: &Text{Content: prefixText},
-								}
-								newPara.Runs = append(newPara.Runs, prefixRun)
-							}
+							// Add all prefix runs (including any line breaks)
+							newPara.Runs = append(newPara.Runs, prefixRuns...)
 							
 							// Add all runs from the first paragraph
 							newPara.Runs = append(newPara.Runs, firstPara.Runs...)
 							
 							// Replace the first element
 							branchElements[0] = newPara
-						} else if prefixText != "" {
+						} else if len(prefixRuns) > 0 {
 							// If the first element is not a paragraph, create a new paragraph with the prefix
-							if len(para.Runs) > 0 {
-								prefixPara := Paragraph{
-									Properties: para.Properties,
-									Runs: []Run{{
-										Properties: para.Runs[0].Properties,
-										Text: &Text{Content: prefixText},
-									}},
-								}
-								// Insert the prefix paragraph at the beginning
-								branchElements = append([]BodyElement{prefixPara}, branchElements...)
+							prefixPara := Paragraph{
+								Properties: para.Properties,
+								Runs:       prefixRuns,
 							}
+							// Insert the prefix paragraph at the beginning
+							branchElements = append([]BodyElement{prefixPara}, branchElements...)
 						}
 					}
 					
@@ -364,41 +391,30 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 									return nil, err
 								}
 								
-								// If there was text before the {{if}}, prepend it to the first element
-								if prefixText != "" && len(branchElements) > 0 {
+								// If there were runs before the {{if}}, prepend them to the first element
+								if len(prefixRuns) > 0 && len(branchElements) > 0 {
 									if firstPara, ok := branchElements[0].(Paragraph); ok {
-										// Create a new paragraph with the prefix text
+										// Create a new paragraph with the prefix runs
 										newPara := Paragraph{
 											Properties: firstPara.Properties,
 										}
 										
-										// Add a run with the prefix text
-										if len(para.Runs) > 0 {
-											prefixRun := Run{
-												Properties: para.Runs[0].Properties,
-												Text: &Text{Content: prefixText},
-											}
-											newPara.Runs = append(newPara.Runs, prefixRun)
-										}
+										// Add all prefix runs (including any line breaks)
+										newPara.Runs = append(newPara.Runs, prefixRuns...)
 										
 										// Add all runs from the first paragraph
 										newPara.Runs = append(newPara.Runs, firstPara.Runs...)
 										
 										// Replace the first element
 										branchElements[0] = newPara
-									} else if prefixText != "" {
+									} else if len(prefixRuns) > 0 {
 										// If the first element is not a paragraph, create a new paragraph with the prefix
-										if len(para.Runs) > 0 {
-											prefixPara := Paragraph{
-												Properties: para.Properties,
-												Runs: []Run{{
-													Properties: para.Runs[0].Properties,
-													Text: &Text{Content: prefixText},
-												}},
-											}
-											// Insert the prefix paragraph at the beginning
-											branchElements = append([]BodyElement{prefixPara}, branchElements...)
+										prefixPara := Paragraph{
+											Properties: para.Properties,
+											Runs:       prefixRuns,
 										}
+										// Insert the prefix paragraph at the beginning
+										branchElements = append([]BodyElement{prefixPara}, branchElements...)
 									}
 								}
 								
@@ -414,41 +430,30 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 								return nil, err
 							}
 							
-							// If there was text before the {{if}}, prepend it to the first element
-							if prefixText != "" && len(branchElements) > 0 {
+							// If there were runs before the {{if}}, prepend them to the first element
+							if len(prefixRuns) > 0 && len(branchElements) > 0 {
 								if firstPara, ok := branchElements[0].(Paragraph); ok {
-									// Create a new paragraph with the prefix text
+									// Create a new paragraph with the prefix runs
 									newPara := Paragraph{
 										Properties: firstPara.Properties,
 									}
 									
-									// Add a run with the prefix text
-									if len(para.Runs) > 0 {
-										prefixRun := Run{
-											Properties: para.Runs[0].Properties,
-											Text: &Text{Content: prefixText},
-										}
-										newPara.Runs = append(newPara.Runs, prefixRun)
-									}
+									// Add all prefix runs (including any line breaks)
+									newPara.Runs = append(newPara.Runs, prefixRuns...)
 									
 									// Add all runs from the first paragraph
 									newPara.Runs = append(newPara.Runs, firstPara.Runs...)
 									
 									// Replace the first element
 									branchElements[0] = newPara
-								} else if prefixText != "" {
+								} else if len(prefixRuns) > 0 {
 									// If the first element is not a paragraph, create a new paragraph with the prefix
-									if len(para.Runs) > 0 {
-										prefixPara := Paragraph{
-											Properties: para.Properties,
-											Runs: []Run{{
-												Properties: para.Runs[0].Properties,
-												Text: &Text{Content: prefixText},
-											}},
-										}
-										// Insert the prefix paragraph at the beginning
-										branchElements = append([]BodyElement{prefixPara}, branchElements...)
+									prefixPara := Paragraph{
+										Properties: para.Properties,
+										Runs:       prefixRuns,
 									}
+									// Insert the prefix paragraph at the beginning
+									branchElements = append([]BodyElement{prefixPara}, branchElements...)
 								}
 							}
 							
