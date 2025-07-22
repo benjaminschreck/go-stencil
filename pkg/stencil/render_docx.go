@@ -233,6 +233,14 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				i = endIdx + 1
 
 			case "if":
+				// Check if this paragraph has text before the {{if}}
+				paraText := getParagraphText(&para)
+				ifIndex := strings.Index(paraText, "{{if ")
+				var prefixText string
+				if ifIndex > 0 {
+					prefixText = paraText[:ifIndex]
+				}
+
 				// Handle if statement
 				endIdx, elseBranches, err := findIfStructureInElements(body.Elements, i)
 				if err != nil {
@@ -267,6 +275,45 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					if err != nil {
 						return nil, err
 					}
+					
+					// If there was text before the {{if}}, prepend it to the first element
+					if prefixText != "" && len(branchElements) > 0 {
+						if firstPara, ok := branchElements[0].(Paragraph); ok {
+							// Create a new paragraph with the prefix text
+							newPara := Paragraph{
+								Properties: firstPara.Properties,
+							}
+							
+							// Add a run with the prefix text
+							if len(para.Runs) > 0 {
+								prefixRun := Run{
+									Properties: para.Runs[0].Properties,
+									Text: &Text{Content: prefixText},
+								}
+								newPara.Runs = append(newPara.Runs, prefixRun)
+							}
+							
+							// Add all runs from the first paragraph
+							newPara.Runs = append(newPara.Runs, firstPara.Runs...)
+							
+							// Replace the first element
+							branchElements[0] = newPara
+						} else if prefixText != "" {
+							// If the first element is not a paragraph, create a new paragraph with the prefix
+							if len(para.Runs) > 0 {
+								prefixPara := Paragraph{
+									Properties: para.Properties,
+									Runs: []Run{{
+										Properties: para.Runs[0].Properties,
+										Text: &Text{Content: prefixText},
+									}},
+								}
+								// Insert the prefix paragraph at the beginning
+								branchElements = append([]BodyElement{prefixPara}, branchElements...)
+							}
+						}
+					}
+					
 					rendered.Elements = append(rendered.Elements, branchElements...)
 					branchRendered = true
 				} else {
@@ -297,6 +344,45 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 								if err != nil {
 									return nil, err
 								}
+								
+								// If there was text before the {{if}}, prepend it to the first element
+								if prefixText != "" && len(branchElements) > 0 {
+									if firstPara, ok := branchElements[0].(Paragraph); ok {
+										// Create a new paragraph with the prefix text
+										newPara := Paragraph{
+											Properties: firstPara.Properties,
+										}
+										
+										// Add a run with the prefix text
+										if len(para.Runs) > 0 {
+											prefixRun := Run{
+												Properties: para.Runs[0].Properties,
+												Text: &Text{Content: prefixText},
+											}
+											newPara.Runs = append(newPara.Runs, prefixRun)
+										}
+										
+										// Add all runs from the first paragraph
+										newPara.Runs = append(newPara.Runs, firstPara.Runs...)
+										
+										// Replace the first element
+										branchElements[0] = newPara
+									} else if prefixText != "" {
+										// If the first element is not a paragraph, create a new paragraph with the prefix
+										if len(para.Runs) > 0 {
+											prefixPara := Paragraph{
+												Properties: para.Properties,
+												Runs: []Run{{
+													Properties: para.Runs[0].Properties,
+													Text: &Text{Content: prefixText},
+												}},
+											}
+											// Insert the prefix paragraph at the beginning
+											branchElements = append([]BodyElement{prefixPara}, branchElements...)
+										}
+									}
+								}
+								
 								rendered.Elements = append(rendered.Elements, branchElements...)
 								branchRendered = true
 								break
@@ -308,6 +394,45 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 							if err != nil {
 								return nil, err
 							}
+							
+							// If there was text before the {{if}}, prepend it to the first element
+							if prefixText != "" && len(branchElements) > 0 {
+								if firstPara, ok := branchElements[0].(Paragraph); ok {
+									// Create a new paragraph with the prefix text
+									newPara := Paragraph{
+										Properties: firstPara.Properties,
+									}
+									
+									// Add a run with the prefix text
+									if len(para.Runs) > 0 {
+										prefixRun := Run{
+											Properties: para.Runs[0].Properties,
+											Text: &Text{Content: prefixText},
+										}
+										newPara.Runs = append(newPara.Runs, prefixRun)
+									}
+									
+									// Add all runs from the first paragraph
+									newPara.Runs = append(newPara.Runs, firstPara.Runs...)
+									
+									// Replace the first element
+									branchElements[0] = newPara
+								} else if prefixText != "" {
+									// If the first element is not a paragraph, create a new paragraph with the prefix
+									if len(para.Runs) > 0 {
+										prefixPara := Paragraph{
+											Properties: para.Properties,
+											Runs: []Run{{
+												Properties: para.Runs[0].Properties,
+												Text: &Text{Content: prefixText},
+											}},
+										}
+										// Insert the prefix paragraph at the beginning
+										branchElements = append([]BodyElement{prefixPara}, branchElements...)
+									}
+								}
+							}
+							
 							rendered.Elements = append(rendered.Elements, branchElements...)
 							break
 						}
@@ -500,11 +625,44 @@ func detectControlStructure(para *Paragraph) (string, string) {
 		}
 	}
 
+	// Check if text contains a for structure (not necessarily at the start)
+	if idx := strings.Index(text, "{{for "); idx >= 0 && !strings.Contains(text, "{{end}}") {
+		// Extract the for content
+		startIdx := idx + 6 // Skip "{{for "
+		endIdx := strings.Index(text[startIdx:], "}}")
+		if endIdx > 0 {
+			content := text[startIdx:startIdx+endIdx]
+			return "for", strings.TrimSpace(content)
+		}
+	}
+
+	// Check if text contains an if structure (not necessarily at the start)
+	if idx := strings.Index(text, "{{if "); idx >= 0 && !strings.Contains(text, "{{end}}") {
+		// Extract the if condition
+		startIdx := idx + 5 // Skip "{{if "
+		endIdx := strings.Index(text[startIdx:], "}}")
+		if endIdx > 0 {
+			content := text[startIdx:startIdx+endIdx]
+			return "if", strings.TrimSpace(content)
+		}
+	}
+
 	if strings.HasPrefix(text, "{{unless ") {
 		// Extract just the unless part
 		endIdx := strings.Index(text, "}}")
 		if endIdx > 0 {
 			content := text[8:endIdx] // Remove {{unless
+			return "unless", strings.TrimSpace(content)
+		}
+	}
+
+	// Check if text contains an unless structure (not necessarily at the start)
+	if idx := strings.Index(text, "{{unless "); idx >= 0 && !strings.Contains(text, "{{end}}") {
+		// Extract the unless condition
+		startIdx := idx + 9 // Skip "{{unless "
+		endIdx := strings.Index(text[startIdx:], "}}")
+		if endIdx > 0 {
+			content := text[startIdx:startIdx+endIdx]
 			return "unless", strings.TrimSpace(content)
 		}
 	}
