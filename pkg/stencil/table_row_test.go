@@ -9,8 +9,8 @@ func createBodyWithTables(tables []Table) *Body {
 	body := &Body{
 		Elements: make([]BodyElement, len(tables)),
 	}
-	for i, table := range tables {
-		body.Elements[i] = table
+	for i := range tables {
+		body.Elements[i] = &tables[i]
 	}
 	return body
 }
@@ -268,7 +268,7 @@ func TestProcessTableRowMarkers(t *testing.T) {
 			if tt.doc.Body != nil && len(tt.doc.Body.Elements) > 0 {
 				// Find the first table in the elements
 				for _, elem := range tt.doc.Body.Elements {
-					if table, ok := elem.(Table); ok {
+					if table, ok := elem.(*Table); ok {
 						actualRowCount := len(table.Rows)
 						if actualRowCount != tt.wantRowCount {
 							t.Errorf("got %d rows, want %d rows", actualRowCount, tt.wantRowCount)
