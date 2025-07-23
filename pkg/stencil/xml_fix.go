@@ -90,7 +90,8 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	xmlStr = strings.ReplaceAll(xmlStr, "</gridCol>", `</w:gridCol>`)
 	
 	// Handle attributes
-	xmlStr = strings.ReplaceAll(xmlStr, `space="preserve"`, `xml:space="preserve"`)
+	// Don't add xml: prefix here since MarshalXML already handles it properly
+	// xmlStr = strings.ReplaceAll(xmlStr, `space="preserve"`, `xml:space="preserve"`)
 	xmlStr = strings.ReplaceAll(xmlStr, `space=""`, ``)
 	
 	// Remove empty property elements that might cause issues
