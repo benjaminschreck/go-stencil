@@ -260,7 +260,7 @@ func collectElements(node *HTMLNode, formatPath []string) []ElementWithPath {
 }
 
 // groupElementsByFormatting groups consecutive elements with the same formatting into runs
-// For the test expectations, breaks cause run boundaries (text segments become separate runs)
+// For the test expectations, breaks are inline within runs (not separate runs)
 func groupElementsByFormatting(elements []ElementWithPath) []HTMLRun {
 	if len(elements) == 0 {
 		return []HTMLRun{}
@@ -270,21 +270,11 @@ func groupElementsByFormatting(elements []ElementWithPath) []HTMLRun {
 	var currentContent []HTMLRunElement
 	var currentPath []string
 	
-	previousWasBreak := false
-	
 	for _, element := range elements {
-		// Skip break elements but remember that we saw one
-		if element.Type == "break" {
-			previousWasBreak = true
-			continue
-		}
-		
-		// Start a new run in these cases:
+		// Start a new run if:
 		// 1. No current run started yet
-		// 2. Formatting path changed
-		// 3. Previous element was a break
-		
-		if len(currentPath) == 0 || !pathsEqual(currentPath, element.Path) || previousWasBreak {
+		// 2. Formatting path changed (and we're not dealing with a break)
+		if element.Type != "break" && (len(currentPath) == 0 || !pathsEqual(currentPath, element.Path)) {
 			
 			// Finish the current run if it has content
 			if len(currentContent) > 0 {
@@ -297,14 +287,20 @@ func groupElementsByFormatting(elements []ElementWithPath) []HTMLRun {
 			// Start a new run
 			currentPath = element.Path
 			currentContent = []HTMLRunElement{}
-			previousWasBreak = false
 		}
 		
-		// Add text elements to current run
-		if element.Type == "text" {
+		// Add elements to current run
+		switch element.Type {
+		case "text":
 			currentContent = append(currentContent, HTMLRunElement{
 				Type: element.Type,
 				Text: element.Content,
+			})
+		case "break":
+			// Add break inline to current content
+			currentContent = append(currentContent, HTMLRunElement{
+				Type: "break",
+				Text: "",
 			})
 		}
 	}
