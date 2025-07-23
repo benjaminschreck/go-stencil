@@ -24,6 +24,8 @@ type Body struct {
 	Elements []BodyElement `xml:"-"`
 }
 
+
+
 // Paragraph represents a paragraph in the document
 type Paragraph struct {
 	Properties *ParagraphProperties `xml:"pPr"`
@@ -32,6 +34,32 @@ type Paragraph struct {
 
 // isBodyElement implements the BodyElement interface
 func (p Paragraph) isBodyElement() {}
+
+// MarshalXML implements custom XML marshaling for Paragraph to ensure proper namespacing
+func (p Paragraph) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	// Start the paragraph element
+	start.Name = xml.Name{Local: "w:p"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode paragraph properties
+	if p.Properties != nil {
+		if err := e.EncodeElement(p.Properties, xml.StartElement{Name: xml.Name{Local: "w:pPr"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode runs
+	for _, run := range p.Runs {
+		if err := e.EncodeElement(&run, xml.StartElement{Name: xml.Name{Local: "w:r"}}); err != nil {
+			return err
+		}
+	}
+
+	// End the paragraph element
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
+}
 
 // ParagraphProperties represents paragraph formatting properties
 type ParagraphProperties struct {
@@ -46,6 +74,39 @@ type Run struct {
 	Properties *RunProperties `xml:"rPr"`
 	Text       *Text          `xml:"t"`
 	Break      *Break         `xml:"br"`
+}
+
+// MarshalXML implements custom XML marshaling for Run to ensure proper namespacing
+func (r Run) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	// Start the run element
+	start.Name = xml.Name{Local: "w:r"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode run properties
+	if r.Properties != nil {
+		if err := e.EncodeElement(r.Properties, xml.StartElement{Name: xml.Name{Local: "w:rPr"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode text
+	if r.Text != nil {
+		if err := e.EncodeElement(r.Text, xml.StartElement{Name: xml.Name{Local: "w:t"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode break
+	if r.Break != nil {
+		if err := e.Encode(r.Break); err != nil {
+			return err
+		}
+	}
+
+	// End the run element
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
 }
 
 // RunProperties represents run formatting properties
@@ -67,6 +128,19 @@ type Text struct {
 	Content string   `xml:",chardata"`
 }
 
+// MarshalXML implements custom XML marshaling for Text to ensure proper namespacing
+func (t Text) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:t"}
+	if t.Space == "preserve" {
+		// Use the predefined XML namespace
+		start.Attr = append(start.Attr, xml.Attr{
+			Name:  xml.Name{Space: "http://www.w3.org/XML/1998/namespace", Local: "space"},
+			Value: "preserve",
+		})
+	}
+	return e.EncodeElement(t.Content, start)
+}
+
 // Table represents a table in the document
 type Table struct {
 	Properties *TableProperties `xml:"tblPr"`
@@ -76,6 +150,39 @@ type Table struct {
 
 // isBodyElement implements the BodyElement interface
 func (t Table) isBodyElement() {}
+
+// MarshalXML implements custom XML marshaling for Table to ensure proper namespacing
+func (t Table) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	// Start the table element with w: namespace
+	start.Name = xml.Name{Local: "w:tbl"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode table properties
+	if t.Properties != nil {
+		if err := e.EncodeElement(t.Properties, xml.StartElement{Name: xml.Name{Local: "w:tblPr"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode table grid
+	if t.Grid != nil {
+		if err := e.EncodeElement(t.Grid, xml.StartElement{Name: xml.Name{Local: "w:tblGrid"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode rows
+	for _, row := range t.Rows {
+		if err := e.EncodeElement(&row, xml.StartElement{Name: xml.Name{Local: "w:tr"}}); err != nil {
+			return err
+		}
+	}
+
+	// End the table element
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
+}
 
 // UnmarshalXML implements custom XML unmarshaling to preserve element order
 func (b *Body) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
@@ -146,10 +253,62 @@ type TableRow struct {
 	Cells      []TableCell         `xml:"tc"`
 }
 
+// MarshalXML implements custom XML marshaling for TableRow to ensure proper namespacing
+func (r TableRow) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	// Start the row element
+	start.Name = xml.Name{Local: "w:tr"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode row properties
+	if r.Properties != nil {
+		if err := e.EncodeElement(r.Properties, xml.StartElement{Name: xml.Name{Local: "w:trPr"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode cells
+	for _, cell := range r.Cells {
+		if err := e.EncodeElement(&cell, xml.StartElement{Name: xml.Name{Local: "w:tc"}}); err != nil {
+			return err
+		}
+	}
+
+	// End the row element
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
+}
+
 // TableCell represents a cell in a table
 type TableCell struct {
 	Properties *TableCellProperties `xml:"tcPr"`
 	Paragraphs []Paragraph          `xml:"p"`
+}
+
+// MarshalXML implements custom XML marshaling for TableCell to ensure proper namespacing
+func (c TableCell) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	// Start the cell element
+	start.Name = xml.Name{Local: "w:tc"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode cell properties
+	if c.Properties != nil {
+		if err := e.EncodeElement(c.Properties, xml.StartElement{Name: xml.Name{Local: "w:tcPr"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode paragraphs
+	for _, para := range c.Paragraphs {
+		if err := e.EncodeElement(&para, xml.StartElement{Name: xml.Name{Local: "w:p"}}); err != nil {
+			return err
+		}
+	}
+
+	// End the cell element
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
 }
 
 // Empty represents an empty element (used for boolean properties)
@@ -158,6 +317,16 @@ type Empty struct{}
 // Style represents a style reference
 type Style struct {
 	Val string `xml:"val,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for Style
+func (s Style) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	// The element name depends on the context (pStyle, tblStyle, etc.)
+	// so we keep the provided name
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:val"}, Value: s.Val},
+	}
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // Alignment represents text alignment
@@ -230,14 +399,58 @@ type TableProperties struct {
 	Style *Style `xml:"tblStyle"`
 }
 
+// MarshalXML implements custom XML marshaling for TableProperties
+func (p TableProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:tblPr"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode style if present
+	if p.Style != nil {
+		if err := e.EncodeElement(p.Style, xml.StartElement{Name: xml.Name{Local: "w:tblStyle"}}); err != nil {
+			return err
+		}
+	}
+
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
+}
+
 // TableGrid represents table column definitions
 type TableGrid struct {
 	Columns []GridColumn `xml:"gridCol"`
 }
 
+// MarshalXML implements custom XML marshaling for TableGrid
+func (g TableGrid) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:tblGrid"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode columns
+	for _, col := range g.Columns {
+		if err := e.EncodeElement(&col, xml.StartElement{Name: xml.Name{Local: "w:gridCol"}}); err != nil {
+			return err
+		}
+	}
+
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
+}
+
 // GridColumn represents a table column
 type GridColumn struct {
 	Width int `xml:"w,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for GridColumn
+func (g GridColumn) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:gridCol"}
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:w"}, Value: fmt.Sprintf("%d", g.Width)},
+	}
+	// Self-closing element
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // TableRowProperties represents row properties

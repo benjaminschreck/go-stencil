@@ -91,23 +91,14 @@ func ProcessTableColumnMarkers(doc *Document) error {
 	// Process each element in the document
 	var newElements []BodyElement
 	for i, elem := range doc.Body.Elements {
-		if table, ok := elem.(Table); ok {
+		if tablePtr, ok := elem.(*Table); ok {
 			logger.Debug("Found table at element %d", i)
-			processedTable, err := processTableColumnMarkersInTable(&table)
-			if err != nil {
-				return err
-			}
-			if processedTable != nil {
-				newElements = append(newElements, *processedTable)
-			}
-		} else if tablePtr, ok := elem.(*Table); ok {
-			logger.Debug("Found table pointer at element %d", i)
 			processedTable, err := processTableColumnMarkersInTable(tablePtr)
 			if err != nil {
 				return err
 			}
 			if processedTable != nil {
-				newElements = append(newElements, *processedTable)
+				newElements = append(newElements, processedTable)
 			}
 		} else {
 			logger.Debug("Element %d is type %T", i, elem)

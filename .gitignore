@@ -20,8 +20,8 @@ vendor/
 # Build output
 /stencil
 /cmd/stencil/stencil
-/debug/*/main
-/debug/*/*
+/debug/*
+/debug
 
 # IDE files
 .idea/
@@ -44,4 +44,4 @@ Thumbs.db
 !examples/**/*.pptx
 !test/**/*.docx
 !test/**/*.pptx
-# examples/advanced/output/*
+examples/advanced/output/*
