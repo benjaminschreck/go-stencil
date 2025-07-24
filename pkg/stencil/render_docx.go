@@ -110,6 +110,22 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 
 // mergeConsecutiveRuns merges consecutive runs in a paragraph to handle split template variables
 func mergeConsecutiveRuns(para *Paragraph) {
+	// Check if we have hyperlinks that need to be preserved
+	hasHyperlinks := false
+	if len(para.Content) > 0 {
+		for _, content := range para.Content {
+			if _, ok := content.(*Hyperlink); ok {
+				hasHyperlinks = true
+				break
+			}
+		}
+	}
+	
+	// If we have hyperlinks, don't merge - we need to preserve the structure
+	if hasHyperlinks {
+		return
+	}
+	
 	if len(para.Runs) <= 1 {
 		return
 	}
