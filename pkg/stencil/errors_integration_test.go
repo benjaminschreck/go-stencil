@@ -10,8 +10,8 @@ func TestTemplateErrorIntegration(t *testing.T) {
 	// Test basic error creation and messages
 	t.Run("Create template error", func(t *testing.T) {
 		err := NewTemplateError("invalid syntax", 10, 5)
-		if !IsTemplateError(err) {
-			t.Error("Expected IsTemplateError to return true")
+		if _, ok := err.(*TemplateError); !ok {
+			t.Error("Expected TemplateError type")
 		}
 		if !strings.Contains(err.Error(), "line 10, column 5") {
 			t.Errorf("Expected error to contain position info, got: %s", err.Error())
@@ -20,8 +20,8 @@ func TestTemplateErrorIntegration(t *testing.T) {
 
 	t.Run("Create parse error", func(t *testing.T) {
 		err := NewParseError("unexpected token", "{{for", 42)
-		if !IsParseError(err) {
-			t.Error("Expected IsParseError to return true")
+		if _, ok := err.(*ParseError); !ok {
+			t.Error("Expected ParseError type")
 		}
 		if !strings.Contains(err.Error(), "position 42") {
 			t.Errorf("Expected error to contain position info, got: %s", err.Error())
@@ -30,8 +30,8 @@ func TestTemplateErrorIntegration(t *testing.T) {
 
 	t.Run("Create evaluation error", func(t *testing.T) {
 		err := NewEvaluationError("user.name", errors.New("undefined variable"))
-		if !IsEvaluationError(err) {
-			t.Error("Expected IsEvaluationError to return true")
+		if _, ok := err.(*EvaluationError); !ok {
+			t.Error("Expected EvaluationError type")
 		}
 		if !strings.Contains(err.Error(), "user.name") {
 			t.Errorf("Expected error to contain expression, got: %s", err.Error())
@@ -40,8 +40,8 @@ func TestTemplateErrorIntegration(t *testing.T) {
 
 	t.Run("Create function error", func(t *testing.T) {
 		err := NewFunctionError("uppercase", []interface{}{}, "requires 1 argument")
-		if !IsFunctionError(err) {
-			t.Error("Expected IsFunctionError to return true")
+		if _, ok := err.(*FunctionError); !ok {
+			t.Error("Expected FunctionError type")
 		}
 		if !strings.Contains(err.Error(), "uppercase") {
 			t.Errorf("Expected error to contain function name, got: %s", err.Error())
@@ -50,8 +50,8 @@ func TestTemplateErrorIntegration(t *testing.T) {
 
 	t.Run("Create document error", func(t *testing.T) {
 		err := NewDocumentError("read", "template.docx", errors.New("file not found"))
-		if !IsDocumentError(err) {
-			t.Error("Expected IsDocumentError to return true")
+		if _, ok := err.(*DocumentError); !ok {
+			t.Error("Expected DocumentError type")
 		}
 		if !strings.Contains(err.Error(), "template.docx") {
 			t.Errorf("Expected error to contain file path, got: %s", err.Error())
@@ -101,56 +101,3 @@ func TestErrorContextIntegration(t *testing.T) {
 	}
 }
 
-func TestErrorTypeChecking(t *testing.T) {
-	tests := []struct {
-		name    string
-		err     error
-		checker func(error) bool
-		want    bool
-	}{
-		{
-			name:    "IsTemplateError - true",
-			err:     NewTemplateError("test", 1, 1),
-			checker: IsTemplateError,
-			want:    true,
-		},
-		{
-			name:    "IsTemplateError - false",
-			err:     NewParseError("test", "", 0),
-			checker: IsTemplateError,
-			want:    false,
-		},
-		{
-			name:    "IsParseError - true",
-			err:     NewParseError("test", "", 0),
-			checker: IsParseError,
-			want:    true,
-		},
-		{
-			name:    "IsEvaluationError - true",
-			err:     NewEvaluationError("expr", nil),
-			checker: IsEvaluationError,
-			want:    true,
-		},
-		{
-			name:    "IsFunctionError - true",
-			err:     NewFunctionError("test", nil, "error"),
-			checker: IsFunctionError,
-			want:    true,
-		},
-		{
-			name:    "IsDocumentError - true",
-			err:     NewDocumentError("read", "file.docx", nil),
-			checker: IsDocumentError,
-			want:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.checker(tt.err); got != tt.want {
-				t.Errorf("checker() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}

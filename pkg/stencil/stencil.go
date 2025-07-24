@@ -31,7 +31,6 @@ type fragment struct {
 
 // renderContext holds the context during rendering (internal use)
 type renderContext struct {
-	imageReplacements map[string]*ImageReplacement
 	linkMarkers      map[string]*LinkReplacementMarker
 	fragments        map[string]*fragment
 	fragmentStack    []string // Track fragment inclusion stack for circular reference detection
@@ -142,9 +141,8 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		renderData["__functions__"] = pt.registry
 	}
 	
-	// Create render context to collect image markers
+	// Create render context
 	renderCtx := &renderContext{
-		imageReplacements: make(map[string]*ImageReplacement),
 		linkMarkers:      make(map[string]*LinkReplacementMarker),
 		fragments:        pt.template.fragments,
 		fragmentStack:    make([]string, 0),
@@ -153,7 +151,6 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	}
 	
 	// First pass: render the document with variable substitution
-	// This will collect any image replacement markers
 	renderedDoc, err := RenderDocumentWithContext(pt.template.document, renderData, renderCtx)
 	if err != nil {
 		return nil, WithContext(err, "rendering document", map[string]interface{}{"hasData": data != nil})
@@ -205,9 +202,6 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		return nil, fmt.Errorf("failed to read source zip: %w", err)
 	}
 	
-	// Track which images have been replaced
-	replacedImages := make(map[string]bool)
-	
 	for _, file := range zipReader.File {
 		// Special handling for document.xml
 		if file.Name == "word/document.xml" {
@@ -220,44 +214,16 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
-		} else if file.Name == "word/_rels/document.xml.rels" && (len(renderCtx.imageReplacements) > 0 || len(updatedRelationships) > 0) {
-			// Update relationships if we have image or link replacements
-			var rels []byte
-			if len(updatedRelationships) > 0 {
-				// Use the already updated relationships from link processing
-				output, err := xml.MarshalIndent(&Relationships{
-					Namespace: "http://schemas.openxmlformats.org/package/2006/relationships",
-					Relationship: updatedRelationships,
-				}, "", "  ")
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal relationships: %w", err)
-				}
-				rels = output
-				
-				// If we also have image replacements, apply them to the updated relationships
-				if len(renderCtx.imageReplacements) > 0 {
-					var relsStruct Relationships
-					if err := xml.Unmarshal(rels, &relsStruct); err != nil {
-						return nil, fmt.Errorf("failed to unmarshal relationships: %w", err)
-					}
-					// Update image relationships
-					for i := range relsStruct.Relationship {
-						if replacement, exists := renderCtx.imageReplacements[relsStruct.Relationship[i].ID]; exists {
-							relsStruct.Relationship[i].Target = "media/" + replacement.Filename
-						}
-					}
-					rels, err = xml.MarshalIndent(&relsStruct, "", "  ")
-					if err != nil {
-						return nil, fmt.Errorf("failed to marshal updated relationships: %w", err)
-					}
-				}
-			} else {
-				// Only image replacements
-				rels, err = pt.updateRelationships(file, renderCtx.imageReplacements)
-				if err != nil {
-					return nil, fmt.Errorf("failed to update relationships: %w", err)
-				}
+		} else if file.Name == "word/_rels/document.xml.rels" && len(updatedRelationships) > 0 {
+			// Update relationships if we have link replacements
+			output, err := xml.MarshalIndent(&Relationships{
+				Namespace: "http://schemas.openxmlformats.org/package/2006/relationships",
+				Relationship: updatedRelationships,
+			}, "", "  ")
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal relationships: %w", err)
 			}
+			rels := output
 			
 			fw, err := w.Create(file.Name)
 			if err != nil {
@@ -268,44 +234,22 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
 		} else {
-			// Check if this is an image file that needs replacement
-			skipFile := false
-			if len(renderCtx.imageReplacements) > 0 && strings.Contains(file.Name, "word/media/") {
-				// Mark as potentially replaced (we'll add new images later)
-				replacedImages[file.Name] = true
+			// Copy other files as-is
+			fw, err := w.Create(file.Name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create %s: %w", file.Name, err)
 			}
 			
-			if !skipFile {
-				// Copy other files as-is
-				fw, err := w.Create(file.Name)
-				if err != nil {
-					return nil, fmt.Errorf("failed to create %s: %w", file.Name, err)
-				}
-				
-				fr, err := file.Open()
-				if err != nil {
-					return nil, fmt.Errorf("failed to open %s: %w", file.Name, err)
-				}
-				
-				_, err = io.Copy(fw, fr)
-				fr.Close()
-				if err != nil {
-					return nil, fmt.Errorf("failed to copy %s: %w", file.Name, err)
-				}
+			fr, err := file.Open()
+			if err != nil {
+				return nil, fmt.Errorf("failed to open %s: %w", file.Name, err)
 			}
-		}
-	}
-	
-	// Add new image files
-	for _, replacement := range renderCtx.imageReplacements {
-		filePath := "word/media/" + replacement.Filename
-		fw, err := w.Create(filePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create %s: %w", filePath, err)
-		}
-		_, err = fw.Write(replacement.Data)
-		if err != nil {
-			return nil, fmt.Errorf("failed to write %s: %w", filePath, err)
+			
+			_, err = io.Copy(fw, fr)
+			fr.Close()
+			if err != nil {
+				return nil, fmt.Errorf("failed to copy %s: %w", file.Name, err)
+			}
 		}
 	}
 	
@@ -337,36 +281,6 @@ func (pt *PreparedTemplate) Close() error {
 	return nil
 }
 
-// updateRelationships updates the relationships file with image replacements
-func (pt *PreparedTemplate) updateRelationships(relsFile *zip.File, replacements map[string]*ImageReplacement) ([]byte, error) {
-	fr, err := relsFile.Open()
-	if err != nil {
-		return nil, err
-	}
-	defer fr.Close()
-	
-	var rels Relationships
-	decoder := xml.NewDecoder(fr)
-	if err := decoder.Decode(&rels); err != nil {
-		return nil, fmt.Errorf("failed to decode relationships: %w", err)
-	}
-	
-	// Update relationships with new image IDs and targets
-	for i := range rels.Relationship {
-		if replacement, exists := replacements[rels.Relationship[i].ID]; exists {
-			// Update the target to point to the new image file
-			rels.Relationship[i].Target = "media/" + replacement.Filename
-		}
-	}
-	
-	// Marshal back to XML
-	output, err := xml.MarshalIndent(&rels, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal relationships: %w", err)
-	}
-	
-	return output, nil
-}
 
 // AddFragment adds a text fragment that can be included in the template
 // using the {{include "name"}} syntax.
@@ -572,32 +486,3 @@ func createSimpleDOCXBytes(content string) []byte {
 	return buf.Bytes()
 }
 
-// extractTextFromXML extracts plain text from document XML
-func extractTextFromXML(xmlContent string) string {
-	// Simple extraction of text between <w:t> tags
-	var result strings.Builder
-	inText := false
-	tagStart := -1
-	
-	for i, ch := range xmlContent {
-		if ch == '<' {
-			tagStart = i
-			if inText && tagStart > 0 {
-				// We were in text, now we're not
-				inText = false
-			}
-		} else if ch == '>' && tagStart >= 0 {
-			tag := xmlContent[tagStart+1 : i]
-			if tag == "w:t" || strings.HasPrefix(tag, "w:t ") {
-				inText = true
-			} else if tag == "/w:t" {
-				inText = false
-			}
-			tagStart = -1
-		} else if inText && tagStart < 0 {
-			result.WriteRune(ch)
-		}
-	}
-	
-	return result.String()
-}
