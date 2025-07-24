@@ -162,24 +162,24 @@ func TestFormatWithLocaleFunction(t *testing.T) {
 		{
 			name: "formatWithLocale() English decimal",
 			args: []interface{}{"en", "%.2f", 1000000.0},
-			want: "1000000.00",
+			want: "1,000,000.00",
 		},
 		{
 			name: "formatWithLocale() English decimal",
 			args: []interface{}{"en-US", "%.2f", 1234.56},
-			want: "1234.56",
+			want: "1,234.56",
 		},
 		// German locale
 		{
 			name: "formatWithLocale() German decimal",
 			args: []interface{}{"de-DE", "%.2f", 1234.56},
-			want: "1234.56",
+			want: "1.234,56",
 		},
 		// Complex formatting
 		{
 			name: "formatWithLocale() with multiple values",
 			args: []interface{}{"en", "Total: %.2f EUR", 1234567.89},
-			want: "Total: 1234567.89 EUR",
+			want: "Total: 1,234,567.89 EUR",
 		},
 		// Nil handling
 		{
@@ -516,7 +516,7 @@ func TestNumberFormattingInExpressions(t *testing.T) {
 				"locale": "en",
 				"amount": 1234.56,
 			},
-			want: "1234.56",
+			want: "1,234.56",
 		},
 		// currency() in expressions
 		{
