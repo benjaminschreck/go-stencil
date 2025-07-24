@@ -184,7 +184,15 @@ func mergeConsecutiveRuns(para *Paragraph) {
 
 // RenderBodyWithControlStructures renders a document body handling control structures
 func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
-	return renderBodyWithElementOrder(body, data, ctx)
+	rendered, err := renderBodyWithElementOrder(body, data, ctx)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Apply table merging to fix split tables from for loops outside tables
+	rendered.Elements = MergeConsecutiveTables(rendered.Elements)
+	
+	return rendered, nil
 }
 
 // renderBodyWithElementOrder renders using the new Elements field that preserves order
