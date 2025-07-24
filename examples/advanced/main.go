@@ -111,10 +111,14 @@ func main() {
 	// Example 5: Table operations
 	fmt.Println("\n=== Example 5: Table Operations ===")
 	tableExample(engine)
-	
+
 	// Example 6: HTML formatting showcase
 	fmt.Println("\n=== Example 6: HTML Formatting ===")
 	htmlExample(engine)
+
+	// Example 7: Comprehensive features showcase
+	fmt.Println("\n=== Example 7: Comprehensive Features ===")
+	comprehensiveFeaturesExample(engine)
 }
 
 func basicExample(engine *stencil.Engine) {
@@ -252,7 +256,7 @@ func fragmentsExample(engine *stencil.Engine) {
 			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".docx") {
 				// Get fragment name (filename without extension)
 				fragmentName := strings.TrimSuffix(entry.Name(), ".docx")
-				
+
 				// Read the fragment file
 				fragmentPath := filepath.Join(fragmentsDir, entry.Name())
 				fragmentBytes, err := os.ReadFile(fragmentPath)
@@ -260,19 +264,19 @@ func fragmentsExample(engine *stencil.Engine) {
 					fmt.Printf("Warning: Could not read fragment %s: %v\n", entry.Name(), err)
 					continue
 				}
-				
+
 				// Add the fragment
 				err = tmpl.AddFragmentFromBytes(fragmentName, fragmentBytes)
 				if err != nil {
 					fmt.Printf("Warning: Could not add fragment %s: %v\n", fragmentName, err)
 					continue
 				}
-				
+
 				fmt.Printf("Added fragment: %s\n", fragmentName)
 			}
 		}
 	}
-	
+
 	// If no fragments were loaded and header.docx doesn't exist, add a default text fragment
 	if len(entries) == 0 || err != nil {
 		// Check if we need to add a default header fragment
@@ -399,12 +403,12 @@ func htmlExample(engine *stencil.Engine) {
 		log.Fatalf("Failed to prepare template: %v", err)
 	}
 	defer tmpl.Close()
-	
+
 	// Create data with various HTML examples
 	data := stencil.TemplateData{
 		// Dynamic HTML content
 		"htmlContent": `<b>Dynamic content</b> with <i>various</i> <u>formatting</u> options and <sup>special</sup> characters`,
-		
+
 		// Formatted items for loop
 		"formattedItems": []map[string]interface{}{
 			{"formatted": "<b>First item</b> - Important"},
@@ -413,15 +417,15 @@ func htmlExample(engine *stencil.Engine) {
 			{"formatted": "<s>Fourth item</s> - Deprecated"},
 			{"formatted": "<b><i>Fifth item</i></b> - Bold and italic"},
 		},
-		
+
 		// Conditional flag
 		"showImportant": true,
-		
+
 		// Variables for HTML with variables example
-		"greeting": "<b>Hello</b>",
+		"greeting":     "<b>Hello</b>",
 		"customerName": "John Doe",
-		"message": "<i>we have an important update for you</i>",
-		
+		"message":      "<i>we have an important update for you</i>",
+
 		// HTML table data
 		"htmlTable": []map[string]interface{}{
 			{
@@ -446,11 +450,128 @@ func htmlExample(engine *stencil.Engine) {
 			},
 		},
 	}
-	
+
 	output, err := tmpl.Render(data)
 	if err != nil {
 		log.Fatalf("Failed to render template: %v", err)
 	}
-	
+
 	saveOutput(output, "output/html_showcase_output.docx")
+}
+
+func comprehensiveFeaturesExample(engine *stencil.Engine) {
+	// Use the basic comprehensive_features.docx that doesn't have replaceLink/replaceImage
+	// TODO: Fix XML parser to preserve hyperlinks and images for these features to work
+	tmpl, err := engine.PrepareFile("comprehensive_features.docx")
+	if err != nil {
+		log.Fatalf("Failed to prepare template: %v", err)
+	}
+	defer tmpl.Close()
+
+	// Add fragments for inclusion
+	err = tmpl.AddFragment("header", "=== COMPREHENSIVE FEATURE TEST ===\nGenerated on: {{timestamp()}}")
+	if err != nil {
+		log.Fatalf("Failed to add header fragment: %v", err)
+	}
+
+	err = tmpl.AddFragment("footer", "--- End of comprehensive feature test ---\nAll features demonstrated successfully!")
+	if err != nil {
+		log.Fatalf("Failed to add footer fragment: %v", err)
+	}
+
+	// Create comprehensive test data
+	data := stencil.TemplateData{
+		// User data for bracket notation and advanced access
+		"user": map[string]interface{}{
+			"firstName": "Alice",
+			"lastName":  "Johnson",
+			"email":     "alice@example.com",
+		},
+
+		// Array data for indexing
+		"items": []map[string]interface{}{
+			{"name": "Widget Pro", "price": 99.99},
+			{"name": "Gadget Plus", "price": 149.99},
+			{"name": "Tool Elite", "price": 199.99},
+		},
+
+		// Score for conditional examples
+		"score": 85,
+
+		// Weekend flag
+		"isWeekend": false,
+
+		// Days for indexed loop
+		"weekDays": []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"},
+
+		// Permission flags for logical operators
+		"isAdmin":       false,
+		"isOwner":       true,
+		"isLoggedIn":    true,
+		"hasEditRights": true,
+		"isPublic":      false,
+
+		// Type conversion examples
+		"stringNumber": "42",
+		"stringPrice":  "19.99",
+
+		// Date for formatting
+		"eventDate": time.Date(2024, 12, 25, 15, 30, 0, 0, time.UTC),
+
+		// Optional field (empty)
+		"optionalField": nil,
+
+		// Fruits for contains check
+		"fruits": []string{"apple", "banana", "orange"},
+
+		// Titles for coalesce
+		"userTitle":    "",
+		"defaultTitle": "Guest",
+
+		// Status for switch
+		"status": "pending",
+
+		// String manipulation
+		"description": "This is the old version of the text",
+		"name":        "Go-Stencil Template Engine",
+		"features":    []string{"Fast", "Flexible", "Powerful"},
+
+		// Products for table operations
+		"products": []map[string]interface{}{
+			{"name": "Product A", "price": "$10", "stock": 5},
+			{"name": "Product B", "price": "$20", "stock": 0}, // This row should be hidden
+			{"name": "Product C", "price": "$30", "stock": 15},
+			{"name": "Product D", "price": "$40", "stock": 0}, // This row should be hidden
+		},
+
+		// Column hiding flags
+		"hideQ1": false,
+		"hideQ2": false,
+		"hideQ3": true, // Hide Q3
+		"hideQ4": false,
+
+		// NOTE: replaceLink and replaceImage features are currently not working due to 
+		// XML parser limitations - hyperlinks and images are not preserved during parsing
+		// These are placeholder values to prevent errors
+		"newImageData":  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", // 1x1 red pixel
+		"newWebsiteUrl": "https://github.com/benjaminschreck/go-stencil",
+
+		// Complex expression data
+		"basePrice": 100.0,
+		"quantity":  3,
+		"discount":  15.0,
+		"taxRate":   8.5,
+
+		// Additional permission flags
+		"age":   21,
+		"hasID": true,
+		"isVIP": false,
+	}
+
+	output, err := tmpl.Render(data)
+	if err != nil {
+		log.Fatalf("Failed to render template: %v", err)
+	}
+
+	saveOutput(output, "output/comprehensive_features_output.docx")
 }
