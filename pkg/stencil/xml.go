@@ -26,14 +26,83 @@ type Body struct {
 
 
 
+// ParagraphContent represents any content that can appear in a paragraph
+type ParagraphContent interface {
+	isParagraphContent()
+}
+
 // Paragraph represents a paragraph in the document
 type Paragraph struct {
 	Properties *ParagraphProperties `xml:"pPr"`
-	Runs       []Run                `xml:"r"`
+	// Content maintains the order of runs and hyperlinks
+	Content    []ParagraphContent   `xml:"-"`
+	// Legacy fields for backward compatibility during transition
+	Runs       []Run                `xml:"-"`
+	Hyperlinks []Hyperlink          `xml:"-"`
 }
 
 // isBodyElement implements the BodyElement interface
 func (p Paragraph) isBodyElement() {}
+
+// UnmarshalXML implements custom XML unmarshaling to preserve element order
+func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	// Temporary storage to check if we have hyperlinks
+	var tempContent []ParagraphContent
+	var tempRuns []Run
+	var tempHyperlinks []Hyperlink
+	hasHyperlinks := false
+	
+	// Process elements in order
+	for {
+		token, err := d.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		
+		switch t := token.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "pPr":
+				var props ParagraphProperties
+				if err := d.DecodeElement(&props, &t); err != nil {
+					return err
+				}
+				p.Properties = &props
+			case "r":
+				var run Run
+				if err := d.DecodeElement(&run, &t); err != nil {
+					return err
+				}
+				tempContent = append(tempContent, &run)
+				tempRuns = append(tempRuns, run)
+			case "hyperlink":
+				var hyperlink Hyperlink
+				if err := d.DecodeElement(&hyperlink, &t); err != nil {
+					return err
+				}
+				tempContent = append(tempContent, &hyperlink)
+				tempHyperlinks = append(tempHyperlinks, hyperlink)
+				hasHyperlinks = true
+			}
+		case xml.EndElement:
+			if t.Name.Local == "p" {
+				// Only populate Content if we have hyperlinks
+				// This allows mergeConsecutiveRuns to work on paragraphs without hyperlinks
+				if hasHyperlinks {
+					p.Content = tempContent
+				}
+				p.Runs = tempRuns
+				p.Hyperlinks = tempHyperlinks
+				return nil
+			}
+		}
+	}
+	
+	return nil
+}
 
 // MarshalXML implements custom XML marshaling for Paragraph to ensure proper namespacing
 func (p Paragraph) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
@@ -50,10 +119,32 @@ func (p Paragraph) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 		}
 	}
 
-	// Encode runs
-	for _, run := range p.Runs {
-		if err := e.EncodeElement(&run, xml.StartElement{Name: xml.Name{Local: "w:r"}}); err != nil {
-			return err
+	// If we have Content, use that to preserve order
+	if len(p.Content) > 0 {
+		for _, content := range p.Content {
+			switch c := content.(type) {
+			case *Run:
+				if err := e.EncodeElement(c, xml.StartElement{Name: xml.Name{Local: "w:r"}}); err != nil {
+					return err
+				}
+			case *Hyperlink:
+				if err := e.EncodeElement(c, xml.StartElement{Name: xml.Name{Local: "w:hyperlink"}}); err != nil {
+					return err
+				}
+			}
+		}
+	} else {
+		// Fall back to legacy fields
+		for _, run := range p.Runs {
+			if err := e.EncodeElement(&run, xml.StartElement{Name: xml.Name{Local: "w:r"}}); err != nil {
+				return err
+			}
+		}
+
+		for _, hyperlink := range p.Hyperlinks {
+			if err := e.EncodeElement(&hyperlink, xml.StartElement{Name: xml.Name{Local: "w:hyperlink"}}); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -75,6 +166,9 @@ type Run struct {
 	Text       *Text          `xml:"t"`
 	Break      *Break         `xml:"br"`
 }
+
+// isParagraphContent implements the ParagraphContent interface
+func (r Run) isParagraphContent() {}
 
 // MarshalXML implements custom XML marshaling for Run to ensure proper namespacing
 func (r Run) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
@@ -376,6 +470,51 @@ type Break struct {
 	Type string `xml:"type,attr,omitempty"`
 }
 
+// Hyperlink represents a hyperlink in the document
+type Hyperlink struct {
+	ID      string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships id,attr"`
+	History string `xml:"history,attr,omitempty"`
+	Runs    []Run  `xml:"r"`
+}
+
+// isParagraphContent implements the ParagraphContent interface
+func (h Hyperlink) isParagraphContent() {}
+
+// MarshalXML implements custom XML marshaling for Hyperlink to ensure proper namespacing
+func (h Hyperlink) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	// Start the hyperlink element
+	start.Name = xml.Name{Local: "w:hyperlink"}
+	
+	// Add attributes
+	start.Attr = []xml.Attr{}
+	if h.ID != "" {
+		start.Attr = append(start.Attr, xml.Attr{
+			Name:  xml.Name{Space: "http://schemas.openxmlformats.org/officeDocument/2006/relationships", Local: "id"},
+			Value: h.ID,
+		})
+	}
+	if h.History != "" {
+		start.Attr = append(start.Attr, xml.Attr{
+			Name:  xml.Name{Local: "w:history"},
+			Value: h.History,
+		})
+	}
+
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode runs
+	for _, run := range h.Runs {
+		if err := e.EncodeElement(&run, xml.StartElement{Name: xml.Name{Local: "w:r"}}); err != nil {
+			return err
+		}
+	}
+
+	// End the hyperlink element
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
+}
+
 // MarshalXML implements xml.Marshaler to ensure Break is self-closing
 func (b *Break) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	// Use w:br since the w namespace is already defined in the document
@@ -503,7 +642,44 @@ func (r *Run) GetText() string {
 // GetText returns the concatenated text of all runs in a paragraph
 func (p *Paragraph) GetText() string {
 	var texts []string
+	
+	// If we have Content, use that to preserve order
+	if len(p.Content) > 0 {
+		for _, content := range p.Content {
+			switch c := content.(type) {
+			case *Run:
+				if text := c.GetText(); text != "" {
+					texts = append(texts, text)
+				}
+			case *Hyperlink:
+				if text := c.GetText(); text != "" {
+					texts = append(texts, text)
+				}
+			}
+		}
+		return strings.Join(texts, "")
+	}
+	
+	// Fall back to legacy fields
 	for _, run := range p.Runs {
+		if text := run.GetText(); text != "" {
+			texts = append(texts, text)
+		}
+	}
+	// Also include text from hyperlinks
+	for _, hyperlink := range p.Hyperlinks {
+		if text := hyperlink.GetText(); text != "" {
+			texts = append(texts, text)
+		}
+	}
+	
+	return strings.Join(texts, "")
+}
+
+// GetText returns the concatenated text of all runs in a hyperlink
+func (h *Hyperlink) GetText() string {
+	var texts []string
+	for _, run := range h.Runs {
 		if text := run.GetText(); text != "" {
 			texts = append(texts, text)
 		}
