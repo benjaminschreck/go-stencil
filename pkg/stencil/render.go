@@ -50,16 +50,52 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 	// First check if the paragraph contains control structures
 	// by getting the full text content including line breaks
 	fullText := ""
-	for _, run := range para.Runs {
-		if run.Text != nil {
-			fullText += run.Text.Content
-		} else if run.Break != nil {
-			// Include line breaks in the full text
-			fullText += "\n"
+	
+	// Use Content if available, otherwise fall back to Runs
+	if len(para.Content) > 0 {
+		for _, content := range para.Content {
+			switch c := content.(type) {
+			case *Run:
+				if c.Text != nil {
+					fullText += c.Text.Content
+				} else if c.Break != nil {
+					fullText += "\n"
+				}
+			case *Hyperlink:
+				// Get text from hyperlink runs
+				for _, run := range c.Runs {
+					if run.Text != nil {
+						fullText += run.Text.Content
+					} else if run.Break != nil {
+						fullText += "\n"
+					}
+				}
+			}
+		}
+	} else {
+		// Fall back to legacy fields
+		for _, run := range para.Runs {
+			if run.Text != nil {
+				fullText += run.Text.Content
+			} else if run.Break != nil {
+				// Include line breaks in the full text
+				fullText += "\n"
+			}
+		}
+		// Also check hyperlinks
+		for _, hyperlink := range para.Hyperlinks {
+			for _, run := range hyperlink.Runs {
+				if run.Text != nil {
+					fullText += run.Text.Content
+				} else if run.Break != nil {
+					fullText += "\n"
+				}
+			}
 		}
 	}
 	
 	// Check if we have control structures
+	// Note: We only check for actual control structure tokens, not variable tokens
 	tokens := Tokenize(fullText)
 	hasControlStructures := false
 	for _, token := range tokens {
@@ -71,61 +107,79 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 	}
 	
 	// If we have control structures, parse and render them
+	// Only use control structure processing when actual control structures are present
 	if hasControlStructures {
+		// DEBUG: This should not happen for simple variable substitution
+		// fmt.Printf("DEBUG: Control structure processing for text: %q\n", fullText)
 		// Parse the control structures
 		structures, err := ParseControlStructures(fullText)
-		if err == nil {
-			// Render the control structures
-			renderedText, err := renderControlBodyWithContext(structures, data, ctx)
-			if err != nil {
-				return nil, fmt.Errorf("failed to render control structures in paragraph: %w", err)
+		// Only proceed if we successfully parsed control structures
+		if err == nil && len(structures) > 0 {
+			// Check if we actually have control structure nodes (not just text/expression nodes)
+			hasActualControlStructures := false
+			for _, structure := range structures {
+				switch structure.(type) {
+				case *IfNode, *ForNode, *UnlessNode:
+					hasActualControlStructures = true
+					break
+				}
 			}
-		
-		// Create a new paragraph with the rendered text
-		rendered := &Paragraph{
-			Properties: para.Properties,
-		}
-		
-		// Convert the rendered text into runs, preserving line breaks
-		if len(para.Runs) > 0 {
-			// Split the rendered text by newlines to preserve line breaks
-			lines := strings.Split(renderedText, "\n")
 			
-			for i, line := range lines {
-				if line != "" {
-					// Create a text run for this line
-					textRun := Run{
-						Properties: para.Runs[0].Properties,
-						Text: &Text{
-							Content: line,
-						},
-					}
+			// Only use control structure rendering if we have actual control structures
+			if hasActualControlStructures {
+				// This should not be reached for simple variable substitution
+				// Render the control structures
+				renderedText, err := renderControlBodyWithContext(structures, data, ctx)
+				if err != nil {
+					return nil, fmt.Errorf("failed to render control structures in paragraph: %w", err)
+				}
+			
+				// Create a new paragraph with the rendered text
+				rendered := &Paragraph{
+					Properties: para.Properties,
+				}
+				
+				// Convert the rendered text into runs, preserving line breaks
+				if len(para.Runs) > 0 {
+					// Split the rendered text by newlines to preserve line breaks
+					lines := strings.Split(renderedText, "\n")
 					
-					// Check if the run contains OOXML fragments that need to be expanded
-					if ooxmlFragmentRegex.MatchString(line) {
-						// Process the run to handle OOXML fragments
-						expandedRuns, err := expandOOXMLFragments(&textRun, data, ctx)
-						if err != nil {
-							return nil, err
+					for i, line := range lines {
+						if line != "" {
+							// Create a text run for this line
+							textRun := Run{
+								Properties: para.Runs[0].Properties,
+								Text: &Text{
+									Content: line,
+								},
+							}
+							
+							// Check if the run contains OOXML fragments that need to be expanded
+							if ooxmlFragmentRegex.MatchString(line) {
+								// Process the run to handle OOXML fragments
+								expandedRuns, err := expandOOXMLFragments(&textRun, data, ctx)
+								if err != nil {
+									return nil, err
+								}
+								rendered.Runs = append(rendered.Runs, expandedRuns...)
+							} else {
+								rendered.Runs = append(rendered.Runs, textRun)
+							}
 						}
-						rendered.Runs = append(rendered.Runs, expandedRuns...)
-					} else {
-						rendered.Runs = append(rendered.Runs, textRun)
+						
+						// Add a line break run between lines (but not after the last line)
+						if i < len(lines)-1 {
+							breakRun := Run{
+								Properties: para.Runs[0].Properties,
+								Break:      &Break{},
+							}
+							rendered.Runs = append(rendered.Runs, breakRun)
+						}
 					}
 				}
 				
-				// Add a line break run between lines (but not after the last line)
-				if i < len(lines)-1 {
-					breakRun := Run{
-						Properties: para.Runs[0].Properties,
-						Break:      &Break{},
-					}
-					rendered.Runs = append(rendered.Runs, breakRun)
-				}
+				return rendered, nil
 			}
-		}
-		
-		return rendered, nil
 		}
 	}
 	
@@ -134,23 +188,69 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 		Properties: para.Properties,
 	}
 	
-	// Render runs
-	for _, run := range para.Runs {
-		renderedRun, err := RenderRunWithContext(&run, data, ctx)
-		if err != nil {
-			return nil, err
+	// Use Content if available to preserve order of runs and hyperlinks
+	if len(para.Content) > 0 {
+		for _, content := range para.Content {
+			switch c := content.(type) {
+			case *Run:
+				renderedRun, err := RenderRunWithContext(c, data, ctx)
+				if err != nil {
+					return nil, err
+				}
+				
+				// Check if the run contains OOXML fragments that need to be expanded
+				if renderedRun.Text != nil && ooxmlFragmentRegex.MatchString(renderedRun.Text.Content) {
+					// Process the run to handle OOXML fragments
+					expandedRuns, err := expandOOXMLFragments(renderedRun, data, ctx)
+					if err != nil {
+						return nil, err
+					}
+					for _, expRun := range expandedRuns {
+						rendered.Content = append(rendered.Content, &expRun)
+						rendered.Runs = append(rendered.Runs, expRun)
+					}
+				} else {
+					rendered.Content = append(rendered.Content, renderedRun)
+					rendered.Runs = append(rendered.Runs, *renderedRun)
+				}
+			case *Hyperlink:
+				renderedHyperlink, err := RenderHyperlinkWithContext(c, data, ctx)
+				if err != nil {
+					return nil, err
+				}
+				rendered.Content = append(rendered.Content, renderedHyperlink)
+				rendered.Hyperlinks = append(rendered.Hyperlinks, *renderedHyperlink)
+			}
 		}
-		
-		// Check if the run contains OOXML fragments that need to be expanded
-		if renderedRun.Text != nil && ooxmlFragmentRegex.MatchString(renderedRun.Text.Content) {
-			// Process the run to handle OOXML fragments
-			expandedRuns, err := expandOOXMLFragments(renderedRun, data, ctx)
+	} else {
+		// Fall back to legacy fields
+		// Render runs
+		for _, run := range para.Runs {
+			renderedRun, err := RenderRunWithContext(&run, data, ctx)
 			if err != nil {
 				return nil, err
 			}
-			rendered.Runs = append(rendered.Runs, expandedRuns...)
-		} else {
-			rendered.Runs = append(rendered.Runs, *renderedRun)
+			
+			// Check if the run contains OOXML fragments that need to be expanded
+			if renderedRun.Text != nil && ooxmlFragmentRegex.MatchString(renderedRun.Text.Content) {
+				// Process the run to handle OOXML fragments
+				expandedRuns, err := expandOOXMLFragments(renderedRun, data, ctx)
+				if err != nil {
+					return nil, err
+				}
+				rendered.Runs = append(rendered.Runs, expandedRuns...)
+			} else {
+				rendered.Runs = append(rendered.Runs, *renderedRun)
+			}
+		}
+		
+		// Render hyperlinks
+		for _, hyperlink := range para.Hyperlinks {
+			renderedHyperlink, err := RenderHyperlinkWithContext(&hyperlink, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			rendered.Hyperlinks = append(rendered.Hyperlinks, *renderedHyperlink)
 		}
 	}
 	
@@ -178,6 +278,25 @@ func RenderRunWithContext(run *Run, data TemplateData, ctx *renderContext) (*Run
 			return nil, err
 		}
 		rendered.Text = renderedText
+	}
+	
+	return rendered, nil
+}
+
+// RenderHyperlinkWithContext renders a hyperlink with context
+func RenderHyperlinkWithContext(hyperlink *Hyperlink, data TemplateData, ctx *renderContext) (*Hyperlink, error) {
+	rendered := &Hyperlink{
+		ID:      hyperlink.ID,
+		History: hyperlink.History,
+	}
+	
+	// Render runs within the hyperlink
+	for _, run := range hyperlink.Runs {
+		renderedRun, err := RenderRunWithContext(&run, data, ctx)
+		if err != nil {
+			return nil, err
+		}
+		rendered.Runs = append(rendered.Runs, *renderedRun)
 	}
 	
 	return rendered, nil
