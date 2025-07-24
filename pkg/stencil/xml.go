@@ -213,6 +213,7 @@ type RunProperties struct {
 	Color         *Color          `xml:"color"`
 	Size          *Size           `xml:"sz"`
 	Font          *Font           `xml:"rFonts"`
+	Style         *RunStyle       `xml:"rStyle"`
 }
 
 // Text represents text content
@@ -453,6 +454,20 @@ type Size struct {
 // Font represents font information
 type Font struct {
 	ASCII string `xml:"ascii,attr"`
+}
+
+// RunStyle represents a run style reference
+type RunStyle struct {
+	Val string `xml:"val,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for RunStyle
+func (s RunStyle) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:rStyle"}
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:val"}, Value: s.Val},
+	}
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // UnderlineStyle represents underline formatting
