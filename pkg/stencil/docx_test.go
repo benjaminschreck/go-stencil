@@ -168,7 +168,7 @@ func TestDocxReader_GetRelationships(t *testing.T) {
 				content := `<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 	<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-	<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+	<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/>
 </Relationships>`
 				f.Write([]byte(content))
 				
@@ -182,9 +182,10 @@ func TestDocxReader_GetRelationships(t *testing.T) {
 					Target: "styles.xml",
 				},
 				{
-					ID:     "rId2",
-					Type:   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
-					Target: "media/image1.png",
+					ID:         "rId2",
+					Type:       "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+					Target:     "https://example.com",
+					TargetMode: "External",
 				},
 			},
 			wantErr: false,
@@ -230,7 +231,8 @@ func TestDocxReader_GetRelationships(t *testing.T) {
 			for i, rel := range got {
 				if rel.ID != tt.want[i].ID ||
 					rel.Type != tt.want[i].Type ||
-					rel.Target != tt.want[i].Target {
+					rel.Target != tt.want[i].Target ||
+					rel.TargetMode != tt.want[i].TargetMode {
 					t.Errorf("GetRelationships()[%d] = %+v, want %+v", i, rel, tt.want[i])
 				}
 			}

@@ -11,7 +11,7 @@ go-stencil is a powerful template engine that allows you to create dynamic Micro
 - **Simple template syntax** using `{{placeholders}}`
 - **Control structures** for conditionals and loops
 - **Built-in functions** for formatting and data manipulation
-- **Support for tables**, images, and complex document structures
+- **Support for tables** and complex document structures
 - **High performance** with template caching
 - **Thread-safe** rendering with concurrent template support
 - **Extensible** with custom functions and providers
