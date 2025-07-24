@@ -415,6 +415,7 @@ Renders HTML content as formatted text
 **Examples:**
 ```
 {{html("<b>Important:</b> Please <u>review</u> carefully")}}
+{{html("First line<br>Second line<br>Third line")}}  // Line breaks
 {{html(product.description)}}  // If description contains HTML
 ```
 
