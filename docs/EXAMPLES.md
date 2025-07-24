@@ -347,7 +347,6 @@ PRODUCT CATALOG
 
 {{for product in products}}
 {{product.name}}
-{{replaceImage(product.imageData)}}
 Price: {{currency(product.price)}}
 {{product.description}}
 

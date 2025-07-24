@@ -590,13 +590,6 @@ func RenderTextWithContext(text *Text, data TemplateData, ctx *renderContext) (*
 				} else if marker, ok := value.(*TableColumnMarker); ok {
 					// Handle table column markers
 					result.WriteString(marker.String())
-				} else if marker, ok := value.(*imageReplacementMarker); ok {
-					// Handle image replacement markers
-					markerKey := fmt.Sprintf("img_%d", len(ctx.imageMarkers))
-					if ctx != nil {
-						ctx.imageMarkers[markerKey] = marker
-					}
-					result.WriteString(fmt.Sprintf("{{IMAGE_REPLACEMENT:%s:%d}}", marker.mimeType, len(marker.data)))
 				} else if marker, ok := value.(LinkReplacementMarker); ok {
 					// Handle link replacement markers
 					markerKey := fmt.Sprintf("link_%d", len(ctx.linkMarkers))
@@ -632,13 +625,6 @@ func RenderTextWithContext(text *Text, data TemplateData, ctx *renderContext) (*
 				} else if marker, ok := value.(*TableColumnMarker); ok {
 					// Handle table column markers
 					result.WriteString(marker.String())
-				} else if marker, ok := value.(*imageReplacementMarker); ok {
-					// Handle image replacement markers
-					markerKey := fmt.Sprintf("img_%d", len(ctx.imageMarkers))
-					if ctx != nil {
-						ctx.imageMarkers[markerKey] = marker
-					}
-					result.WriteString(fmt.Sprintf("{{IMAGE_REPLACEMENT:%s:%d}}", marker.mimeType, len(marker.data)))
 				} else if marker, ok := value.(LinkReplacementMarker); ok {
 					// Handle link replacement markers
 					markerKey := fmt.Sprintf("link_%d", len(ctx.linkMarkers))

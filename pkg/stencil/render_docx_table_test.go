@@ -80,8 +80,6 @@ func TestRenderTableCellWithSplitRuns(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a render context
 			ctx := &renderContext{
-				imageReplacements: make(map[string]*ImageReplacement),
-				imageMarkers:     make(map[string]*imageReplacementMarker),
 				linkMarkers:      make(map[string]*LinkReplacementMarker),
 				fragments:        make(map[string]*fragment),
 				ooxmlFragments:   make(map[string]interface{}),
@@ -129,8 +127,6 @@ func TestMergeConsecutiveRunsInTableCell(t *testing.T) {
 	originalRunCount := len(cell.Paragraphs[0].Runs)
 
 	ctx := &renderContext{
-		imageReplacements: make(map[string]*ImageReplacement),
-		imageMarkers:     make(map[string]*imageReplacementMarker),
 		linkMarkers:      make(map[string]*LinkReplacementMarker),
 		fragments:        make(map[string]*fragment),
 		ooxmlFragments:   make(map[string]interface{}),

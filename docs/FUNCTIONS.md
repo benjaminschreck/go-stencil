@@ -430,17 +430,6 @@ Inserts raw XML content (advanced use)
 {{xml(customXmlElement)}}
 ```
 
-### replaceImage
-Replaces an image placeholder with new image data
-
-**Syntax:** `replaceImage(base64Data)`
-
-**Examples:**
-```
-{{replaceImage("data:image/png;base64,iVBORw0KGgo...")}}
-{{replaceImage(product.imageData)}}
-```
-
 ### replaceLink
 Replaces a hyperlink URL
 

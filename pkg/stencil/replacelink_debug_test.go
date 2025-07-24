@@ -40,7 +40,6 @@ func TestReplaceLinkDebug(t *testing.T) {
 	ctx := &renderContext{
 		linkMarkers:    make(map[string]*LinkReplacementMarker),
 		ooxmlFragments: make(map[string]interface{}),
-		imageMarkers:   make(map[string]*imageReplacementMarker),
 	}
 
 	// Render the document

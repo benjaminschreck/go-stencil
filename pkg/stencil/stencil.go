@@ -32,7 +32,6 @@ type fragment struct {
 // renderContext holds the context during rendering (internal use)
 type renderContext struct {
 	imageReplacements map[string]*ImageReplacement
-	imageMarkers     map[string]*imageReplacementMarker
 	linkMarkers      map[string]*LinkReplacementMarker
 	fragments        map[string]*fragment
 	fragmentStack    []string // Track fragment inclusion stack for circular reference detection
@@ -146,7 +145,6 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	// Create render context to collect image markers
 	renderCtx := &renderContext{
 		imageReplacements: make(map[string]*ImageReplacement),
-		imageMarkers:     make(map[string]*imageReplacementMarker),
 		linkMarkers:      make(map[string]*LinkReplacementMarker),
 		fragments:        pt.template.fragments,
 		fragmentStack:    make([]string, 0),
@@ -177,15 +175,6 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	renderedXML, err := marshalDocumentWithNamespaces(renderedDoc)
 	if err != nil {
 		return nil, NewDocumentError("marshal", "rendered document", err)
-	}
-	
-	// Process image replacements if any
-	var imageReplacements map[string]*ImageReplacement
-	if len(renderCtx.imageMarkers) > 0 {
-		renderedXML, imageReplacements, err = ProcessImageReplacements(renderedXML, renderCtx.imageMarkers)
-		if err != nil {
-			return nil, WithContext(err, "processing image replacements", map[string]interface{}{"count": len(renderCtx.imageMarkers)})
-		}
 	}
 	
 	// Process link replacements if any
@@ -231,7 +220,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
-		} else if file.Name == "word/_rels/document.xml.rels" && (len(imageReplacements) > 0 || len(updatedRelationships) > 0) {
+		} else if file.Name == "word/_rels/document.xml.rels" && (len(renderCtx.imageReplacements) > 0 || len(updatedRelationships) > 0) {
 			// Update relationships if we have image or link replacements
 			var rels []byte
 			if len(updatedRelationships) > 0 {
@@ -246,14 +235,14 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 				rels = output
 				
 				// If we also have image replacements, apply them to the updated relationships
-				if len(imageReplacements) > 0 {
+				if len(renderCtx.imageReplacements) > 0 {
 					var relsStruct Relationships
 					if err := xml.Unmarshal(rels, &relsStruct); err != nil {
 						return nil, fmt.Errorf("failed to unmarshal relationships: %w", err)
 					}
 					// Update image relationships
 					for i := range relsStruct.Relationship {
-						if replacement, exists := imageReplacements[relsStruct.Relationship[i].ID]; exists {
+						if replacement, exists := renderCtx.imageReplacements[relsStruct.Relationship[i].ID]; exists {
 							relsStruct.Relationship[i].Target = "media/" + replacement.Filename
 						}
 					}
@@ -264,7 +253,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 				}
 			} else {
 				// Only image replacements
-				rels, err = pt.updateRelationships(file, imageReplacements)
+				rels, err = pt.updateRelationships(file, renderCtx.imageReplacements)
 				if err != nil {
 					return nil, fmt.Errorf("failed to update relationships: %w", err)
 				}
@@ -281,7 +270,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		} else {
 			// Check if this is an image file that needs replacement
 			skipFile := false
-			if len(imageReplacements) > 0 && strings.Contains(file.Name, "word/media/") {
+			if len(renderCtx.imageReplacements) > 0 && strings.Contains(file.Name, "word/media/") {
 				// Mark as potentially replaced (we'll add new images later)
 				replacedImages[file.Name] = true
 			}
@@ -308,7 +297,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	}
 	
 	// Add new image files
-	for _, replacement := range imageReplacements {
+	for _, replacement := range renderCtx.imageReplacements {
 		filePath := "word/media/" + replacement.Filename
 		fw, err := w.Create(filePath)
 		if err != nil {
