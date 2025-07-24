@@ -7,6 +7,7 @@ This guide provides recommendations for creating efficient, maintainable, and ro
 ### 1. Keep Templates Simple
 
 **Do:** Break complex logic into smaller, manageable pieces
+
 ```
 {{if hasDiscount}}
   Discount: {{format("%.0f", discountPercent)}}%
@@ -14,6 +15,7 @@ This guide provides recommendations for creating efficient, maintainable, and ro
 ```
 
 **Avoid:** Deeply nested conditionals
+
 ```
 {{if customer}}{{if customer.status}}{{if customer.status == "premium"}}{{if discounts}}...{{end}}{{end}}{{end}}{{end}}
 ```
@@ -21,6 +23,7 @@ This guide provides recommendations for creating efficient, maintainable, and ro
 ### 2. Use Meaningful Variable Names
 
 **Do:** Use descriptive names that indicate the data type
+
 ```
 {{customerName}}
 {{orderItems}}
@@ -29,6 +32,7 @@ This guide provides recommendations for creating efficient, maintainable, and ro
 ```
 
 **Avoid:** Single letters or ambiguous names
+
 ```
 {{n}}
 {{data}}
@@ -38,6 +42,7 @@ This guide provides recommendations for creating efficient, maintainable, and ro
 ### 3. Prepare Data in Your Application
 
 **Do:** Pre-calculate complex values in Go
+
 ```go
 data := stencil.TemplateData{
     "subtotal": 100.00,
@@ -47,6 +52,7 @@ data := stencil.TemplateData{
 ```
 
 **Avoid:** Complex calculations in templates
+
 ```
 {{(price * quantity) * (1 + taxRate) - discount + shipping}}
 ```
@@ -71,6 +77,7 @@ engine := stencil.NewWithOptions(
 ### 2. Minimize Function Calls in Loops
 
 **Do:** Pre-process data when possible
+
 ```go
 // In Go:
 for i, item := range items {
@@ -84,6 +91,7 @@ for i, item := range items {
 ```
 
 **Avoid:** Repeated function calls
+
 ```
 {{for item in items}}
   {{format("$%.2f", item.price)}}  // Called for each item
@@ -113,6 +121,7 @@ engine := stencil.NewWithOptions(
 ```
 
 This helps catch:
+
 - Undefined variables
 - Type mismatches
 - Invalid function calls
@@ -120,11 +129,13 @@ This helps catch:
 ### 2. Provide Default Values
 
 **Do:** Use coalesce for fallbacks
+
 ```
 {{coalesce(user.displayName, user.email, "Guest")}}
 ```
 
 **Do:** Check for empty values
+
 ```
 {{if empty(notes)}}
   No additional notes
@@ -140,13 +151,13 @@ func validateInvoiceData(data stencil.TemplateData) error {
     if _, ok := data["invoiceNumber"]; !ok {
         return errors.New("invoiceNumber is required")
     }
-    
+
     if items, ok := data["items"].([]interface{}); ok {
         if len(items) == 0 {
             return errors.New("at least one item is required")
         }
     }
-    
+
     return nil
 }
 
@@ -167,6 +178,7 @@ if err := validateInvoiceData(data); err != nil {
 ### 2. Handle Dynamic Tables Properly
 
 **For hiding rows:**
+
 ```
 {{for item in items}}
 {{if item.isVisible}}
@@ -178,6 +190,7 @@ if err := validateInvoiceData(data); err != nil {
 ```
 
 **For conditional columns:**
+
 ```
 | Name | {{if showPrices}}Price{{else}}{{hideColumn}}{{end}} |
 ```
@@ -214,6 +227,7 @@ data := stencil.TemplateData{
 ```
 
 Template usage:
+
 ```
 Invoice #{{invoice.number}}
 Customer: {{invoice.customer.name}}
@@ -237,7 +251,7 @@ data := stencil.TemplateData{
 data := stencil.TemplateData{
     // Actual data
     "content": content,
-    
+
     // Metadata for template logic
     "_meta": map[string]interface{}{
         "generatedAt": time.Now(),
@@ -252,6 +266,7 @@ data := stencil.TemplateData{
 ### 1. Create Test Documents
 
 Maintain a set of test templates with edge cases:
+
 - Empty data sets
 - Very long text
 - Special characters
@@ -286,7 +301,7 @@ func TestInvoiceTemplate(t *testing.T) {
             data: createInvoiceDataWithDiscounts(),
         },
     }
-    
+
     for _, tc := range testCases {
         t.Run(tc.name, func(t *testing.T) {
             // Test template rendering
@@ -332,6 +347,7 @@ if !strings.HasPrefix(filepath.Clean(fragmentPath), allowedDir) {
 ### 1. Version Your Templates
 
 Keep track of template versions:
+
 - Use version control (git)
 - Document changes
 - Test backward compatibility
@@ -344,12 +360,14 @@ Create documentation for each template:
 # Invoice Template Variables
 
 Required:
+
 - invoice.number (string): Invoice number
 - invoice.date (time.Time): Invoice date
 - customer.name (string): Customer name
 - items ([]Item): Line items
 
 Optional:
+
 - discount (float64): Discount percentage
 - notes (string): Additional notes
 ```
@@ -365,6 +383,7 @@ Optional:
 ### 1. Don't Modify Original Templates
 
 Always work on copies:
+
 ```go
 // Create a working copy
 templateCopy := copyFile(originalTemplate)
@@ -374,13 +393,14 @@ tmpl, err := stencil.PrepareFile(templateCopy)
 ### 2. Handle Missing Relationships
 
 In DOCX files, be aware of:
-- Images without proper relationships
+
 - Hyperlinks that may not exist
 - Referenced styles that might be missing
 
 ### 3. Test Across Different Office Versions
 
 Templates may render differently in:
+
 - Different versions of Microsoft Office
 - LibreOffice/OpenOffice
 - Google Docs (after import)
@@ -388,6 +408,7 @@ Templates may render differently in:
 ### 4. Avoid Excessive Template Logic
 
 If you find yourself writing complex logic in templates, consider:
+
 - Moving logic to your application code
 - Creating custom functions
 - Simplifying the data structure

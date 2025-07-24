@@ -425,13 +425,6 @@ func main() {
 - Test column hiding
 - Test different strategies
 
-**Commit 42: Image Handling**
-
-- Parse image relationships
-- Create image model
-- Test image detection
-- Test image properties
-
 **Commit 43: Link Handling**
 
 - Parse hyperlink relationships
@@ -538,7 +531,6 @@ func main() {
 - Current approach:
   - ZIP file handling: Use standard `archive/zip`
   - XML parsing: Use standard `encoding/xml`
-  - Image processing: Use standard library where possible
 
 ## Success Criteria
 

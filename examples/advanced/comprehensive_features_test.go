@@ -440,10 +440,7 @@ func runComprehensiveFeaturesForTest(t *testing.T, engine *stencil.Engine) {
 		"hideQ3": true, // Hide Q3
 		"hideQ4": false,
 
-		// NOTE: replaceLink and replaceImage features are currently not working due to 
-		// XML parser limitations - hyperlinks and images are not preserved during parsing
-		// These are placeholder values to prevent errors
-		"newImageData":  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", // 1x1 red pixel
+		// replaceLink functionality
 		"newWebsiteUrl": "https://github.com/benjaminschreck/go-stencil",
 
 		// Complex expression data

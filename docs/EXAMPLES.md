@@ -7,6 +7,7 @@ This document provides practical examples of using go-stencil for various docume
 ### Simple Letter Template
 
 **Template (letter.docx):**
+
 ```
 {{date("January 2, 2006", date)}}
 
@@ -19,6 +20,7 @@ Sincerely,
 ```
 
 **Code:**
+
 ```go
 tmpl, err := stencil.PrepareFile("letter.docx")
 if err != nil {
@@ -39,6 +41,7 @@ output, err := tmpl.Render(data)
 ### Invoice Template
 
 **Template (invoice.docx):**
+
 ```
 INVOICE #{{invoiceNumber}}
 Date: {{date("01/02/2006", invoiceDate)}}
@@ -62,6 +65,7 @@ Notes: {{notes}}
 ```
 
 **Code:**
+
 ```go
 data := stencil.TemplateData{
     "invoiceNumber": "INV-2024-001",
@@ -93,6 +97,7 @@ data := stencil.TemplateData{
 ### Dynamic Report with Charts
 
 **Template (report.docx):**
+
 ```
 {{uppercase(reportTitle)}}
 Generated on {{date("Monday, January 2, 2006", generatedDate)}}
@@ -127,6 +132,7 @@ APPENDIX
 ```
 
 **Code:**
+
 ```go
 // Add fragments for appendices
 tmpl.AddFragment("methodology", "Our analysis methodology...")
@@ -165,6 +171,7 @@ data := stencil.TemplateData{
 ### Dynamic Table Generation
 
 **Template with complex table logic:**
+
 ```
 INVENTORY REPORT
 
@@ -187,6 +194,7 @@ Total {{category.name}} Value: ${{format("%.2f", sum(map("value", category.produ
 ```
 
 **Code:**
+
 ```go
 // Custom function to calculate product value
 type ProductValueFunction struct{}
@@ -220,18 +228,19 @@ data := stencil.TemplateData{
 ### Multi-language Document
 
 **Template with conditional language support:**
+
 ```
 {{if language == "es"}}
     Estimado {{customer.name}},
-    
+
     Gracias por su pedido #{{orderNumber}}.
 {{elsif language == "fr"}}
     Cher {{customer.name}},
-    
+
     Merci pour votre commande #{{orderNumber}}.
 {{else}}
     Dear {{customer.name}},
-    
+
     Thank you for your order #{{orderNumber}}.
 {{end}}
 
@@ -243,6 +252,7 @@ data := stencil.TemplateData{
 ### Contract Template with Conditional Clauses
 
 **Template (contract.docx):**
+
 ```
 SERVICE AGREEMENT
 
@@ -295,6 +305,7 @@ _____________________               _____________________
 ### Form Letter with Complex Logic
 
 **Template using multiple functions and conditions:**
+
 ```
 {{if customer.preferredName}}
     {{set "salutation" customer.preferredName}}
@@ -337,11 +348,12 @@ Best regards,
 {{agent.title}}
 ```
 
-## Working with Images and Links
+## Working with Links
 
-### Dynamic Image Replacement
+### Dynamic Link Replacement
 
-**Template with image placeholders:**
+**Template with dynamic links:**
+
 ```
 PRODUCT CATALOG
 
@@ -355,19 +367,12 @@ Learn more: {{replaceLink(product.productUrl)}}
 ```
 
 **Code:**
-```go
-// Load image and convert to base64
-imageData, err := os.ReadFile("product1.png")
-if err != nil {
-    log.Fatal(err)
-}
-base64Image := "data:image/png;base64," + base64.StdEncoding.EncodeToString(imageData)
 
+```go
 data := stencil.TemplateData{
     "products": []map[string]interface{}{
         {
             "name":        "Premium Widget",
-            "imageData":   base64Image,
             "price":       99.99,
             "description": "Our top-of-the-line widget...",
             "productUrl":  "https://example.com/widget",
@@ -379,6 +384,7 @@ data := stencil.TemplateData{
 ### HTML Content Rendering
 
 **Template with formatted content:**
+
 ```
 NEWSLETTER
 
@@ -399,6 +405,7 @@ SPECIAL OFFERS:
 ```
 
 **Code:**
+
 ```go
 data := stencil.TemplateData{
     "headerHtml": "<h1>Monthly Newsletter</h1><hr/>",
@@ -438,7 +445,7 @@ for _, batch := range invoiceBatches {
             log.Printf("Failed to render invoice %s: %v", invoice["number"], err)
             continue
         }
-        
+
         // Save output
         filename := fmt.Sprintf("invoice-%s.docx", invoice["number"])
         saveOutput(output, filename)
@@ -463,14 +470,14 @@ func processJobs(jobs <-chan RenderJob, results chan<- error) {
             results <- err
             continue
         }
-        
+
         output, err := tmpl.Render(job.Data)
         if err != nil {
             tmpl.Close()
             results <- err
             continue
         }
-        
+
         err = saveOutput(output, job.Output)
         tmpl.Close()
         results <- err
@@ -527,23 +534,23 @@ func generateDocument(templatePath string, data stencil.TemplateData) error {
         return fmt.Errorf("failed to prepare template: %w", err)
     }
     defer tmpl.Close()
-    
+
     output, err := tmpl.Render(data)
     if err != nil {
         var templateErr *stencil.TemplateError
         if errors.As(err, &templateErr) {
             // Log detailed error information
             log.Printf("Render error details: %+v", templateErr.Details)
-            
+
             if varName, ok := templateErr.Details["variable"].(string); ok {
                 return fmt.Errorf("undefined variable '%s' in template", varName)
             }
-            
+
             return fmt.Errorf("render error: %s", templateErr.Message)
         }
         return fmt.Errorf("failed to render template: %w", err)
     }
-    
+
     // Save output...
     return nil
 }
