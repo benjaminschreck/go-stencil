@@ -127,23 +127,6 @@ func TestNewParseError(t *testing.T) {
 	}
 }
 
-func TestErrorRecovery(t *testing.T) {
-	// Test that we can recover from panics and convert them to errors
-	defer func() {
-		if r := recover(); r != nil {
-			err := RecoverError(r)
-			if err == nil {
-				t.Error("RecoverError should return an error for panic")
-			}
-			if !strings.Contains(err.Error(), "panic recovered") {
-				t.Errorf("RecoverError message should contain 'panic recovered', got: %s", err.Error())
-			}
-		}
-	}()
-	
-	// This should panic
-	panic("test panic")
-}
 
 func TestErrorContext(t *testing.T) {
 	// Test adding context to errors
@@ -188,23 +171,3 @@ func TestMultiError(t *testing.T) {
 	}
 }
 
-func TestValidationError(t *testing.T) {
-	// Test validation errors with multiple issues
-	validationErr := &ValidationError{
-		Issues: []ValidationIssue{
-			{Field: "name", Message: "required field"},
-			{Field: "age", Message: "must be positive"},
-			{Field: "email", Message: "invalid format"},
-		},
-	}
-	
-	errMsg := validationErr.Error()
-	if !strings.Contains(errMsg, "3 validation issues") {
-		t.Errorf("ValidationError should mention issue count, got: %s", errMsg)
-	}
-	
-	// Test individual issue access
-	if len(validationErr.Issues) != 3 {
-		t.Errorf("ValidationError.Issues length = %d, want 3", len(validationErr.Issues))
-	}
-}

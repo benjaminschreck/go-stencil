@@ -134,33 +134,6 @@ func NewDocumentError(operation, path string, cause error) error {
 	}
 }
 
-// ValidationIssue represents a single validation problem
-type ValidationIssue struct {
-	Field   string
-	Message string
-}
-
-// ValidationError represents multiple validation issues
-type ValidationError struct {
-	Issues []ValidationIssue
-}
-
-func (e *ValidationError) Error() string {
-	if len(e.Issues) == 0 {
-		return "validation error"
-	}
-	
-	if len(e.Issues) == 1 {
-		return fmt.Sprintf("validation error: %s - %s", e.Issues[0].Field, e.Issues[0].Message)
-	}
-	
-	var parts []string
-	parts = append(parts, fmt.Sprintf("%d validation issues:", len(e.Issues)))
-	for _, issue := range e.Issues {
-		parts = append(parts, fmt.Sprintf("  %s: %s", issue.Field, issue.Message))
-	}
-	return strings.Join(parts, "\n")
-}
 
 // MultiError collects multiple errors
 type MultiError struct {
@@ -249,44 +222,4 @@ func WithContext(err error, operation string, context map[string]interface{}) er
 	}
 }
 
-// RecoverError converts a panic recovery value to an error
-func RecoverError(r interface{}) error {
-	switch v := r.(type) {
-	case error:
-		return fmt.Errorf("panic recovered: %w", v)
-	case string:
-		return fmt.Errorf("panic recovered: %s", v)
-	default:
-		return fmt.Errorf("panic recovered: %v", v)
-	}
-}
 
-// IsTemplateError checks if an error is a template error
-func IsTemplateError(err error) bool {
-	_, ok := err.(*TemplateError)
-	return ok
-}
-
-// IsParseError checks if an error is a parse error
-func IsParseError(err error) bool {
-	_, ok := err.(*ParseError)
-	return ok
-}
-
-// IsEvaluationError checks if an error is an evaluation error
-func IsEvaluationError(err error) bool {
-	_, ok := err.(*EvaluationError)
-	return ok
-}
-
-// IsFunctionError checks if an error is a function error
-func IsFunctionError(err error) bool {
-	_, ok := err.(*FunctionError)
-	return ok
-}
-
-// IsDocumentError checks if an error is a document error
-func IsDocumentError(err error) bool {
-	_, ok := err.(*DocumentError)
-	return ok
-}

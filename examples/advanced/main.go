@@ -460,8 +460,6 @@ func htmlExample(engine *stencil.Engine) {
 }
 
 func comprehensiveFeaturesExample(engine *stencil.Engine) {
-	// Use the basic comprehensive_features.docx that doesn't have replaceLink/replaceImage
-	// TODO: Fix XML parser to preserve hyperlinks and images for these features to work
 	tmpl, err := engine.PrepareFile("comprehensive_features.docx")
 	if err != nil {
 		log.Fatalf("Failed to prepare template: %v", err)
@@ -550,10 +548,7 @@ func comprehensiveFeaturesExample(engine *stencil.Engine) {
 		"hideQ3": true, // Hide Q3
 		"hideQ4": false,
 
-		// NOTE: replaceLink and replaceImage features are currently not working due to 
-		// XML parser limitations - hyperlinks and images are not preserved during parsing
-		// These are placeholder values to prevent errors
-		"newImageData":  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", // 1x1 red pixel
+		// replaceLink functionality
 		"newWebsiteUrl": "https://github.com/benjaminschreck/go-stencil",
 
 		// Complex expression data
