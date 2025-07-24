@@ -11,7 +11,7 @@ This implementation uses `{{}}` syntax for all template features:
 - Variable substitution: `{{variable}}`, `{{customer.name}}`, `{{price * 1.2}}`
 - Control structures: `{{if condition}}...{{end}}`, `{{for item in items}}...{{end}}`
 - Functions: `{{uppercase(name)}}`, `{{format("%.2f", price)}}`
-- Special operations: `{{include fragmentName}}`, `{{pageBreak}}`
+- Special operations: `{{include fragmentName}}`, `{{pageBreak()}}`
 
 ## Development Philosophy
 
