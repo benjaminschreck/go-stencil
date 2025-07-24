@@ -102,7 +102,6 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 		switch token.Type {
 		case TokenIf, TokenFor, TokenUnless, TokenElse, TokenElsif, TokenEnd:
 			hasControlStructures = true
-			break
 		}
 	}
 	
@@ -121,7 +120,6 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 				switch structure.(type) {
 				case *IfNode, *ForNode, *UnlessNode:
 					hasActualControlStructures = true
-					break
 				}
 			}
 			
@@ -330,7 +328,6 @@ func convertXMLElementToRuns(elem XMLElement, templateRun *Run) []Run {
 			for _, attr := range elem.Attrs {
 				if attr.Name.Local == "type" {
 					breakType = attr.Value
-					break
 				}
 			}
 			breakRun := Run{
