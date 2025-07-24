@@ -306,7 +306,6 @@ go-stencil includes a comprehensive set of built-in functions:
 - `hideColumn()` - Hide the current table column (no arguments required)
 - `html(content)` - Insert HTML-formatted content
 - `xml(content)` - Insert raw XML content
-- `replaceImage(base64Data)` - Replace an image
 - `replaceLink(url)` - Replace a hyperlink
 - `include(fragmentName)` - Include a named fragment
 

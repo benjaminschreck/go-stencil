@@ -20,8 +20,8 @@ vendor/
 # Build output
 /stencil
 /cmd/stencil/stencil
-/debug/*
-/debug
+# /debug/*
+# /debug
 
 # IDE files
 .idea/
@@ -37,11 +37,6 @@ vendor/
 .DS_Store
 Thumbs.db
 
-# Test artifacts
-*.docx
-*.pptx
-!examples/**/*.docx
-!examples/**/*.pptx
-!test/**/*.docx
-!test/**/*.pptx
-examples/advanced/output/*
+
+# Needed for the tests in examples/advanced
+# examples/advanced/output/*

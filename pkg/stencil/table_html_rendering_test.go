@@ -44,8 +44,6 @@ func TestHTMLFunctionInTableCells(t *testing.T) {
 
 	// Create render context
 	ctx := &renderContext{
-		imageReplacements: make(map[string]*ImageReplacement),
-		imageMarkers:      make(map[string]*imageReplacementMarker),
 		linkMarkers:       make(map[string]*LinkReplacementMarker),
 		fragments:         make(map[string]*fragment),
 		ooxmlFragments:    make(map[string]interface{}),
@@ -119,8 +117,6 @@ func TestHTMLFunctionInTableCellsWithSplitRuns(t *testing.T) {
 
 	// Create render context
 	ctx := &renderContext{
-		imageReplacements: make(map[string]*ImageReplacement),
-		imageMarkers:      make(map[string]*imageReplacementMarker),
 		linkMarkers:       make(map[string]*LinkReplacementMarker),
 		fragments:         make(map[string]*fragment),
 		ooxmlFragments:    make(map[string]interface{}),

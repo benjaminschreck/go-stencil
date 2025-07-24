@@ -87,8 +87,6 @@ func TestRenderTableWithForLoop_Debug(t *testing.T) {
 
 	// Create a mock render context
 	ctx := &renderContext{
-		imageReplacements: make(map[string]*ImageReplacement),
-		imageMarkers:     make(map[string]*imageReplacementMarker),
 		linkMarkers:      make(map[string]*LinkReplacementMarker),
 		fragments:        make(map[string]*fragment),
 		fragmentStack:    []string{},

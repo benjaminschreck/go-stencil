@@ -115,11 +115,6 @@ func (n *ExpressionContentNode) RenderWithContext(data TemplateData, ctx *render
 	} else if marker, ok := value.(*TableColumnMarker); ok {
 		// Handle table column markers
 		return marker.String(), nil
-	} else if marker, ok := value.(*imageReplacementMarker); ok && ctx != nil {
-		// Handle image replacement markers
-		markerKey := fmt.Sprintf("img_%d", len(ctx.imageMarkers))
-		ctx.imageMarkers[markerKey] = marker
-		return fmt.Sprintf("{{IMAGE_REPLACEMENT:%s:%d}}", marker.mimeType, len(marker.data)), nil
 	} else if marker, ok := value.(LinkReplacementMarker); ok && ctx != nil {
 		// Handle link replacement markers
 		markerKey := fmt.Sprintf("link_%d", len(ctx.linkMarkers))

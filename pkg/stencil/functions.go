@@ -157,9 +157,6 @@ func registerBasicFunctions(registry *DefaultFunctionRegistry) {
 	// Register table column functions
 	registerTableColumnFunctions(registry)
 	
-	// Register image functions
-	registerImageFunctions(registry)
-	
 	// Register link functions
 	registerLinkFunctions(registry)
 	

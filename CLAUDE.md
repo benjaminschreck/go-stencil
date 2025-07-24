@@ -432,86 +432,79 @@ func main() {
 - Test image detection
 - Test image properties
 
-**Commit 43: Image Replacement**
-
-- Implement replaceImage()
-- Handle base64 decoding
-- Update relationships
-- Test image substitution
-
-**Commit 44: Link Handling**
+**Commit 43: Link Handling**
 
 - Parse hyperlink relationships
 - Implement replaceLink()
 - Test link replacement
 - Test multiple links
 
-**Commit 45: Fragment Support**
+**Commit 44: Fragment Support**
 
 - Implement {{include fragmentName}}
 - Create fragment loading
 - Test fragment inclusion
 - Test nested fragments
 
-### Phase 6: Performance & Polish (Commits 46-55)
+### Phase 6: Performance & Polish (Commits 45-54)
 
-**Commit 46: Template Caching**
+**Commit 45: Template Caching**
 
 - Implement prepared template cache
 - Add cache configuration
 - Test cache behavior
 - Test memory management
 
-**Commit 47: Resource Management**
+**Commit 46: Resource Management**
 
 - Implement proper cleanup
 - Add Close() methods
 - Test resource leaks
 - Test concurrent access
 
-**Commit 48: Error Handling**
+**Commit 47: Error Handling**
 
 - Create error types
 - Improve error messages
 - Test error scenarios
 - Test error recovery
 
-**Commit 49: Logging Framework**
+**Commit 48: Logging Framework**
 
 - Add structured logging
 - Create debug mode
 - Test log output
 - Test performance impact
 
-**Commit 50: Configuration**
+**Commit 49: Configuration**
 
 - Add environment variables
 - Create config structure
 - Test configuration loading
 - Test defaults
 
-**Commit 51: Benchmarks**
+**Commit 50: Benchmarks**
 
 - Create benchmark suite
 - Test template preparation
 - Test rendering performance
 - Profile hot paths
 
-**Commit 52: API Polish**
+**Commit 51: API Polish**
 
 - Finalize public API
 - Add documentation
 - Create examples
 - Test API usability
 
-**Commit 53: Integration Tests**
+**Commit 52: Integration Tests**
 
 - Test real-world templates
 - Test large documents
 - Test complex scenarios
 - Test edge cases
 
-**Commit 54: Documentation**
+**Commit 53: Documentation**
 
 - Complete API docs
 - Add usage examples
@@ -589,7 +582,6 @@ All template expressions use double curly braces `{{}}` with descriptive keyword
 - HTML content: `{{html("<b>Bold text</b>")}}`
 - Raw XML: `{{xml("<w:br/>")}}`
 - Table operations: `{{hideRow()}}`, `{{hideColumn()}}`, `{{hideColumn(1, "redistribute")}}`
-- Image replacement: `{{replaceImage("data:image/png;base64,...")}}`
 - Link replacement: `{{replaceLink("https://example.com")}}`
 - Fragment inclusion: `{{include "Header Template"}}`
 
