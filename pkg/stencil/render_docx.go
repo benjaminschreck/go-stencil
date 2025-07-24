@@ -110,22 +110,13 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 
 // mergeConsecutiveRuns merges consecutive runs in a paragraph to handle split template variables
 func mergeConsecutiveRuns(para *Paragraph) {
-	// Check if we have hyperlinks that need to be preserved
-	hasHyperlinks := false
+	// Handle paragraphs with Content (which can contain hyperlinks)
 	if len(para.Content) > 0 {
-		for _, content := range para.Content {
-			if _, ok := content.(*Hyperlink); ok {
-				hasHyperlinks = true
-				break
-			}
-		}
-	}
-	
-	// If we have hyperlinks, don't merge - we need to preserve the structure
-	if hasHyperlinks {
+		mergeConsecutiveRunsWithContent(para)
 		return
 	}
 	
+	// Handle legacy paragraphs with only Runs array
 	if len(para.Runs) <= 1 {
 		return
 	}
@@ -180,6 +171,123 @@ func mergeConsecutiveRuns(para *Paragraph) {
 	}
 
 	para.Runs = mergedRuns
+}
+
+// mergeConsecutiveRunsWithContent merges runs while preserving hyperlink boundaries
+func mergeConsecutiveRunsWithContent(para *Paragraph) {
+	if len(para.Content) == 0 {
+		return
+	}
+	
+	var mergedContent []interface{}
+	var pendingRuns []Run
+	
+	// Helper function to merge pending runs
+	mergePendingRuns := func() {
+		if len(pendingRuns) == 0 {
+			return
+		}
+		
+		merged := mergeRunSlice(pendingRuns)
+		for _, run := range merged {
+			r := run // Create a new variable to avoid aliasing
+			mergedContent = append(mergedContent, &r)
+		}
+		pendingRuns = nil
+	}
+	
+	// Process content elements
+	for _, content := range para.Content {
+		switch c := content.(type) {
+		case *Run:
+			// Accumulate runs outside hyperlinks
+			pendingRuns = append(pendingRuns, *c)
+			
+		case *Hyperlink:
+			// First, merge any pending runs
+			mergePendingRuns()
+			
+			// Process hyperlink runs separately
+			if len(c.Runs) > 1 {
+				mergedHyperlinkRuns := mergeRunSlice(c.Runs)
+				h := *c // Copy hyperlink
+				h.Runs = mergedHyperlinkRuns
+				mergedContent = append(mergedContent, &h)
+			} else {
+				mergedContent = append(mergedContent, c)
+			}
+		}
+	}
+	
+	// Merge any remaining runs
+	mergePendingRuns()
+	
+	// Update paragraph content
+	para.Content = make([]ParagraphContent, len(mergedContent))
+	for i, content := range mergedContent {
+		para.Content[i] = content.(ParagraphContent)
+	}
+	
+	// Also update the legacy Runs array for compatibility
+	para.Runs = nil
+	for _, content := range para.Content {
+		if run, ok := content.(*Run); ok {
+			para.Runs = append(para.Runs, *run)
+		}
+	}
+}
+
+// mergeRunSlice merges a slice of runs
+func mergeRunSlice(runs []Run) []Run {
+	if len(runs) <= 1 {
+		return runs
+	}
+	
+	var merged []Run
+	var current *Run
+	
+	for i, run := range runs {
+		if i == 0 {
+			newRun := run
+			current = &newRun
+			continue
+		}
+		
+		// Only merge text runs without breaks
+		if run.Text != nil && run.Break == nil && current != nil && current.Text != nil {
+			current.Text.Content += run.Text.Content
+		} else {
+			if current != nil {
+				merged = append(merged, *current)
+			}
+			
+			// Handle runs with both break and text
+			if run.Break != nil && run.Text != nil {
+				// First add the break
+				breakRun := Run{
+					Properties: run.Properties,
+					Break:      run.Break,
+				}
+				merged = append(merged, breakRun)
+				
+				// Then create a new run with just the text
+				textRun := Run{
+					Properties: run.Properties,
+					Text:       run.Text,
+				}
+				current = &textRun
+			} else {
+				newRun := run
+				current = &newRun
+			}
+		}
+	}
+	
+	if current != nil {
+		merged = append(merged, *current)
+	}
+	
+	return merged
 }
 
 // RenderBodyWithControlStructures renders a document body handling control structures

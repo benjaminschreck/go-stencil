@@ -22,7 +22,7 @@ func processLinkReplacements(xmlContent []byte, linkMarkers map[string]*LinkRepl
 
 	// Find all link replacement markers and their preceding hyperlinks
 	markerPattern := regexp.MustCompile(`{{LINK_REPLACEMENT:(link_\d+)}}`)
-	hyperlinkPattern := regexp.MustCompile(`<w:hyperlink[^>]+r:id="([^"]+)"[^>]*>`)
+	hyperlinkPattern := regexp.MustCompile(`<w:hyperlink[^>]+(?:r:|relationships:)id="([^"]+)"[^>]*>`)
 
 	matches := markerPattern.FindAllStringSubmatchIndex(content, -1)
 	
@@ -62,7 +62,13 @@ func processLinkReplacements(xmlContent []byte, linkMarkers map[string]*LinkRepl
 
 		// Replace the old relationship ID with the new one
 		oldHyperlinkTag := lastHyperlink[0]
-		newHyperlinkTag := strings.Replace(oldHyperlinkTag, `r:id="`+oldRelID+`"`, `r:id="`+newRel.ID+`"`, 1)
+		// Handle both r:id and relationships:id formats
+		var newHyperlinkTag string
+		if strings.Contains(oldHyperlinkTag, `relationships:id="`) {
+			newHyperlinkTag = strings.Replace(oldHyperlinkTag, `relationships:id="`+oldRelID+`"`, `relationships:id="`+newRel.ID+`"`, 1)
+		} else {
+			newHyperlinkTag = strings.Replace(oldHyperlinkTag, `r:id="`+oldRelID+`"`, `r:id="`+newRel.ID+`"`, 1)
+		}
 		
 		// Build the updated content
 		content = content[:hyperlinkPos] + newHyperlinkTag + content[hyperlinkPos+len(oldHyperlinkTag):markerStart] + content[markerEnd:]
