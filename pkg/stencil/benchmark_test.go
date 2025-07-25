@@ -75,7 +75,7 @@ var (
 
 	// Template content for benchmarks
 	simpleTemplate = "Hello {{name}}, welcome to {{company}}!"
-	
+
 	complexTemplate = `{{company.name}}
 Invoice #{{invoice.number}} - {{date(invoice.date, "MMMM d, yyyy")}}
 
@@ -88,22 +88,19 @@ Total: ${{format("%.2f", total)}}
 {{if notes}}
 {{notes}}
 {{end}}`
-
-	// Expression for stress testing
-	complexExpression = "((price * quantity) * (1 + taxRate)) / exchangeRate"
 )
 
 // createBenchDocx creates a test DOCX for benchmarking
 func createBenchDocx(b *testing.B, content string) *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	w := zip.NewWriter(buf)
-	
+
 	// Add document.xml with the content
 	f, err := w.Create("word/document.xml")
 	if err != nil {
 		b.Fatal(err)
 	}
-	
+
 	// Wrap content in minimal document structure
 	docXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -115,46 +112,46 @@ func createBenchDocx(b *testing.B, content string) *bytes.Buffer {
     </w:p>
   </w:body>
 </w:document>`, content)
-	
+
 	if _, err := f.Write([]byte(docXML)); err != nil {
 		b.Fatal(err)
 	}
-	
+
 	// Add required relationships
 	rels, err := w.Create("word/_rels/document.xml.rels")
 	if err != nil {
 		b.Fatal(err)
 	}
-	
+
 	relsXML := `<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 </Relationships>`
-	
+
 	if _, err := rels.Write([]byte(relsXML)); err != nil {
 		b.Fatal(err)
 	}
-	
+
 	// Add content types
 	ct, err := w.Create("[Content_Types].xml")
 	if err != nil {
 		b.Fatal(err)
 	}
-	
+
 	ctXML := `<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 </Types>`
-	
+
 	if _, err := ct.Write([]byte(ctXML)); err != nil {
 		b.Fatal(err)
 	}
-	
+
 	if err := w.Close(); err != nil {
 		b.Fatal(err)
 	}
-	
+
 	return buf
 }
 
@@ -275,13 +272,13 @@ Total items: {{totalItems}}`
 func BenchmarkRender_NestedData(b *testing.B) {
 	templateText := `Customer: {{customer.name}}
 Address: {{customer.address.street}}, {{customer.address.city}} {{customer.address.zip}}`
-	
+
 	reader := createBenchDocx(b, templateText)
 	tmpl, err := Prepare(reader)
 	if err != nil {
 		b.Fatal(err)
 	}
-	
+
 	data := map[string]interface{}{
 		"customer": map[string]interface{}{
 			"name": "John Doe",
@@ -292,7 +289,7 @@ Address: {{customer.address.street}}, {{customer.address.city}} {{customer.addre
 			},
 		},
 	}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := tmpl.Render(data)
@@ -307,19 +304,19 @@ func BenchmarkRender_MathExpressions(b *testing.B) {
 	templateText := `Subtotal: ${{price * quantity}}
 Tax: ${{(price * quantity) * taxRate}}
 Total: ${{(price * quantity) * (1 + taxRate)}}`
-	
+
 	reader := createBenchDocx(b, templateText)
 	tmpl, err := Prepare(reader)
 	if err != nil {
 		b.Fatal(err)
 	}
-	
+
 	data := map[string]interface{}{
 		"price":    99.99,
 		"quantity": 5,
 		"taxRate":  0.08,
 	}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := tmpl.Render(data)
@@ -334,18 +331,18 @@ func BenchmarkRender_FunctionCalls(b *testing.B) {
 	templateText := `Price: ${{format("%.2f", price)}}
 Total: ${{format("%.2f", price * 1.08)}}
 Date: {{date(orderDate, "MMMM d, yyyy")}}`
-	
+
 	reader := createBenchDocx(b, templateText)
 	tmpl, err := Prepare(reader)
 	if err != nil {
 		b.Fatal(err)
 	}
-	
+
 	data := map[string]interface{}{
 		"price":     99.99,
 		"orderDate": "2024-01-15",
 	}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := tmpl.Render(data)
@@ -426,13 +423,13 @@ func BenchmarkCache_Hit(b *testing.B) {
 	// Prepare a template and cache it
 	reader := createBenchDocx(b, simpleTemplate)
 	cache := NewTemplateCache()
-	
+
 	// Pre-populate cache
 	_, err := cache.Prepare(reader, "benchmark-key")
 	if err != nil {
 		b.Fatal(err)
 	}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		tmpl, exists := cache.Get("benchmark-key")
@@ -445,7 +442,7 @@ func BenchmarkCache_Hit(b *testing.B) {
 // Benchmark cache miss and prepare
 func BenchmarkCache_Miss(b *testing.B) {
 	cache := NewTemplateCache()
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Create unique key to force cache miss
