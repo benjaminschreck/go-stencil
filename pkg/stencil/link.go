@@ -13,11 +13,6 @@ type hyperlinkInfo struct {
 	RelationshipID string
 }
 
-type linkReplacement struct {
-	OldRelID string
-	NewRelID string
-	URL      string
-}
 
 func findHyperlinks(decoder *xml.Decoder) []hyperlinkInfo {
 	var hyperlinks []hyperlinkInfo
