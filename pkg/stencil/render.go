@@ -592,12 +592,15 @@ func RenderTextWithContext(text *Text, data TemplateData, ctx *renderContext) (*
 					result.WriteString(marker.String())
 				} else if marker, ok := value.(LinkReplacementMarker); ok {
 					// Handle link replacement markers
-					markerKey := fmt.Sprintf("link_%d", len(ctx.linkMarkers))
 					if ctx != nil {
+						markerKey := fmt.Sprintf("link_%d", len(ctx.linkMarkers))
 						linkMarker := &marker
 						ctx.linkMarkers[markerKey] = linkMarker
+						result.WriteString(fmt.Sprintf("{{LINK_REPLACEMENT:%s}}", markerKey))
+					} else {
+						// If no context, we can't store the marker, so just write empty string
+						result.WriteString("")
 					}
-					result.WriteString(fmt.Sprintf("{{LINK_REPLACEMENT:%s}}", markerKey))
 				} else {
 					result.WriteString(FormatValue(value))
 				}
@@ -627,12 +630,15 @@ func RenderTextWithContext(text *Text, data TemplateData, ctx *renderContext) (*
 					result.WriteString(marker.String())
 				} else if marker, ok := value.(LinkReplacementMarker); ok {
 					// Handle link replacement markers
-					markerKey := fmt.Sprintf("link_%d", len(ctx.linkMarkers))
 					if ctx != nil {
+						markerKey := fmt.Sprintf("link_%d", len(ctx.linkMarkers))
 						linkMarker := &marker
 						ctx.linkMarkers[markerKey] = linkMarker
+						result.WriteString(fmt.Sprintf("{{LINK_REPLACEMENT:%s}}", markerKey))
+					} else {
+						// If no context, we can't store the marker, so just write empty string
+						result.WriteString("")
 					}
-					result.WriteString(fmt.Sprintf("{{LINK_REPLACEMENT:%s}}", markerKey))
 				} else {
 					result.WriteString(FormatValue(value))
 				}
