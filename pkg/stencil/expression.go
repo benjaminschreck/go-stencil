@@ -19,6 +19,10 @@ type LiteralNode struct {
 }
 
 func (n *LiteralNode) String() string {
+	// Add quotes around string values for proper formatting
+	if str, ok := n.Value.(string); ok {
+		return fmt.Sprintf("Literal(%q)", str)
+	}
 	return fmt.Sprintf("Literal(%v)", n.Value)
 }
 
@@ -225,6 +229,12 @@ var (
 	numberRegex     = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?`)
 	stringRegex     = regexp.MustCompile(`^"([^"\\]|\\.)*"`)
 	singleQuoteRegex = regexp.MustCompile(`^'([^'\\]|\\.)*'`)
+	// German typographic quotes: „..." (U+201E opening and U+201C/U+201D closing)
+	// Matches both „text" (with U+201C right quote) and „text" (with U+201D right quote)
+	// Using UTF-8 bytes: \xe2\x80\x9e = „, \xe2\x80\x9c = ", \xe2\x80\x9d = "
+	germanQuoteRegex = regexp.MustCompile("^\xe2\x80\x9e([^\xe2\x80\x9c\xe2\x80\x9d\\\\]|\\\\.)*[\xe2\x80\x9c\xe2\x80\x9d]")
+	// French/Swiss quotes: »...« (U+00BB and U+00AB)
+	frenchQuoteRegex = regexp.MustCompile(`^»([^«\\]|\\.)*«`)
 	operatorRegex   = regexp.MustCompile(`^(==|!=|<=|>=|\+|\-|\*|\/|\%|\&|\||\!|<|>|=)`)
 )
 
@@ -295,7 +305,39 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 			pos += len(match)
 			continue
 		}
-		
+
+		// Try to match German typographic quotes: „..."
+		if match := germanQuoteRegex.FindString(remaining); match != "" {
+			// Remove German quotes from the value („ is 3 bytes, " is 3 bytes in UTF-8)
+			value := string([]rune(match)[1 : len([]rune(match))-1])
+			// Unescape common escape sequences
+			value = strings.ReplaceAll(value, `\"`, `"`)
+			value = strings.ReplaceAll(value, `\\`, `\`)
+			tokens = append(tokens, ExpressionToken{
+				Type:  ExprTokenString,
+				Value: value,
+				Pos:   pos,
+			})
+			pos += len(match)
+			continue
+		}
+
+		// Try to match French/Swiss quotes: »...«
+		if match := frenchQuoteRegex.FindString(remaining); match != "" {
+			// Remove French quotes from the value (» and « are each 2 bytes in UTF-8)
+			value := string([]rune(match)[1 : len([]rune(match))-1])
+			// Unescape common escape sequences
+			value = strings.ReplaceAll(value, `\"`, `"`)
+			value = strings.ReplaceAll(value, `\\`, `\`)
+			tokens = append(tokens, ExpressionToken{
+				Type:  ExprTokenString,
+				Value: value,
+				Pos:   pos,
+			})
+			pos += len(match)
+			continue
+		}
+
 		// Try to match operators
 		if match := operatorRegex.FindString(remaining); match != "" {
 			tokens = append(tokens, ExpressionToken{

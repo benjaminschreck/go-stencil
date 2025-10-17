@@ -77,6 +77,16 @@ func TestParseControlStructures(t *testing.T) {
 			content: "Total: {{price * quantity + tax}}",
 			wantAST: `[Text("Total: ") Expression(BinaryOp(BinaryOp(Variable(price) * Variable(quantity)) + Variable(tax)))]`,
 		},
+		{
+			name:    "string comparison with German quotes",
+			content: "{{if haftung == \u201EHaftung klar individuelle Quote\u201C}}Match{{end}}",
+			wantAST: `[If(BinaryOp(Variable(haftung) == Literal("Haftung klar individuelle Quote")))]`,
+		},
+		{
+			name:    "string comparison with French quotes",
+			content: `{{if status == »active«}}Active{{end}}`,
+			wantAST: `[If(BinaryOp(Variable(status) == Literal("active")))]`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -286,6 +296,46 @@ func TestIfNodeRender(t *testing.T) {
 				"score": 65,
 			},
 			want: "F",
+		},
+		{
+			name: "string equality with German quotes",
+			node: &IfNode{
+				Condition: &BinaryOpNode{
+					Left:     &VariableNode{Name: "haftung"},
+					Operator: "==",
+					Right:    &LiteralNode{Value: "Haftung klar individuelle Quote"},
+				},
+				ThenBody: []ControlStructure{
+					&TextNode{Content: "Match"},
+				},
+				ElseBody: []ControlStructure{
+					&TextNode{Content: "No match"},
+				},
+			},
+			data: TemplateData{
+				"haftung": "Haftung klar individuelle Quote",
+			},
+			want: "Match",
+		},
+		{
+			name: "string equality with German quotes - no match",
+			node: &IfNode{
+				Condition: &BinaryOpNode{
+					Left:     &VariableNode{Name: "haftung"},
+					Operator: "==",
+					Right:    &LiteralNode{Value: "Haftung klar individuelle Quote"},
+				},
+				ThenBody: []ControlStructure{
+					&TextNode{Content: "Match"},
+				},
+				ElseBody: []ControlStructure{
+					&TextNode{Content: "No match"},
+				},
+			},
+			data: TemplateData{
+				"haftung": "Different value",
+			},
+			want: "No match",
 		},
 	}
 
