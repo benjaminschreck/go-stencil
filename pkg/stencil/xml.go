@@ -664,6 +664,38 @@ type Height struct {
 type TableCellProperties struct {
 	Width    *Width    `xml:"tcW"`
 	GridSpan *GridSpan `xml:"gridSpan"`
+	Shading  *Shading  `xml:"shd"`
+}
+
+// MarshalXML implements custom XML marshaling for TableCellProperties
+func (p TableCellProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:tcPr"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode width if present
+	if p.Width != nil {
+		if err := e.EncodeElement(p.Width, xml.StartElement{Name: xml.Name{Local: "w:tcW"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode grid span if present
+	if p.GridSpan != nil {
+		if err := e.EncodeElement(p.GridSpan, xml.StartElement{Name: xml.Name{Local: "w:gridSpan"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode shading if present
+	if p.Shading != nil {
+		if err := e.EncodeElement(p.Shading, xml.StartElement{Name: xml.Name{Local: "w:shd"}}); err != nil {
+			return err
+		}
+	}
+
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
 }
 
 // Width represents width settings
@@ -675,6 +707,32 @@ type Width struct {
 // GridSpan represents cell column span
 type GridSpan struct {
 	Val int `xml:"val,attr"`
+}
+
+// Shading represents cell or paragraph shading
+type Shading struct {
+	Val   string `xml:"val,attr,omitempty"`
+	Color string `xml:"color,attr,omitempty"`
+	Fill  string `xml:"fill,attr,omitempty"`
+}
+
+// MarshalXML implements custom XML marshaling for Shading
+func (s Shading) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:shd"}
+	start.Attr = []xml.Attr{}
+
+	if s.Val != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:val"}, Value: s.Val})
+	}
+	if s.Color != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:color"}, Value: s.Color})
+	}
+	if s.Fill != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:fill"}, Value: s.Fill})
+	}
+
+	// Self-closing element
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // ParseDocument parses a Word document XML
