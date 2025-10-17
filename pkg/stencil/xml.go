@@ -160,6 +160,40 @@ type ParagraphProperties struct {
 	Spacing     *Spacing     `xml:"spacing"`
 }
 
+// MarshalXML implements custom XML marshaling for ParagraphProperties
+func (p ParagraphProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:pPr"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	if p.Style != nil {
+		if err := e.EncodeElement(p.Style, xml.StartElement{Name: xml.Name{Local: "w:pStyle"}}); err != nil {
+			return err
+		}
+	}
+
+	if p.Alignment != nil {
+		if err := e.EncodeElement(p.Alignment, xml.StartElement{Name: xml.Name{Local: "w:jc"}}); err != nil {
+			return err
+		}
+	}
+
+	if p.Indentation != nil {
+		if err := e.EncodeElement(p.Indentation, xml.StartElement{Name: xml.Name{Local: "w:ind"}}); err != nil {
+			return err
+		}
+	}
+
+	if p.Spacing != nil {
+		if err := e.EncodeElement(p.Spacing, xml.StartElement{Name: xml.Name{Local: "w:spacing"}}); err != nil {
+			return err
+		}
+	}
+
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
+}
+
 // Run represents a run of text with common properties
 type Run struct {
 	Properties *RunProperties `xml:"rPr"`
@@ -427,6 +461,15 @@ func (s Style) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 // Alignment represents text alignment
 type Alignment struct {
 	Val string `xml:"val,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for Alignment
+func (a Alignment) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:jc"}
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:val"}, Value: a.Val},
+	}
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // Indentation represents paragraph indentation
