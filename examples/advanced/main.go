@@ -335,7 +335,24 @@ func tableExample(engine *stencil.Engine) {
 				"q4Sales": 150000,
 				"total":   480000,
 				"showRow": true,
-			},
+				"people": []map[string]interface{}{
+					{
+						"name": "John Doe",
+						"age":  30,
+						"city": "New York",
+					},
+
+					{
+						"name": "Jane Doe",
+						"age":  25,
+						"city": "Los Angeles",
+					},
+					{
+						"name": "Jim Doe",
+						"age":  35,
+						"city": "Chicago",
+					},
+				}},
 			{
 				"region":  "South",
 				"q1Sales": 80000,

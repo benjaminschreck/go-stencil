@@ -1130,12 +1130,28 @@ func RenderTableCell(cell *TableCell, data TemplateData, ctx *renderContext) (*T
 		// This is necessary because Word often splits template expressions across multiple runs
 		p := para
 		mergeConsecutiveRuns(&p)
-		
-		renderedPara, err := RenderParagraphWithContext(&p, data, ctx)
-		if err != nil {
-			return nil, err
+
+		// Check if this paragraph contains an inline for loop
+		controlType, controlContent := detectControlStructure(&p)
+
+		if controlType == "inline-for" {
+			// Handle inline for loop - this will expand to multiple paragraphs
+			renderedParas, err := renderInlineForLoop(&p, controlContent, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			// Add all expanded paragraphs
+			for _, rp := range renderedParas {
+				rendered.Paragraphs = append(rendered.Paragraphs, rp)
+			}
+		} else {
+			// Normal paragraph rendering
+			renderedPara, err := RenderParagraphWithContext(&p, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			rendered.Paragraphs = append(rendered.Paragraphs, *renderedPara)
 		}
-		rendered.Paragraphs = append(rendered.Paragraphs, *renderedPara)
 	}
 
 	return rendered, nil
@@ -1229,6 +1245,21 @@ func renderTableForLoop(rows []TableRow, forExpr string, data TemplateData, ctx 
 			controlType, controlContent := detectTableRowControlStructure(row)
 
 			switch controlType {
+			case "for":
+				// Find matching end for nested for loop
+				endIdx, err := findMatchingTableEndInSlice(bodyRows, i)
+				if err != nil {
+					return nil, fmt.Errorf("failed to find matching end for nested for: %w", err)
+				}
+
+				// Render nested for loop block
+				renderedRows, err := renderTableForLoop(bodyRows[i:endIdx+1], controlContent, loopData, ctx)
+				if err != nil {
+					return nil, err
+				}
+				result = append(result, renderedRows...)
+				i = endIdx + 1
+
 			case "if":
 				// Find matching else/end
 				elseIdx, endIdx, err := findMatchingTableIfEndInSlice(bodyRows, i)
@@ -1260,6 +1291,25 @@ func renderTableForLoop(rows []TableRow, forExpr string, data TemplateData, ctx 
 }
 
 // findMatchingTableIfEndInSlice finds matching else/end in a slice of rows
+// findMatchingTableEndInSlice finds the matching end for a table control structure in a slice
+func findMatchingTableEndInSlice(rows []TableRow, startIdx int) (int, error) {
+	depth := 1
+	for i := startIdx + 1; i < len(rows); i++ {
+		controlType, _ := detectTableRowControlStructure(&rows[i])
+
+		switch controlType {
+		case "for", "if":
+			depth++
+		case "end":
+			depth--
+			if depth == 0 {
+				return i, nil
+			}
+		}
+	}
+	return -1, fmt.Errorf("no matching end found")
+}
+
 func findMatchingTableIfEndInSlice(rows []TableRow, startIdx int) (int, int, error) {
 	depth := 1
 	elseIdx := -1
