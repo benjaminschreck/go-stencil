@@ -69,6 +69,22 @@ func TestTokenizeExpression(t *testing.T) {
 			},
 		},
 		{
+			name: "German typographic quotes",
+			expr: "\u201EHaftung klar individuelle Quote\u201C",  // „ opens, " closes
+			want: []ExpressionToken{
+				{Type: ExprTokenString, Value: "Haftung klar individuelle Quote", Pos: 0},
+				{Type: ExprTokenEOF, Pos: 37},  // 3 bytes for „ + 32 for text + 3 bytes for " - 1 = 37
+			},
+		},
+		{
+			name: "French/Swiss typographic quotes",
+			expr: `»Bonjour le monde«`,
+			want: []ExpressionToken{
+				{Type: ExprTokenString, Value: "Bonjour le monde", Pos: 0},
+				{Type: ExprTokenEOF, Pos: 20},
+			},
+		},
+		{
 			name: "boolean literals",
 			expr: "true false",
 			want: []ExpressionToken{
@@ -264,7 +280,7 @@ func TestParseExpression(t *testing.T) {
 		{
 			name: "string literal",
 			expr: `"hello"`,
-			want: "Literal(hello)",
+			want: `Literal("hello")`,
 		},
 		{
 			name: "boolean true",
@@ -309,7 +325,7 @@ func TestParseExpression(t *testing.T) {
 		{
 			name: "function call multiple args",
 			expr: `max(42, "hello", true)`,
-			want: "FunctionCall(max, [Literal(42), Literal(hello), Literal(true)])",
+			want: `FunctionCall(max, [Literal(42), Literal("hello"), Literal(true)])`,
 		},
 		{
 			name: "nested function call",
