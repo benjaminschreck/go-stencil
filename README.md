@@ -12,6 +12,7 @@ go-stencil is a powerful template engine that allows you to create dynamic Micro
 - **Control structures** for conditionals and loops
 - **Built-in functions** for formatting and data manipulation
 - **Support for tables** and complex document structures
+- **Typographic quote support** - Works with German („..."), French (»...«), and ASCII quotes
 - **High performance** with template caching
 - **Thread-safe** rendering with concurrent template support
 - **Extensible** with custom functions and providers
@@ -111,6 +112,24 @@ Total: {{format("%.2f", total)}}
 Date: {{date("2006-01-02", orderDate)}}
 No arguments: {{timestamp()}}
 ```
+
+### String Literals and Quotes
+
+go-stencil supports multiple quote styles for string literals in template expressions:
+
+- **ASCII quotes**: `"text"` or `'text'` - Standard quotes
+- **German typographic quotes**: `„text"` - Automatically inserted by German Microsoft Word
+- **French/Swiss quotes**: `»text«` - Common in French/Swiss documents
+
+This means you can write expressions naturally in Word without needing to replace typographic quotes:
+
+```
+{{if status == „active"}}Active{{end}}
+{{if language == »français«}}Bonjour{{end}}
+{{if description == "test"}}Match{{end}}
+```
+
+**Note**: German Word automatically converts ASCII quotes to typographic quotes (`„` and `"`). go-stencil handles this automatically, so your templates will work regardless of which quote style Word uses.
 
 #### Understanding Template Functions
 

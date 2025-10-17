@@ -57,6 +57,48 @@ data := stencil.TemplateData{
 {{(price * quantity) * (1 + taxRate) - discount + shipping}}
 ```
 
+### 4. Working with Microsoft Word
+
+#### Typographic Quotes
+
+Microsoft Word (especially German and other localized versions) automatically converts ASCII quotes to typographic quotes. go-stencil handles this automatically:
+
+**Supported quote styles:**
+- ASCII quotes: `"text"` or `'text'`
+- German quotes: `„text"` (U+201E and U+201C)
+- French/Swiss quotes: `»text«` (U+00BB and U+00AB)
+
+**Example:**
+
+When you type this in Word:
+```
+{{if status == "active"}}
+```
+
+Word may convert it to:
+```
+{{if status == „active"}}
+```
+
+Both will work correctly with go-stencil. You don't need to manually replace quotes.
+
+**Best practice:** Write your templates naturally in Word and let it handle quote conversion. The template engine will recognize any quote style.
+
+#### Avoid Smart Quotes in Variable Names
+
+**Do:** Use only ASCII characters in variable names and operators
+
+```
+{{if customerName == „John"}}  ✓ Quotes can be typographic
+{{customerName}}               ✓ Variable names are ASCII
+```
+
+**Avoid:** Typographic characters outside of string literals
+
+```
+{{if customerNâme == „John"}}  ✗ Variable name has typographic character
+```
+
 ## Performance Optimization
 
 ### 1. Enable Template Caching
