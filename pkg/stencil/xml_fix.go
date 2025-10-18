@@ -75,6 +75,18 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	for _, elem := range doc.Body.Elements {
 		switch el := elem.(type) {
 		case *Paragraph:
+			// Process paragraph properties RawXML
+			if el.Properties != nil && len(el.Properties.RawXML) > 0 {
+				// Create markers for each raw XML element
+				el.Properties.RawXMLMarkers = make([]string, len(el.Properties.RawXML))
+				for i, raw := range el.Properties.RawXML {
+					marker := fmt.Sprintf("__PARA_PROP_MARKER_%d__", markerIndex)
+					rawXMLMap[marker] = raw.Content
+					el.Properties.RawXMLMarkers[i] = marker
+					markerIndex++
+				}
+			}
+
 			// Check both Content and Runs for RawXML
 			// Process Content first (if it exists)
 			if len(el.Content) > 0 {
@@ -250,19 +262,26 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.openxmlformats.org/officeDocument/2006/relationships:", " r:")
 			cleanedXML = strings.ReplaceAll(cleanedXML, " http://www.w3.org/XML/1998/namespace:", " xml:")
 
-			// Replace the entire <w:t>marker</w:t> pattern with just the cleaned XML
-			// This ensures drawings are siblings of text elements, not children
-			textWithMarker := fmt.Sprintf("<w:t>%s</w:t>", marker)
-			textWithMarkerPreserve := fmt.Sprintf(`<w:t xml:space="preserve">%s</w:t>`, marker)
-
-			if strings.Contains(xmlStr, textWithMarker) {
-				xmlStr = strings.ReplaceAll(xmlStr, textWithMarker, cleanedXML)
-			} else if strings.Contains(xmlStr, textWithMarkerPreserve) {
-				xmlStr = strings.ReplaceAll(xmlStr, textWithMarkerPreserve, cleanedXML)
+			// Check if this is a paragraph property marker
+			if strings.HasPrefix(marker, "__PARA_PROP_MARKER_") {
+				// Replace the entire <rawXMLMarker>marker</rawXMLMarker> pattern with the cleaned XML
+				markerElement := fmt.Sprintf("<rawXMLMarker>%s</rawXMLMarker>", marker)
+				xmlStr = strings.ReplaceAll(xmlStr, markerElement, cleanedXML)
 			} else {
-				// Fallback: marker might be part of text with other content
-				// In this case, just replace the marker (but this may still cause issues)
-				xmlStr = strings.ReplaceAll(xmlStr, marker, cleanedXML)
+				// Replace the entire <w:t>marker</w:t> pattern with just the cleaned XML
+				// This ensures drawings are siblings of text elements, not children
+				textWithMarker := fmt.Sprintf("<w:t>%s</w:t>", marker)
+				textWithMarkerPreserve := fmt.Sprintf(`<w:t xml:space="preserve">%s</w:t>`, marker)
+
+				if strings.Contains(xmlStr, textWithMarker) {
+					xmlStr = strings.ReplaceAll(xmlStr, textWithMarker, cleanedXML)
+				} else if strings.Contains(xmlStr, textWithMarkerPreserve) {
+					xmlStr = strings.ReplaceAll(xmlStr, textWithMarkerPreserve, cleanedXML)
+				} else {
+					// Fallback: marker might be part of text with other content
+					// In this case, just replace the marker (but this may still cause issues)
+					xmlStr = strings.ReplaceAll(xmlStr, marker, cleanedXML)
+				}
 			}
 		}
 	}
