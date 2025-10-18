@@ -268,8 +268,9 @@ func RenderRunWithContext(run *Run, data TemplateData, ctx *renderContext) (*Run
 	rendered := &Run{
 		Properties: run.Properties,
 		Break:      run.Break,
+		RawXML:     run.RawXML, // Preserve raw XML elements like drawings
 	}
-	
+
 	if run.Text != nil {
 		renderedText, err := RenderTextWithContext(run.Text, data, ctx)
 		if err != nil {
@@ -277,7 +278,7 @@ func RenderRunWithContext(run *Run, data TemplateData, ctx *renderContext) (*Run
 		}
 		rendered.Text = renderedText
 	}
-	
+
 	return rendered, nil
 }
 
