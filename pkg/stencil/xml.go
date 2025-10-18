@@ -178,14 +178,67 @@ func (p Paragraph) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 
 // ParagraphProperties represents paragraph formatting properties
 type ParagraphProperties struct {
-	Style       *Style       `xml:"pStyle"`
-	Alignment   *Alignment   `xml:"jc"`
-	Indentation *Indentation `xml:"ind"`
-	Spacing     *Spacing     `xml:"spacing"`
+	Style            *Style          `xml:"pStyle"`
+	Tabs             *Tabs           `xml:"tabs"`
+	OverflowPunct    bool            `xml:"-"` // Stored as flag
+	AutoSpaceDE      bool            `xml:"-"` // Stored as flag
+	AutoSpaceDN      bool            `xml:"-"` // Stored as flag
+	AdjustRightInd   bool            `xml:"-"` // Stored as flag
+	Alignment        *Alignment      `xml:"jc"`
+	Indentation      *Indentation    `xml:"ind"`
+	Spacing          *Spacing        `xml:"spacing"`
+	TextAlignment    *TextAlignment  `xml:"-"` // Stored as string
+	RunProperties    *RunProperties  `xml:"rPr"` // Default run properties for paragraph
 	// RawXML stores unparsed XML elements to preserve all paragraph properties
 	RawXML      []RawXMLElement `xml:"-"`
 	// RawXMLMarkers stores marker strings for RawXML elements (used during marshaling)
 	RawXMLMarkers []string      `xml:"-"`
+}
+
+// TextAlignment represents text alignment settings
+type TextAlignment struct {
+	Val string `xml:"val,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for TextAlignment
+func (t TextAlignment) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:textAlignment"}
+	start.Attr = []xml.Attr{}
+
+	if t.Val != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:val"}, Value: t.Val})
+	}
+
+	// Self-closing element
+	return e.EncodeElement(struct{}{}, start)
+}
+
+// Tabs represents tab stops
+type Tabs struct {
+	XMLName xml.Name `xml:"tabs"`
+	Tab     []Tab    `xml:"tab"`
+}
+
+// Tab represents a single tab stop
+type Tab struct {
+	Val string `xml:"val,attr"`
+	Pos string `xml:"pos,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for Tab
+func (t Tab) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:tab"}
+	start.Attr = []xml.Attr{}
+
+	if t.Val != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:val"}, Value: t.Val})
+	}
+	if t.Pos != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:pos"}, Value: t.Pos})
+	}
+
+	// Self-closing element
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // UnmarshalXML implements custom XML unmarshaling to preserve unknown elements
@@ -209,6 +262,12 @@ func (p *ParagraphProperties) UnmarshalXML(d *xml.Decoder, start xml.StartElemen
 					return err
 				}
 				p.Style = &style
+			case "tabs":
+				var tabs Tabs
+				if err := d.DecodeElement(&tabs, &t); err != nil {
+					return err
+				}
+				p.Tabs = &tabs
 			case "jc":
 				var alignment Alignment
 				if err := d.DecodeElement(&alignment, &t); err != nil {
@@ -227,6 +286,38 @@ func (p *ParagraphProperties) UnmarshalXML(d *xml.Decoder, start xml.StartElemen
 					return err
 				}
 				p.Spacing = &spacing
+			case "overflowPunct":
+				p.OverflowPunct = true
+				if err := d.Skip(); err != nil {
+					return err
+				}
+			case "autoSpaceDE":
+				p.AutoSpaceDE = true
+				if err := d.Skip(); err != nil {
+					return err
+				}
+			case "autoSpaceDN":
+				p.AutoSpaceDN = true
+				if err := d.Skip(); err != nil {
+					return err
+				}
+			case "adjustRightInd":
+				p.AdjustRightInd = true
+				if err := d.Skip(); err != nil {
+					return err
+				}
+			case "textAlignment":
+				var textAlign TextAlignment
+				if err := d.DecodeElement(&textAlign, &t); err != nil {
+					return err
+				}
+				p.TextAlignment = &textAlign
+			case "rPr":
+				var runProps RunProperties
+				if err := d.DecodeElement(&runProps, &t); err != nil {
+					return err
+				}
+				p.RunProperties = &runProps
 			default:
 				// Preserve unknown elements as raw XML
 				var raw RawXMLElement
@@ -334,6 +425,37 @@ func (p ParagraphProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) 
 		}
 	}
 
+	if p.Tabs != nil {
+		if err := e.EncodeElement(p.Tabs, xml.StartElement{Name: xml.Name{Local: "w:tabs"}}); err != nil {
+			return err
+		}
+	}
+
+	// Output boolean flags as empty elements
+	if p.OverflowPunct {
+		if err := e.EncodeElement(struct{}{}, xml.StartElement{Name: xml.Name{Local: "w:overflowPunct"}}); err != nil {
+			return err
+		}
+	}
+
+	if p.AutoSpaceDE {
+		if err := e.EncodeElement(struct{}{}, xml.StartElement{Name: xml.Name{Local: "w:autoSpaceDE"}}); err != nil {
+			return err
+		}
+	}
+
+	if p.AutoSpaceDN {
+		if err := e.EncodeElement(struct{}{}, xml.StartElement{Name: xml.Name{Local: "w:autoSpaceDN"}}); err != nil {
+			return err
+		}
+	}
+
+	if p.AdjustRightInd {
+		if err := e.EncodeElement(struct{}{}, xml.StartElement{Name: xml.Name{Local: "w:adjustRightInd"}}); err != nil {
+			return err
+		}
+	}
+
 	if p.Alignment != nil {
 		if err := e.EncodeElement(p.Alignment, xml.StartElement{Name: xml.Name{Local: "w:jc"}}); err != nil {
 			return err
@@ -348,6 +470,19 @@ func (p ParagraphProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) 
 
 	if p.Spacing != nil {
 		if err := e.EncodeElement(p.Spacing, xml.StartElement{Name: xml.Name{Local: "w:spacing"}}); err != nil {
+			return err
+		}
+	}
+
+	if p.TextAlignment != nil {
+		if err := e.EncodeElement(p.TextAlignment, xml.StartElement{Name: xml.Name{Local: "w:textAlignment"}}); err != nil {
+			return err
+		}
+	}
+
+	// Output run properties last (sets defaults for runs in this paragraph)
+	if p.RunProperties != nil {
+		if err := e.EncodeElement(p.RunProperties, xml.StartElement{Name: xml.Name{Local: "w:rPr"}}); err != nil {
 			return err
 		}
 	}
@@ -561,6 +696,9 @@ type RunProperties struct {
 	VerticalAlign *VerticalAlign  `xml:"vertAlign"`
 	Color         *Color          `xml:"color"`
 	Size          *Size           `xml:"sz"`
+	SizeCs        *Size           `xml:"szCs"`  // Complex script size
+	Kern          *Kern           `xml:"kern"`  // Character kerning
+	Lang          *Lang           `xml:"lang"`  // Language settings
 	Font          *Font           `xml:"rFonts"`
 	Style         *RunStyle       `xml:"rStyle"`
 }
@@ -862,8 +1000,32 @@ func (i Indentation) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 
 // Spacing represents paragraph spacing
 type Spacing struct {
-	Before int `xml:"before,attr"`
-	After  int `xml:"after,attr"`
+	Before     int    `xml:"before,attr,omitempty"`
+	After      int    `xml:"after,attr,omitempty"`
+	Line       int    `xml:"line,attr,omitempty"`
+	LineRule   string `xml:"lineRule,attr,omitempty"`
+}
+
+// MarshalXML implements custom XML marshaling for Spacing
+func (s Spacing) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:spacing"}
+	start.Attr = []xml.Attr{}
+
+	if s.Before != 0 {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:before"}, Value: fmt.Sprintf("%d", s.Before)})
+	}
+	if s.After != 0 {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:after"}, Value: fmt.Sprintf("%d", s.After)})
+	}
+	if s.Line != 0 {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:line"}, Value: fmt.Sprintf("%d", s.Line)})
+	}
+	if s.LineRule != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:lineRule"}, Value: s.LineRule})
+	}
+
+	// Self-closing element
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // Color represents text color
@@ -874,6 +1036,57 @@ type Color struct {
 // Size represents font size
 type Size struct {
 	Val int `xml:"val,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for Size
+func (s Size) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	// Ensure the element has the w: prefix if it doesn't already
+	if !strings.HasPrefix(start.Name.Local, "w:") {
+		start.Name.Local = "w:" + start.Name.Local
+	}
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:val"}, Value: fmt.Sprintf("%d", s.Val)},
+	}
+	return e.EncodeElement(struct{}{}, start)
+}
+
+// Kern represents character kerning
+type Kern struct {
+	Val int `xml:"val,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for Kern
+func (k Kern) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:kern"}
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:val"}, Value: fmt.Sprintf("%d", k.Val)},
+	}
+	return e.EncodeElement(struct{}{}, start)
+}
+
+// Lang represents language settings
+type Lang struct {
+	Val      string `xml:"val,attr,omitempty"`
+	EastAsia string `xml:"eastAsia,attr,omitempty"`
+	Bidi     string `xml:"bidi,attr,omitempty"`
+}
+
+// MarshalXML implements custom XML marshaling for Lang
+func (l Lang) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:lang"}
+	start.Attr = []xml.Attr{}
+
+	if l.Val != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:val"}, Value: l.Val})
+	}
+	if l.EastAsia != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:eastAsia"}, Value: l.EastAsia})
+	}
+	if l.Bidi != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:bidi"}, Value: l.Bidi})
+	}
+
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // Font represents font information
@@ -903,6 +1116,14 @@ type UnderlineStyle struct {
 // VerticalAlign represents vertical text alignment (superscript/subscript)
 type VerticalAlign struct {
 	Val string `xml:"val,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for VerticalAlign
+func (v VerticalAlign) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:val"}, Value: v.Val},
+	}
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // Break represents a line break
@@ -975,7 +1196,137 @@ func (b *Break) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 
 // TableProperties represents table formatting properties
 type TableProperties struct {
-	Style *Style `xml:"tblStyle"`
+	Style       *Style            `xml:"tblStyle"`
+	Width       *Width            `xml:"tblW"`
+	Indentation *TableIndentation `xml:"tblInd"`
+	Layout      *TableLayout      `xml:"tblLayout"`
+	CellMargins *TableCellMargins `xml:"tblCellMar"`
+	Look        *TableLook        `xml:"tblLook"`
+}
+
+// TableIndentation represents table indentation from margin
+type TableIndentation struct {
+	Width int    `xml:"w,attr"`
+	Type  string `xml:"type,attr"`
+}
+
+// TableLayout represents table layout mode
+type TableLayout struct {
+	Type string `xml:"type,attr"`
+}
+
+// TableCellMargins represents default cell margins for a table
+type TableCellMargins struct {
+	Left  *CellMargin `xml:"left"`
+	Right *CellMargin `xml:"right"`
+	Top   *CellMargin `xml:"top"`
+	Bottom *CellMargin `xml:"bottom"`
+}
+
+// CellMargin represents a single cell margin
+type CellMargin struct {
+	Width int    `xml:"w,attr"`
+	Type  string `xml:"type,attr"`
+}
+
+// TableLook represents table style options
+type TableLook struct {
+	Val         string `xml:"val,attr,omitempty"`
+	FirstRow    string `xml:"firstRow,attr,omitempty"`
+	LastRow     string `xml:"lastRow,attr,omitempty"`
+	FirstColumn string `xml:"firstColumn,attr,omitempty"`
+	LastColumn  string `xml:"lastColumn,attr,omitempty"`
+	NoHBand     string `xml:"noHBand,attr,omitempty"`
+	NoVBand     string `xml:"noVBand,attr,omitempty"`
+}
+
+// MarshalXML implements custom XML marshaling for TableIndentation
+func (t TableIndentation) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:tblInd"}
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:w"}, Value: fmt.Sprintf("%d", t.Width)},
+		{Name: xml.Name{Local: "w:type"}, Value: t.Type},
+	}
+	return e.EncodeElement(struct{}{}, start)
+}
+
+// MarshalXML implements custom XML marshaling for TableLayout
+func (t TableLayout) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:tblLayout"}
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:type"}, Value: t.Type},
+	}
+	return e.EncodeElement(struct{}{}, start)
+}
+
+// MarshalXML implements custom XML marshaling for TableCellMargins
+func (m TableCellMargins) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:tblCellMar"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	if m.Left != nil {
+		if err := e.EncodeElement(m.Left, xml.StartElement{Name: xml.Name{Local: "w:left"}}); err != nil {
+			return err
+		}
+	}
+	if m.Right != nil {
+		if err := e.EncodeElement(m.Right, xml.StartElement{Name: xml.Name{Local: "w:right"}}); err != nil {
+			return err
+		}
+	}
+	if m.Top != nil {
+		if err := e.EncodeElement(m.Top, xml.StartElement{Name: xml.Name{Local: "w:top"}}); err != nil {
+			return err
+		}
+	}
+	if m.Bottom != nil {
+		if err := e.EncodeElement(m.Bottom, xml.StartElement{Name: xml.Name{Local: "w:bottom"}}); err != nil {
+			return err
+		}
+	}
+
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
+}
+
+// MarshalXML implements custom XML marshaling for CellMargin
+func (m CellMargin) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:w"}, Value: fmt.Sprintf("%d", m.Width)},
+		{Name: xml.Name{Local: "w:type"}, Value: m.Type},
+	}
+	return e.EncodeElement(struct{}{}, start)
+}
+
+// MarshalXML implements custom XML marshaling for TableLook
+func (t TableLook) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:tblLook"}
+	start.Attr = []xml.Attr{}
+
+	if t.Val != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:val"}, Value: t.Val})
+	}
+	if t.FirstRow != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:firstRow"}, Value: t.FirstRow})
+	}
+	if t.LastRow != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:lastRow"}, Value: t.LastRow})
+	}
+	if t.FirstColumn != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:firstColumn"}, Value: t.FirstColumn})
+	}
+	if t.LastColumn != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:lastColumn"}, Value: t.LastColumn})
+	}
+	if t.NoHBand != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:noHBand"}, Value: t.NoHBand})
+	}
+	if t.NoVBand != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:noVBand"}, Value: t.NoVBand})
+	}
+
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // MarshalXML implements custom XML marshaling for TableProperties
@@ -988,6 +1339,41 @@ func (p TableProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) erro
 	// Encode style if present
 	if p.Style != nil {
 		if err := e.EncodeElement(p.Style, xml.StartElement{Name: xml.Name{Local: "w:tblStyle"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode width if present
+	if p.Width != nil {
+		if err := e.EncodeElement(p.Width, xml.StartElement{Name: xml.Name{Local: "w:tblW"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode indentation if present
+	if p.Indentation != nil {
+		if err := e.EncodeElement(p.Indentation, xml.StartElement{Name: xml.Name{Local: "w:tblInd"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode layout if present
+	if p.Layout != nil {
+		if err := e.EncodeElement(p.Layout, xml.StartElement{Name: xml.Name{Local: "w:tblLayout"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode cell margins if present
+	if p.CellMargins != nil {
+		if err := e.EncodeElement(p.CellMargins, xml.StartElement{Name: xml.Name{Local: "w:tblCellMar"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode table look if present
+	if p.Look != nil {
+		if err := e.EncodeElement(p.Look, xml.StartElement{Name: xml.Name{Local: "w:tblLook"}}); err != nil {
 			return err
 		}
 	}
@@ -1034,7 +1420,47 @@ func (g GridColumn) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 
 // TableRowProperties represents row properties
 type TableRowProperties struct {
-	Height *Height `xml:"trHeight"`
+	CantSplit bool    `xml:"-"` // Prevent row from splitting across pages
+	Height    *Height `xml:"trHeight"`
+}
+
+// UnmarshalXML implements custom XML unmarshaling for TableRowProperties
+func (p *TableRowProperties) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	for {
+		token, err := d.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		switch t := token.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "cantSplit":
+				p.CantSplit = true
+				if err := d.Skip(); err != nil {
+					return err
+				}
+			case "trHeight":
+				var height Height
+				if err := d.DecodeElement(&height, &t); err != nil {
+					return err
+				}
+				p.Height = &height
+			default:
+				if err := d.Skip(); err != nil {
+					return err
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "trPr" {
+				return nil
+			}
+		}
+	}
+	return nil
 }
 
 // MarshalXML implements custom XML marshaling for TableRowProperties
@@ -1042,6 +1468,13 @@ func (p TableRowProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) e
 	start.Name = xml.Name{Local: "w:trPr"}
 	if err := e.EncodeToken(start); err != nil {
 		return err
+	}
+
+	// Encode cantSplit if true
+	if p.CantSplit {
+		if err := e.EncodeElement(struct{}{}, xml.StartElement{Name: xml.Name{Local: "w:cantSplit"}}); err != nil {
+			return err
+		}
 	}
 
 	// Encode height if present
@@ -1070,9 +1503,10 @@ func (h Height) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 
 // TableCellProperties represents cell properties
 type TableCellProperties struct {
-	Width    *Width    `xml:"tcW"`
-	GridSpan *GridSpan `xml:"gridSpan"`
-	Shading  *Shading  `xml:"shd"`
+	Width    *Width         `xml:"tcW"`
+	VAlign   *VerticalAlign `xml:"vAlign"`
+	GridSpan *GridSpan      `xml:"gridSpan"`
+	Shading  *Shading       `xml:"shd"`
 }
 
 // MarshalXML implements custom XML marshaling for TableCellProperties
@@ -1085,6 +1519,13 @@ func (p TableCellProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) 
 	// Encode width if present
 	if p.Width != nil {
 		if err := e.EncodeElement(p.Width, xml.StartElement{Name: xml.Name{Local: "w:tcW"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode vertical alignment if present
+	if p.VAlign != nil {
+		if err := e.EncodeElement(p.VAlign, xml.StartElement{Name: xml.Name{Local: "w:vAlign"}}); err != nil {
 			return err
 		}
 	}
