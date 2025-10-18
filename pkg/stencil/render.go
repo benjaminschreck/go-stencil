@@ -16,8 +16,9 @@ func RenderDocumentWithContext(doc *Document, data TemplateData, ctx *renderCont
 	// Create a deep copy of the document
 	rendered := &Document{
 		XMLName: doc.XMLName,
+		Attrs:   doc.Attrs, // Preserve namespace attributes from original
 	}
-	
+
 	if doc.Body != nil {
 		body, err := RenderBodyWithContext(doc.Body, data, ctx)
 		if err != nil {
@@ -25,7 +26,7 @@ func RenderDocumentWithContext(doc *Document, data TemplateData, ctx *renderCont
 		}
 		rendered.Body = body
 	}
-	
+
 	return rendered, nil
 }
 

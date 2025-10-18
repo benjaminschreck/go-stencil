@@ -9,8 +9,30 @@ import (
 
 // Document represents a Word document structure
 type Document struct {
-	XMLName xml.Name `xml:"document"`
-	Body    *Body    `xml:"body"`
+	XMLName xml.Name   `xml:"document"`
+	Body    *Body      `xml:"body"`
+	Attrs   []xml.Attr `xml:"-"` // Preserve root element attributes (namespaces)
+}
+
+// UnmarshalXML implements custom XML unmarshaling to preserve root attributes
+func (doc *Document) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	// Save the attributes from the root element
+	doc.Attrs = start.Attr
+
+	// Use an anonymous struct to avoid recursive UnmarshalXML calls
+	var temp struct {
+		XMLName xml.Name `xml:"document"`
+		Body    *Body    `xml:"body"`
+	}
+
+	if err := d.DecodeElement(&temp, &start); err != nil {
+		return err
+	}
+
+	doc.XMLName = temp.XMLName
+	doc.Body = temp.Body
+
+	return nil
 }
 
 // BodyElement represents any element that can appear in a document body
@@ -22,6 +44,8 @@ type BodyElement interface {
 type Body struct {
 	// Elements maintains the order of all body elements
 	Elements []BodyElement `xml:"-"`
+	// SectionProperties at the end of the body (critical for Word compatibility)
+	SectionProperties *RawXMLElement `xml:"-"`
 }
 
 
@@ -462,7 +486,7 @@ func (b *Body) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 		if err != nil {
 			return err
 		}
-		
+
 		switch t := token.(type) {
 		case xml.StartElement:
 			switch t.Name.Local {
@@ -478,6 +502,61 @@ func (b *Body) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 					return err
 				}
 				b.Elements = append(b.Elements, &table)
+			case "sectPr":
+				// Capture section properties as raw XML
+				var raw RawXMLElement
+				raw.XMLName = t.Name
+				raw.Attrs = t.Attr
+
+				// Read the entire element content as raw XML
+				depth := 1
+				var buf strings.Builder
+
+				for depth > 0 {
+					tok, err := d.Token()
+					if err != nil {
+						return err
+					}
+
+					switch tt := tok.(type) {
+					case xml.StartElement:
+						depth++
+						buf.WriteString("<")
+						if tt.Name.Space != "" {
+							buf.WriteString(tt.Name.Space)
+							buf.WriteString(":")
+						}
+						buf.WriteString(tt.Name.Local)
+						for _, attr := range tt.Attr {
+							buf.WriteString(" ")
+							if attr.Name.Space != "" {
+								buf.WriteString(attr.Name.Space)
+								buf.WriteString(":")
+							}
+							buf.WriteString(attr.Name.Local)
+							buf.WriteString("=\"")
+							buf.WriteString(attr.Value)
+							buf.WriteString("\"")
+						}
+						buf.WriteString(">")
+					case xml.EndElement:
+						depth--
+						if depth > 0 {
+							buf.WriteString("</")
+							if tt.Name.Space != "" {
+								buf.WriteString(tt.Name.Space)
+								buf.WriteString(":")
+							}
+							buf.WriteString(tt.Name.Local)
+							buf.WriteString(">")
+						}
+					case xml.CharData:
+						buf.Write(tt)
+					}
+				}
+
+				raw.Content = []byte(buf.String())
+				b.SectionProperties = &raw
 			}
 		case xml.EndElement:
 			if t.Name.Local == "body" {
@@ -485,7 +564,7 @@ func (b *Body) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -509,7 +588,9 @@ func (b Body) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 			}
 		}
 	}
-	
+
+	// Note: Section properties are handled in xml_fix.go to properly convert namespaces
+
 	// End the body element
 	return e.EncodeToken(xml.EndElement{Name: start.Name})
 }
@@ -793,9 +874,35 @@ type TableRowProperties struct {
 	Height *Height `xml:"trHeight"`
 }
 
+// MarshalXML implements custom XML marshaling for TableRowProperties
+func (p TableRowProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:trPr"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode height if present
+	if p.Height != nil {
+		if err := e.EncodeElement(p.Height, xml.StartElement{Name: xml.Name{Local: "w:trHeight"}}); err != nil {
+			return err
+		}
+	}
+
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
+}
+
 // Height represents row height
 type Height struct {
 	Val int `xml:"val,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for Height
+func (h Height) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:val"}, Value: fmt.Sprintf("%d", h.Val)},
+	}
+	// Self-closing element
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // TableCellProperties represents cell properties
