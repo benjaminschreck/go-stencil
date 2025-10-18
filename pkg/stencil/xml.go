@@ -182,6 +182,143 @@ type ParagraphProperties struct {
 	Alignment   *Alignment   `xml:"jc"`
 	Indentation *Indentation `xml:"ind"`
 	Spacing     *Spacing     `xml:"spacing"`
+	// RawXML stores unparsed XML elements to preserve all paragraph properties
+	RawXML      []RawXMLElement `xml:"-"`
+	// RawXMLMarkers stores marker strings for RawXML elements (used during marshaling)
+	RawXMLMarkers []string      `xml:"-"`
+}
+
+// UnmarshalXML implements custom XML unmarshaling to preserve unknown elements
+func (p *ParagraphProperties) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	// Process elements in order
+	for {
+		token, err := d.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		switch t := token.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "pStyle":
+				var style Style
+				if err := d.DecodeElement(&style, &t); err != nil {
+					return err
+				}
+				p.Style = &style
+			case "jc":
+				var alignment Alignment
+				if err := d.DecodeElement(&alignment, &t); err != nil {
+					return err
+				}
+				p.Alignment = &alignment
+			case "ind":
+				var indentation Indentation
+				if err := d.DecodeElement(&indentation, &t); err != nil {
+					return err
+				}
+				p.Indentation = &indentation
+			case "spacing":
+				var spacing Spacing
+				if err := d.DecodeElement(&spacing, &t); err != nil {
+					return err
+				}
+				p.Spacing = &spacing
+			default:
+				// Preserve unknown elements as raw XML
+				var raw RawXMLElement
+				raw.XMLName = t.Name
+				raw.Attrs = t.Attr
+
+				// Read the entire element content as raw XML
+				depth := 1
+				var buf strings.Builder
+
+				// Start with the opening tag
+				buf.WriteString("<")
+				if t.Name.Space != "" {
+					buf.WriteString(t.Name.Space)
+					buf.WriteString(":")
+				}
+				buf.WriteString(t.Name.Local)
+				for _, attr := range t.Attr {
+					buf.WriteString(" ")
+					if attr.Name.Space != "" {
+						buf.WriteString(attr.Name.Space)
+						buf.WriteString(":")
+					}
+					buf.WriteString(attr.Name.Local)
+					buf.WriteString("=\"")
+					buf.WriteString(attr.Value)
+					buf.WriteString("\"")
+				}
+				buf.WriteString(">")
+
+				for depth > 0 {
+					tok, err := d.Token()
+					if err != nil {
+						return err
+					}
+
+					switch tt := tok.(type) {
+					case xml.StartElement:
+						depth++
+						buf.WriteString("<")
+						if tt.Name.Space != "" {
+							buf.WriteString(tt.Name.Space)
+							buf.WriteString(":")
+						}
+						buf.WriteString(tt.Name.Local)
+						for _, attr := range tt.Attr {
+							buf.WriteString(" ")
+							if attr.Name.Space != "" {
+								buf.WriteString(attr.Name.Space)
+								buf.WriteString(":")
+							}
+							buf.WriteString(attr.Name.Local)
+							buf.WriteString("=\"")
+							buf.WriteString(attr.Value)
+							buf.WriteString("\"")
+						}
+						buf.WriteString(">")
+					case xml.EndElement:
+						depth--
+						if depth > 0 {
+							buf.WriteString("</")
+							if tt.Name.Space != "" {
+								buf.WriteString(tt.Name.Space)
+								buf.WriteString(":")
+							}
+							buf.WriteString(tt.Name.Local)
+							buf.WriteString(">")
+						}
+					case xml.CharData:
+						buf.Write(tt)
+					}
+				}
+
+				buf.WriteString("</")
+				if t.Name.Space != "" {
+					buf.WriteString(t.Name.Space)
+					buf.WriteString(":")
+				}
+				buf.WriteString(t.Name.Local)
+				buf.WriteString(">")
+
+				raw.Content = []byte(buf.String())
+				p.RawXML = append(p.RawXML, raw)
+			}
+		case xml.EndElement:
+			if t.Name.Local == "pPr" {
+				return nil
+			}
+		}
+	}
+
+	return nil
 }
 
 // MarshalXML implements custom XML marshaling for ParagraphProperties
@@ -211,6 +348,22 @@ func (p ParagraphProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) 
 
 	if p.Spacing != nil {
 		if err := e.EncodeElement(p.Spacing, xml.StartElement{Name: xml.Name{Local: "w:spacing"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode markers for raw XML elements
+	for _, marker := range p.RawXMLMarkers {
+		// Create a temporary element to hold the marker
+		// This will be replaced later in xml_fix.go
+		markerElem := struct {
+			XMLName xml.Name
+			Content string `xml:",chardata"`
+		}{
+			XMLName: xml.Name{Local: "rawXMLMarker"},
+			Content: marker,
+		}
+		if err := e.EncodeElement(&markerElem, xml.StartElement{Name: xml.Name{Local: "rawXMLMarker"}}); err != nil {
 			return err
 		}
 	}
@@ -695,6 +848,16 @@ func (a Alignment) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 type Indentation struct {
 	Left  int `xml:"left,attr"`
 	Right int `xml:"right,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for Indentation
+func (i Indentation) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:ind"}
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:left"}, Value: fmt.Sprintf("%d", i.Left)},
+		{Name: xml.Name{Local: "w:right"}, Value: fmt.Sprintf("%d", i.Right)},
+	}
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // Spacing represents paragraph spacing
