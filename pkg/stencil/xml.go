@@ -194,15 +194,151 @@ func (p ParagraphProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) 
 	return e.EncodeToken(xml.EndElement{Name: start.Name})
 }
 
+// RawXMLElement represents a raw XML element that we preserve but don't parse
+type RawXMLElement struct {
+	XMLName xml.Name
+	Attrs   []xml.Attr
+	Content []byte
+}
+
 // Run represents a run of text with common properties
 type Run struct {
 	Properties *RunProperties `xml:"rPr"`
 	Text       *Text          `xml:"t"`
 	Break      *Break         `xml:"br"`
+	// RawXML stores unparsed XML elements (like drawings) to preserve them
+	RawXML     []RawXMLElement `xml:"-"`
 }
 
 // isParagraphContent implements the ParagraphContent interface
 func (r Run) isParagraphContent() {}
+
+// UnmarshalXML implements custom XML unmarshaling to preserve unknown elements
+func (r *Run) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	// Process elements in order
+	for {
+		token, err := d.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		switch t := token.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "rPr":
+				var props RunProperties
+				if err := d.DecodeElement(&props, &t); err != nil {
+					return err
+				}
+				r.Properties = &props
+			case "t":
+				var text Text
+				if err := d.DecodeElement(&text, &t); err != nil {
+					return err
+				}
+				r.Text = &text
+			case "br":
+				var br Break
+				if err := d.DecodeElement(&br, &t); err != nil {
+					return err
+				}
+				r.Break = &br
+			default:
+				// Preserve unknown elements as raw XML
+				var raw RawXMLElement
+				raw.XMLName = t.Name
+				raw.Attrs = t.Attr
+
+				// Read the entire element content as raw XML
+				depth := 1
+				var buf strings.Builder
+
+				// Start with the opening tag
+				buf.WriteString("<")
+				if t.Name.Space != "" {
+					buf.WriteString(t.Name.Space)
+					buf.WriteString(":")
+				}
+				buf.WriteString(t.Name.Local)
+				for _, attr := range t.Attr {
+					buf.WriteString(" ")
+					if attr.Name.Space != "" {
+						buf.WriteString(attr.Name.Space)
+						buf.WriteString(":")
+					}
+					buf.WriteString(attr.Name.Local)
+					buf.WriteString("=\"")
+					buf.WriteString(attr.Value)
+					buf.WriteString("\"")
+				}
+				buf.WriteString(">")
+
+				for depth > 0 {
+					tok, err := d.Token()
+					if err != nil {
+						return err
+					}
+
+					switch tt := tok.(type) {
+					case xml.StartElement:
+						depth++
+						buf.WriteString("<")
+						if tt.Name.Space != "" {
+							buf.WriteString(tt.Name.Space)
+							buf.WriteString(":")
+						}
+						buf.WriteString(tt.Name.Local)
+						for _, attr := range tt.Attr {
+							buf.WriteString(" ")
+							if attr.Name.Space != "" {
+								buf.WriteString(attr.Name.Space)
+								buf.WriteString(":")
+							}
+							buf.WriteString(attr.Name.Local)
+							buf.WriteString("=\"")
+							buf.WriteString(attr.Value)
+							buf.WriteString("\"")
+						}
+						buf.WriteString(">")
+					case xml.EndElement:
+						depth--
+						if depth > 0 {
+							buf.WriteString("</")
+							if tt.Name.Space != "" {
+								buf.WriteString(tt.Name.Space)
+								buf.WriteString(":")
+							}
+							buf.WriteString(tt.Name.Local)
+							buf.WriteString(">")
+						}
+					case xml.CharData:
+						buf.Write(tt)
+					}
+				}
+
+				buf.WriteString("</")
+				if t.Name.Space != "" {
+					buf.WriteString(t.Name.Space)
+					buf.WriteString(":")
+				}
+				buf.WriteString(t.Name.Local)
+				buf.WriteString(">")
+
+				raw.Content = []byte(buf.String())
+				r.RawXML = append(r.RawXML, raw)
+			}
+		case xml.EndElement:
+			if t.Name.Local == "r" {
+				return nil
+			}
+		}
+	}
+
+	return nil
+}
 
 // MarshalXML implements custom XML marshaling for Run to ensure proper namespacing
 func (r Run) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
@@ -232,6 +368,8 @@ func (r Run) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 			return err
 		}
 	}
+
+	// Note: RawXML is handled separately after initial marshaling
 
 	// End the run element
 	return e.EncodeToken(xml.EndElement{Name: start.Name})
