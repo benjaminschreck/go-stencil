@@ -329,7 +329,8 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 	}
 
 	rendered := &Body{
-		Elements: make([]BodyElement, 0),
+		Elements:          make([]BodyElement, 0),
+		SectionProperties: body.SectionProperties, // Preserve section properties
 	}
 
 	// Process elements in order
