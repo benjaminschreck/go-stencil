@@ -903,16 +903,79 @@ func getParagraphText(para *Paragraph) string {
 
 // Removed - using existing toSlice from control.go
 
+// findMatchingEnd finds the position of the matching {{end}} for a control structure
+// starting from the given position, counting depth
+func findMatchingEnd(text string, startPos int) int {
+	depth := 1
+	searchPos := startPos
+
+	for depth > 0 {
+		// Find next control structure marker
+		nextFor := strings.Index(text[searchPos:], "{{for ")
+		nextIf := strings.Index(text[searchPos:], "{{if ")
+		nextUnless := strings.Index(text[searchPos:], "{{unless ")
+		nextEnd := strings.Index(text[searchPos:], "{{end}}")
+
+		if nextEnd < 0 {
+			return -1 // No matching end found
+		}
+
+		// Adjust positions to absolute
+		if nextFor >= 0 {
+			nextFor += searchPos
+		}
+		if nextIf >= 0 {
+			nextIf += searchPos
+		}
+		if nextUnless >= 0 {
+			nextUnless += searchPos
+		}
+		nextEnd += searchPos
+
+		// Find the earliest marker
+		earliest := nextEnd
+		if nextFor >= 0 && nextFor < earliest {
+			earliest = nextFor
+		}
+		if nextIf >= 0 && nextIf < earliest {
+			earliest = nextIf
+		}
+		if nextUnless >= 0 && nextUnless < earliest {
+			earliest = nextUnless
+		}
+
+		if earliest == nextEnd {
+			depth--
+			if depth == 0 {
+				return nextEnd
+			}
+			searchPos = nextEnd + 7 // Move past {{end}}
+		} else {
+			depth++
+			// Move past the opening marker
+			endOfMarker := strings.Index(text[earliest:], "}}") + earliest + 2
+			searchPos = endOfMarker
+		}
+	}
+
+	return -1
+}
+
 // renderInlineForLoop handles loops that are entirely within one paragraph
 func renderInlineForLoop(para *Paragraph, loopText string, data TemplateData, ctx *renderContext) ([]Paragraph, error) {
 	// Extract the for syntax and body
 	// Format: "{{for item in items}} content {{end}}"
 	forStart := strings.Index(loopText, "{{for ")
 	forEnd := strings.Index(loopText[forStart:], "}}") + forStart + 2
-	endStart := strings.Index(loopText, "{{end}}")
 
-	if forStart < 0 || forEnd < 0 || endStart < 0 {
+	if forStart < 0 || forEnd < 0 {
 		return nil, fmt.Errorf("invalid inline for loop syntax")
+	}
+
+	// Find the matching {{end}} for this {{for}} by counting depth
+	endStart := findMatchingEnd(loopText, forEnd)
+	if endStart < 0 {
+		return nil, fmt.Errorf("no matching {{end}} for {{for}} loop")
 	}
 
 	// Extract parts
@@ -935,7 +998,13 @@ func renderInlineForLoop(para *Paragraph, loopText string, data TemplateData, ct
 
 	// Build result
 	var resultText strings.Builder
-	resultText.WriteString(prefix)
+
+	// Process prefix (may contain template expressions)
+	processedPrefix, err := processTemplateText(prefix, data)
+	if err != nil {
+		return nil, err
+	}
+	resultText.WriteString(processedPrefix)
 
 	// Iterate over collection
 	items, err := toSlice(collection)
@@ -961,7 +1030,12 @@ func renderInlineForLoop(para *Paragraph, loopText string, data TemplateData, ct
 		resultText.WriteString(processedBody)
 	}
 
-	resultText.WriteString(suffix)
+	// Process suffix (may contain additional template expressions)
+	processedSuffix, err := processTemplateText(suffix, data)
+	if err != nil {
+		return nil, err
+	}
+	resultText.WriteString(processedSuffix)
 
 	// Create new paragraph with processed text
 	resultPara := &Paragraph{
@@ -993,34 +1067,368 @@ func renderInlineForLoop(para *Paragraph, loopText string, data TemplateData, ct
 	return []Paragraph{*resultPara}, nil
 }
 
-// processTemplateText processes template variables in text
+// processTemplateText processes template variables and control structures in text
+// Only processes control structures that are complete within the text
 func processTemplateText(text string, data TemplateData) (string, error) {
 	// Tokenize the text
 	tokens := Tokenize(text)
 
+	// Check if we have complete control structures (balanced if/end)
+	// If not, treat control structure tokens as variables (they'll be handled at table/paragraph level)
+	if !hasCompleteControlStructures(tokens) {
+		// Fall back to simple variable substitution only
+		return processTokensSimple(tokens, data)
+	}
+
+	// Process tokens with control structure support
+	result, _, err := processTokens(tokens, 0, data)
+	return result, err
+}
+
+// hasCompleteControlStructures checks if all control structures are balanced
+func hasCompleteControlStructures(tokens []Token) bool {
+	depth := 0
+	for _, token := range tokens {
+		switch token.Type {
+		case TokenIf, TokenUnless, TokenFor:
+			depth++
+		case TokenEnd:
+			depth--
+			if depth < 0 {
+				return false // More ends than starts
+			}
+		}
+	}
+	return depth == 0 // All control structures are balanced
+}
+
+// processTokensSimple processes tokens with variable substitution only (no control structures)
+func processTokensSimple(tokens []Token, data TemplateData) (string, error) {
 	var result strings.Builder
+
 	for _, token := range tokens {
 		switch token.Type {
 		case TokenText:
 			result.WriteString(token.Value)
+
 		case TokenVariable:
 			// Evaluate the variable
 			value, err := EvaluateVariable(token.Value, data)
-			if err != nil {
-				// If variable not found, leave empty
-				result.WriteString("")
+			if err != nil || value == nil {
+				// Try to parse as an expression
+				expr, parseErr := ParseExpression(token.Value)
+				if parseErr != nil {
+					// Not an expression either, leave empty
+					result.WriteString("")
+				} else {
+					// Evaluate the expression
+					exprValue, evalErr := expr.Evaluate(data)
+					if evalErr != nil {
+						result.WriteString("")
+					} else {
+						result.WriteString(FormatValue(exprValue))
+					}
+				}
 			} else {
 				result.WriteString(FormatValue(value))
 			}
+
 		default:
-			// Leave other tokens as-is for now
+			// Leave control structure tokens as-is - they'll be handled at table/paragraph level
 			result.WriteString("{{")
+			if token.Type == TokenIf {
+				result.WriteString("if ")
+			} else if token.Type == TokenUnless {
+				result.WriteString("unless ")
+			} else if token.Type == TokenElse {
+				result.WriteString("else")
+			} else if token.Type == TokenElsif {
+				result.WriteString("elsif ")
+			} else if token.Type == TokenFor {
+				result.WriteString("for ")
+			} else if token.Type == TokenEnd {
+				// End doesn't need the keyword repeated
+				result.WriteString("end")
+				result.WriteString("}}")
+				continue
+			}
 			result.WriteString(token.Value)
 			result.WriteString("}}")
 		}
 	}
 
 	return result.String(), nil
+}
+
+// processTokens processes a slice of tokens starting at the given index
+// Returns: (rendered text, next index to process, error)
+func processTokens(tokens []Token, startIdx int, data TemplateData) (string, int, error) {
+	var result strings.Builder
+	i := startIdx
+
+	for i < len(tokens) {
+		token := tokens[i]
+
+		switch token.Type {
+		case TokenText:
+			result.WriteString(token.Value)
+			i++
+
+		case TokenVariable:
+			// Evaluate the variable
+			value, err := EvaluateVariable(token.Value, data)
+			if err != nil || value == nil {
+				// Try to parse as an expression
+				expr, parseErr := ParseExpression(token.Value)
+				if parseErr != nil {
+					// Not an expression either, leave empty
+					result.WriteString("")
+				} else {
+					// Evaluate the expression
+					exprValue, evalErr := expr.Evaluate(data)
+					if evalErr != nil {
+						result.WriteString("")
+					} else {
+						result.WriteString(FormatValue(exprValue))
+					}
+				}
+			} else {
+				result.WriteString(FormatValue(value))
+			}
+			i++
+
+		case TokenIf:
+			// Process if statement
+			rendered, nextIdx, err := processIfStatement(tokens, i, data)
+			if err != nil {
+				return "", i, err
+			}
+			result.WriteString(rendered)
+			i = nextIdx
+
+		case TokenUnless:
+			// Process unless statement (inverted if)
+			rendered, nextIdx, err := processUnlessStatement(tokens, i, data)
+			if err != nil {
+				return "", i, err
+			}
+			result.WriteString(rendered)
+			i = nextIdx
+
+		case TokenElse, TokenElsif:
+			// These should be handled by their parent if/unless
+			// If we encounter them here, we're at the end of a branch
+			return result.String(), i, nil
+
+		case TokenEnd:
+			// End of a control structure
+			return result.String(), i + 1, nil
+
+		default:
+			// Unknown token type - skip it
+			i++
+		}
+	}
+
+	return result.String(), i, nil
+}
+
+// processIfStatement processes an if statement and its branches
+func processIfStatement(tokens []Token, startIdx int, data TemplateData) (string, int, error) {
+	if startIdx >= len(tokens) || tokens[startIdx].Type != TokenIf {
+		return "", startIdx, fmt.Errorf("expected if token at index %d", startIdx)
+	}
+
+	// Evaluate the if condition
+	condition := tokens[startIdx].Value
+	conditionResult, err := evaluateCondition(condition, data)
+	if err != nil {
+		return "", startIdx, fmt.Errorf("failed to evaluate if condition: %w", err)
+	}
+
+	// Find the branches (else/elsif) and end
+	branches, endIdx, err := findIfBranches(tokens, startIdx)
+	if err != nil {
+		return "", startIdx, err
+	}
+
+	// Determine which branch to execute
+	if conditionResult {
+		// Execute the if branch (from startIdx+1 to first branch or end)
+		branchStart := startIdx + 1
+		branchEnd := endIdx
+		if len(branches) > 0 {
+			branchEnd = branches[0].index
+		}
+
+		result, _, err := processTokens(tokens[branchStart:branchEnd], 0, data)
+		return result, endIdx + 1, err
+	}
+
+	// Check elsif branches
+	for i, branch := range branches {
+		if branch.branchType == "elsif" {
+			// Evaluate elsif condition
+			elsifResult, err := evaluateCondition(branch.condition, data)
+			if err != nil {
+				return "", startIdx, fmt.Errorf("failed to evaluate elsif condition: %w", err)
+			}
+
+			if elsifResult {
+				// Execute this elsif branch
+				branchStart := branch.index + 1
+				branchEnd := endIdx
+				if i+1 < len(branches) {
+					branchEnd = branches[i+1].index
+				}
+
+				result, _, err := processTokens(tokens[branchStart:branchEnd], 0, data)
+				return result, endIdx + 1, err
+			}
+		} else if branch.branchType == "else" {
+			// Execute else branch
+			branchStart := branch.index + 1
+			result, _, err := processTokens(tokens[branchStart:endIdx], 0, data)
+			return result, endIdx + 1, err
+		}
+	}
+
+	// No branch matched, return empty
+	return "", endIdx + 1, nil
+}
+
+// processUnlessStatement processes an unless statement (inverted if)
+func processUnlessStatement(tokens []Token, startIdx int, data TemplateData) (string, int, error) {
+	if startIdx >= len(tokens) || tokens[startIdx].Type != TokenUnless {
+		return "", startIdx, fmt.Errorf("expected unless token at index %d", startIdx)
+	}
+
+	// Evaluate the unless condition (inverted)
+	condition := tokens[startIdx].Value
+	conditionResult, err := evaluateCondition(condition, data)
+	if err != nil {
+		return "", startIdx, fmt.Errorf("failed to evaluate unless condition: %w", err)
+	}
+
+	// Find the else branch and end
+	elseIdx := -1
+	endIdx := -1
+	depth := 1
+
+	for i := startIdx + 1; i < len(tokens); i++ {
+		switch tokens[i].Type {
+		case TokenIf, TokenUnless:
+			depth++
+		case TokenElse:
+			if depth == 1 && elseIdx == -1 {
+				elseIdx = i
+			}
+		case TokenEnd:
+			depth--
+			if depth == 0 {
+				endIdx = i
+				break
+			}
+		}
+		if endIdx != -1 {
+			break
+		}
+	}
+
+	if endIdx == -1 {
+		return "", startIdx, fmt.Errorf("no matching end for unless statement")
+	}
+
+	// Unless is inverted: execute if condition is false
+	if !conditionResult {
+		// Execute the unless branch
+		branchStart := startIdx + 1
+		branchEnd := endIdx
+		if elseIdx != -1 {
+			branchEnd = elseIdx
+		}
+
+		result, _, err := processTokens(tokens[branchStart:branchEnd], 0, data)
+		return result, endIdx + 1, err
+	} else if elseIdx != -1 {
+		// Execute else branch
+		result, _, err := processTokens(tokens[elseIdx+1:endIdx], 0, data)
+		return result, endIdx + 1, err
+	}
+
+	// Condition was true, skip unless block
+	return "", endIdx + 1, nil
+}
+
+// findIfBranches finds all elsif/else branches for an if statement
+func findIfBranches(tokens []Token, startIdx int) ([]ifBranch, int, error) {
+	var branches []ifBranch
+	endIdx := -1
+	depth := 1
+
+	for i := startIdx + 1; i < len(tokens); i++ {
+		if depth == 1 {
+			switch tokens[i].Type {
+			case TokenElsif:
+				branches = append(branches, ifBranch{
+					index:      i,
+					branchType: "elsif",
+					condition:  tokens[i].Value,
+				})
+			case TokenElse:
+				branches = append(branches, ifBranch{
+					index:      i,
+					branchType: "else",
+					condition:  "",
+				})
+			}
+		}
+
+		switch tokens[i].Type {
+		case TokenIf, TokenUnless:
+			depth++
+		case TokenEnd:
+			depth--
+			if depth == 0 {
+				endIdx = i
+				break
+			}
+		}
+
+		if endIdx != -1 {
+			break
+		}
+	}
+
+	if endIdx == -1 {
+		return nil, -1, fmt.Errorf("no matching end for if statement")
+	}
+
+	return branches, endIdx, nil
+}
+
+// ifBranch represents an elsif or else branch
+type ifBranch struct {
+	index      int
+	branchType string
+	condition  string
+}
+
+// evaluateCondition evaluates a condition expression
+func evaluateCondition(condition string, data TemplateData) (bool, error) {
+	// Parse and evaluate the condition
+	expr, err := ParseExpression(condition)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse condition: %w", err)
+	}
+
+	result, err := expr.Evaluate(data)
+	if err != nil {
+		return false, fmt.Errorf("failed to evaluate condition: %w", err)
+	}
+
+	// Convert result to boolean
+	return isTruthy(result), nil
 }
 
 // RenderTableWithControlStructures renders a table with support for loops and conditionals
