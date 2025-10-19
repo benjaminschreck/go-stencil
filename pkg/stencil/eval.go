@@ -256,6 +256,10 @@ func FormatValue(value interface{}) string {
 		return strconv.FormatFloat(v, 'g', 15, 64)
 	case bool:
 		return fmt.Sprintf("%v", v)
+	case *TableRowMarker:
+		// TableRowMarker is a special marker that should be converted to a placeholder
+		// that can be detected during post-processing
+		return fmt.Sprintf("TABLE_ROW_MARKER:%s", v.Action)
 	default:
 		// For complex types, use fmt.Sprintf
 		return fmt.Sprintf("%v", v)
