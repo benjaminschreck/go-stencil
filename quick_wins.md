@@ -92,28 +92,25 @@ renderBodyWithElementOrder) remain in render_docx.go as they call back into the 
 
 ---
 
-#### Commit 2d: Extract table rendering functions ⏳ PENDING
-**Status**: Not started
-**Files to create**:
-- [ ] pkg/stencil/render/table.go
-  - RenderTableWithControlStructures()
-  - detectTableRowControlStructure()
-  - RenderTableRow()
-  - RenderTableCell()
-  - findMatchingTableEnd()
-  - findMatchingTableIfEnd()
-  - renderTableForLoop()
-  - findMatchingTableEndInSlice()
-  - findMatchingTableIfEndInSlice()
-  - renderTableIfElse()
-  - renderTableUnlessElse()
+#### Commit 2d: Extract table rendering helper functions ✅ DONE
+**Status**: Completed
+**Files created**:
+- [x] pkg/stencil/render/table.go
+  - DetectTableRowControlStructure() - detects control structures in table rows
+  - FindMatchingTableEnd() - finds matching {{end}} for table control structures
+  - FindMatchingTableIfEnd() - finds if/elsif/else branches in tables
+  - FindMatchingTableEndInSlice() - finds matching {{end}} in row slices
+  - FindMatchingTableIfEndInSlice() - finds if/elsif/else branches in row slices
 
-**Lines to extract from render_docx.go**: Lines 1434-2136 (~700 lines)
+**Note**: Only pure helper functions were extracted to avoid circular dependencies.
+The main table rendering functions (RenderTableWithControlStructures, renderTableForLoop,
+renderTableIfElse, renderTableUnlessElse) remain in render_docx.go as they call back
+into the stencil package.
 
-**Files to update**:
-- [ ] pkg/stencil/render_docx.go (Should be empty or nearly empty after this)
+**Files updated**:
+- [x] pkg/stencil/render_docx.go (Added wrappers for extracted functions)
 
-**Expected outcome**: ~700 lines moved to render/table.go
+**Expected outcome**: Table helper functions extracted, tests passing ✅
 
 ---
 
