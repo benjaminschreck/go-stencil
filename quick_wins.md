@@ -153,6 +153,272 @@ The current architecture is clean and maintainable.
 
 ---
 
+#### Commit 2f: Remove wrapper functions and type duplication ⏳ PENDING
+**Status**: Not started - cleanup commit to remove unnecessary abstraction
+**Problem identified**:
+Current approach added unnecessary indirection:
+- Duplicated `elseBranch` type (stencil) and `ElseBranch` type (render)
+- 3 conversion functions doing manual struct copying (~45 lines boilerplate)
+- 9 wrapper functions that are one-line pass-throughs (~27 lines)
+- Total waste: ~72 lines of code that add zero value
+
+**Changes to make**:
+1. **Delete duplicate type** (~15 lines saved):
+   - Remove `type elseBranch` from render_docx.go
+   - Use `render.ElseBranch` everywhere instead
+
+2. **Remove type conversion boilerplate** (~45 lines saved):
+   - In `findIfStructureInElements()`: return render.ElseBranch directly
+   - In `findMatchingTableIfEnd()`: return render.ElseBranch directly
+   - In `findMatchingTableIfEndInSlice()`: return render.ElseBranch directly
+   - Update all callers to use `render.ElseBranch` (change `.index` → `.Index`, etc.)
+
+3. **Remove wrapper functions** (~12 lines saved):
+   - Delete `detectControlStructure()` wrapper
+   - Delete `getParagraphText()` wrapper
+   - Delete `findMatchingEnd()` wrapper
+   - Delete `detectTableRowControlStructure()` wrapper
+   - Delete `findMatchingEndInElements()` wrapper (maybe keep if used frequently)
+   - Delete `findIfStructureInElements()` wrapper (keep if type conversion removed)
+   - Delete `findMatchingTableEnd()` wrapper
+   - Delete `findMatchingTableIfEnd()` wrapper (keep if type conversion removed)
+   - Delete `findMatchingTableEndInSlice()` wrapper
+   - Delete `findMatchingTableIfEndInSlice()` wrapper (keep if type conversion removed)
+   - Update all call sites to use `render.*` functions directly
+
+**Files to update**:
+- [ ] pkg/stencil/render_docx.go
+  - Remove `elseBranch` type definition
+  - Update all `elseBranch` references to `render.ElseBranch`
+  - Remove wrapper functions
+  - Update all wrapper call sites to direct `render.*` calls
+
+**Expected outcome**:
+- ~72 lines removed from render_docx.go
+- Cleaner, more direct code
+- No runtime conversion overhead
+- Easier to understand (fewer indirection layers)
+- All tests still passing ✅
+
+**Risk**: Low - purely mechanical refactoring, no logic changes
+
+---
+
+### Commit 2.1: Alternative Bold Approach (PROPOSAL - NOT IMPLEMENTED)
+
+This section describes an alternative, more aggressive refactoring approach that could have been taken, achieving results similar to Commit 1's 95% reduction. This is documented for future reference but is **NOT** part of the current quick wins plan.
+
+#### Philosophy: Proper Separation Like xml/ Package
+
+The xml/ package extraction (Commit 1) achieved a 95% reduction by moving ALL logic to sub-packages and using re-exports. Commit 2 only achieved 27% because it was overly conservative about circular dependencies.
+
+**Key insight**: render/ CAN import stencil for TYPES without creating circular imports, as long as stencil only imports render for FUNCTIONS. This is standard Go practice.
+
+---
+
+#### Commit 2.1a: Extract body rendering to render/body/ ⏳ PROPOSAL
+
+**Files to create**:
+- [ ] pkg/stencil/render/body/render.go (~500 lines)
+  - Move `renderBodyWithElementOrder()` - main body rendering logic
+  - Move `RenderBodyWithControlStructures()` - entry point
+  - Move `renderElementsWithContext()` - recursive rendering
+  - Import `stencil` package for `TemplateData`, `renderContext` types
+  - Keep all existing helper functions from body.go
+
+**Files to create/update**:
+- [ ] pkg/stencil/render_body.go (new, ~10 lines re-exports)
+```go
+package stencil
+
+import "github.com/benjaminschreck/go-stencil/pkg/stencil/render/body"
+
+// Re-export body rendering functions
+var RenderBodyWithControlStructures = body.RenderBodyWithControlStructures
+```
+
+- [ ] pkg/stencil/render_docx.go
+  - Delete body rendering functions
+  - Keep only paragraph/run level rendering
+
+**Expected outcome**: ~500 lines moved to render/body/
+
+---
+
+#### Commit 2.1b: Extract table rendering to render/table/ ⏳ PROPOSAL
+
+**Files to create**:
+- [ ] pkg/stencil/render/table/render.go (~450 lines)
+  - Move `RenderTableWithControlStructures()` - main entry point
+  - Move `renderTableForLoop()` - table loop rendering
+  - Move `renderTableIfElse()` - table conditional rendering
+  - Move `renderTableUnlessElse()` - table unless rendering
+  - Move `RenderTableRow()` - row rendering
+  - Move `RenderTableCell()` - cell rendering
+  - Keep all existing helper functions from table.go
+
+**Files to create/update**:
+- [ ] pkg/stencil/render_table.go (new, ~10 lines re-exports)
+```go
+package stencil
+
+import "github.com/benjaminschreck/go-stencil/pkg/stencil/render/table"
+
+var RenderTableWithControlStructures = table.RenderTableWithControlStructures
+var RenderTableRow = table.RenderTableRow
+var RenderTableCell = table.RenderTableCell
+```
+
+**Expected outcome**: ~450 lines moved to render/table/
+
+---
+
+#### Commit 2.1c: Extract inline/token processing to render/inline/ ⏳ PROPOSAL
+
+**Files to create**:
+- [ ] pkg/stencil/render/inline/process.go (~300 lines)
+  - Move `renderInlineForLoop()` - inline loop processing
+  - Move `processTemplateText()` - template text processing
+  - Move `processTokens()` - token processing
+  - Move `processIfStatement()` - inline if processing
+  - Move `processUnlessStatement()` - inline unless processing
+  - Move `processTokensSimple()` - simple token processing
+  - Move `hasCompleteControlStructures()` - structure checking
+  - Move `findIfBranches()` - branch finding
+  - Move `evaluateCondition()` - condition evaluation
+  - Import `stencil` package for `Token`, `TemplateData`, `ParseExpression`, etc.
+
+**Files to create/update**:
+- [ ] pkg/stencil/render_inline.go (new, ~5 lines re-exports)
+```go
+package stencil
+
+import "github.com/benjaminschreck/go-stencil/pkg/stencil/render/inline"
+
+// Internal use only - not re-exported as these are implementation details
+```
+
+**Expected outcome**: ~300 lines moved to render/inline/
+
+---
+
+#### Commit 2.1d: Extract paragraph/run rendering to render/paragraph/ ⏳ PROPOSAL
+
+**Files to create**:
+- [ ] pkg/stencil/render/paragraph/render.go (~200 lines)
+  - Move `RenderParagraphWithContext()` - main paragraph rendering
+  - Move any paragraph-specific utilities
+
+**Files to create/update**:
+- [ ] pkg/stencil/render_paragraph.go (new, ~5 lines re-exports)
+```go
+package stencil
+
+import "github.com/benjaminschreck/go-stencil/pkg/stencil/render/paragraph"
+
+var RenderParagraphWithContext = paragraph.RenderParagraphWithContext
+```
+
+**Expected outcome**: ~200 lines moved to render/paragraph/
+
+---
+
+#### Commit 2.1e: Convert render_docx.go to pure re-exports ⏳ PROPOSAL
+
+**Files to update**:
+- [ ] pkg/stencil/render_docx.go (reduce to ~100 lines)
+  - Keep only re-exports and type aliases
+  - Remove all implementation code
+  - Should look similar to xml.go after Commit 1
+
+**Example final state**:
+```go
+package stencil
+
+import (
+    "github.com/benjaminschreck/go-stencil/pkg/stencil/render/body"
+    "github.com/benjaminschreck/go-stencil/pkg/stencil/render/table"
+    "github.com/benjaminschreck/go-stencil/pkg/stencil/render/paragraph"
+)
+
+// Re-export body rendering
+var RenderBodyWithControlStructures = body.RenderBodyWithControlStructures
+
+// Re-export table rendering
+var RenderTableWithControlStructures = table.RenderTableWithControlStructures
+var RenderTableRow = table.RenderTableRow
+var RenderTableCell = table.RenderTableCell
+
+// Re-export paragraph rendering
+var RenderParagraphWithContext = paragraph.RenderParagraphWithContext
+
+// ... other re-exports
+```
+
+**Expected outcome**: render_docx.go ~100 lines (94% reduction, matching Commit 1)
+
+---
+
+#### Commit 2.1f: Documentation and cleanup ⏳ PROPOSAL
+
+**Final architecture**:
+```
+pkg/stencil/
+├── xml/                      # Pure XML structures (Commit 1)
+│   ├── types.go
+│   ├── document.go
+│   ├── paragraph.go
+│   ├── run.go
+│   └── table.go
+├── render/                   # Rendering logic
+│   ├── helpers.go           # Run merging (Commit 2a)
+│   ├── control.go           # Control detection (Commit 2b)
+│   ├── body/
+│   │   └── render.go        # Body rendering (Commit 2.1a)
+│   ├── table/
+│   │   └── render.go        # Table rendering (Commit 2.1b)
+│   ├── inline/
+│   │   └── process.go       # Token processing (Commit 2.1c)
+│   └── paragraph/
+│       └── render.go        # Paragraph rendering (Commit 2.1d)
+├── xml.go                    # Re-exports (88 lines)
+├── render_docx.go           # Re-exports (100 lines) ← 94% reduction!
+├── render_body.go           # Re-exports (10 lines)
+├── render_table.go          # Re-exports (10 lines)
+├── render_paragraph.go      # Re-exports (5 lines)
+└── ... (other files)
+```
+
+**Expected outcome**:
+- render_docx.go: ~2,270 → ~100 lines (94% reduction)
+- Matches Commit 1's approach and success
+- Clear, organized structure
+- No circular dependencies (render imports stencil for types)
+- All tests passing ✅
+
+**Why this works**:
+```
+render/body/ → imports stencil (for types: TemplateData, renderContext)
+stencil      → imports render/body (for functions: RenderBodyWithControlStructures)
+
+This is NOT circular because:
+- render imports stencil for TYPE definitions
+- stencil imports render for FUNCTION definitions
+- Go's import rules allow this!
+```
+
+**Comparison**:
+
+| Approach | Lines Moved | render_docx.go Final | Reduction | Like Commit 1? |
+|----------|-------------|---------------------|-----------|----------------|
+| Current (2a-e) | 607 | 1,663 lines | 27% | ❌ No |
+| Proposal (2.1a-f) | ~1,450 | ~100 lines | 94% | ✅ Yes |
+| Commit 1 (xml) | ~1,660 | 88 lines | 95% | ✅ Reference |
+
+**Status**: This is a PROPOSAL only. Not implemented. Documented for future consideration.
+
+---
+
 ### Commit 3: Move functions to functions/ package ⏳ PENDING
 **Status**: Not started
 **Files to move/reorganize**:
