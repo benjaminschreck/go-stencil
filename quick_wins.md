@@ -446,10 +446,79 @@ This is NOT circular because:
 
 ---
 
+### Commit 5: Complete render_docx.go modularization (Commit 2.1) ⏳ PENDING
+**Status**: Not started - scheduled as Phase 2, Commit 5 in REFACTORING_PLAN.md
+**Goal**: Complete the render/ package refactoring to match the xml/ package pattern (95% file size reduction)
+
+**Target Architecture:**
+```
+pkg/stencil/render/
+├── body/
+│   ├── body.go           # RenderBodyWithControlStructures
+│   ├── paragraph.go      # RenderParagraphsWithControlStructures
+│   ├── inline.go         # processInlineTokens (renamed from processTokensInRuns)
+│   └── loop.go           # loop control structure logic
+├── table/
+│   ├── table.go          # RenderTableWithControlStructures
+│   └── rows.go           # RenderTableRowsWithControlStructures
+└── paragraph/
+    └── paragraph.go      # RenderParagraph, RenderRun
+```
+
+**Final state of render_docx.go (~100 lines):**
+- Re-exports all rendering functions
+- Maintains backward compatibility
+- Matches xml.go pattern (88 lines)
+
+**Rationale:**
+- Achieves 94% reduction (1,558 → ~100 lines) matching Commit 1
+- Creates domain-specific packages for rendering logic
+- Improves long-term maintainability
+- **NOT circular**: render/body/ imports stencil for TYPES, stencil imports render/body for FUNCTIONS
+
+**Steps:**
+1. Create directory structure: `render/body/`, `render/table/`, `render/paragraph/`
+2. Extract body rendering to `render/body/body.go`:
+   - RenderBodyWithControlStructures
+   - Related types: bodyControlBlock, blockType
+3. Extract paragraph processing to `render/body/paragraph.go`:
+   - RenderParagraphsWithControlStructures
+   - Related types: paragraphControlBlock
+4. Extract inline processing to `render/body/inline.go`:
+   - processInlineTokens (rename from processTokensInRuns)
+   - Helper functions for token processing
+5. Extract loop logic to `render/body/loop.go`:
+   - Loop control structure rendering
+   - Loop context management
+6. Extract table rendering to `render/table/table.go`:
+   - RenderTableWithControlStructures
+   - Related types: tableControlBlock
+7. Extract table row rendering to `render/table/rows.go`:
+   - RenderTableRowsWithControlStructures
+   - Related types: tableRowControlBlock
+8. Extract paragraph/run rendering to `render/paragraph/paragraph.go`:
+   - RenderParagraph
+   - RenderRun
+9. Update render_docx.go to re-export all functions (keep ~100 lines like xml.go)
+10. Update imports in all dependent files
+11. Run tests: `go test ./...`
+12. Verify file size: render_docx.go should be ~100 lines (was 1,558 after Commit 2f)
+13. Validate no circular dependencies: `go build ./...`
+
+**Expected Impact:**
+- render_docx.go: 1,558 → ~100 lines (94% reduction)
+- Total lines extracted: ~1,450 lines
+- Matches xml/ package pattern (Commit 1: 95% reduction)
+- Architectural consistency across codebase
+
+**Time Estimate:** 3-5 hours
+
+---
+
 ## Current Status
-- **Commits completed**: 7 / 9 (Commit 1 ✅, Commit 2a ✅, Commit 2b ✅, Commit 2c ✅, Commit 2d ✅, Commit 2e ✅, Commit 2f ✅)
-- **Estimated time remaining**: 2-3 hours (Commits 3 & 4)
-- **Next action**: Continue with Commit 3 - Move functions to functions/ package (optional)
+- **Commits completed**: 7 / 10 (Commit 1 ✅, Commit 2a ✅, Commit 2b ✅, Commit 2c ✅, Commit 2d ✅, Commit 2e ✅, Commit 2f ✅)
+- **Estimated time remaining**: 5-8 hours (Commits 3, 4, & 5)
+- **Next action**: Continue with Commit 3 - Move functions to functions/ package (optional), or Commit 5 for architectural consistency
 
 **Commit 2 Summary**:
 - render_docx.go reduced from ~2,270 lines to 1,558 lines (31% reduction, 712 lines removed)
