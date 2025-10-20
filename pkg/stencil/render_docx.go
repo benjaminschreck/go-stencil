@@ -1126,13 +1126,9 @@ func RenderTableWithControlStructures(table *Table, data TemplateData, ctx *rend
 }
 
 // detectTableRowControlStructure checks if a table row contains control structures
+// detectTableRowControlStructure is a wrapper for render.DetectTableRowControlStructure
 func detectTableRowControlStructure(row *TableRow) (string, string) {
-	if len(row.Cells) == 0 || len(row.Cells[0].Paragraphs) == 0 {
-		return "", ""
-	}
-
-	// Check first paragraph of first cell
-	return detectControlStructure(&row.Cells[0].Paragraphs[0])
+	return render.DetectTableRowControlStructure(row)
 }
 
 // RenderTableRow renders a single table row
@@ -1197,60 +1193,29 @@ func RenderTableCell(cell *TableCell, data TemplateData, ctx *renderContext) (*T
 }
 
 // findMatchingTableEnd finds the matching end for a table control structure
+// findMatchingTableEnd is a wrapper for render.FindMatchingTableEnd
 func findMatchingTableEnd(rows []TableRow, startIdx int) (int, error) {
-	depth := 1
-	for i := startIdx + 1; i < len(rows); i++ {
-		controlType, _ := detectTableRowControlStructure(&rows[i])
-
-		switch controlType {
-		case "for", "if", "unless":
-			depth++
-		case "end":
-			depth--
-			if depth == 0 {
-				return i, nil
-			}
-		}
-	}
-	return -1, fmt.Errorf("no matching end found")
+	return render.FindMatchingTableEnd(rows, startIdx)
 }
 
-// findMatchingTableIfEnd finds the matching else/elsif/end for a table if/unless
+// findMatchingTableIfEnd wraps render.FindMatchingTableIfEnd and converts the result
 func findMatchingTableIfEnd(rows []TableRow, startIdx int) (endIdx int, branches []elseBranch, error error) {
-	depth := 1
-	branches = []elseBranch{}
+	endIdx, renderBranches, err := render.FindMatchingTableIfEnd(rows, startIdx)
+	if err != nil {
+		return -1, nil, err
+	}
 
-	for i := startIdx + 1; i < len(rows); i++ {
-		controlType, condition := detectTableRowControlStructure(&rows[i])
-
-		if depth == 1 {
-			switch controlType {
-			case "elsif", "elseif", "elif":
-				branches = append(branches, elseBranch{
-					index:      i,
-					branchType: "elsif",
-					condition:  condition,
-				})
-			case "else":
-				branches = append(branches, elseBranch{
-					index:      i,
-					branchType: "else",
-					condition:  "",
-				})
-			}
-		}
-
-		switch controlType {
-		case "for", "if", "unless":
-			depth++
-		case "end":
-			depth--
-			if depth == 0 {
-				return i, branches, nil
-			}
+	// Convert render.ElseBranch to elseBranch
+	branches = make([]elseBranch, len(renderBranches))
+	for i, rb := range renderBranches {
+		branches[i] = elseBranch{
+			index:      rb.Index,
+			branchType: rb.BranchType,
+			condition:  rb.Condition,
 		}
 	}
-	return -1, nil, fmt.Errorf("no matching end found")
+
+	return endIdx, branches, nil
 }
 
 // renderTableForLoop renders a for loop in a table
@@ -1377,61 +1342,29 @@ func renderTableForLoop(rows []TableRow, forExpr string, data TemplateData, ctx 
 	return result, nil
 }
 
-// findMatchingTableIfEndInSlice finds matching else/end in a slice of rows
-// findMatchingTableEndInSlice finds the matching end for a table control structure in a slice
+// findMatchingTableEndInSlice is a wrapper for render.FindMatchingTableEndInSlice
 func findMatchingTableEndInSlice(rows []TableRow, startIdx int) (int, error) {
-	depth := 1
-	for i := startIdx + 1; i < len(rows); i++ {
-		controlType, _ := detectTableRowControlStructure(&rows[i])
-
-		switch controlType {
-		case "for", "if", "unless":
-			depth++
-		case "end":
-			depth--
-			if depth == 0 {
-				return i, nil
-			}
-		}
-	}
-	return -1, fmt.Errorf("no matching end found")
+	return render.FindMatchingTableEndInSlice(rows, startIdx)
 }
 
+// findMatchingTableIfEndInSlice wraps render.FindMatchingTableIfEndInSlice and converts the result
 func findMatchingTableIfEndInSlice(rows []TableRow, startIdx int) (endIdx int, branches []elseBranch, error error) {
-	depth := 1
-	branches = []elseBranch{}
+	endIdx, renderBranches, err := render.FindMatchingTableIfEndInSlice(rows, startIdx)
+	if err != nil {
+		return -1, nil, err
+	}
 
-	for i := startIdx + 1; i < len(rows); i++ {
-		controlType, condition := detectTableRowControlStructure(&rows[i])
-
-		if depth == 1 {
-			switch controlType {
-			case "elsif", "elseif", "elif":
-				branches = append(branches, elseBranch{
-					index:      i,
-					branchType: "elsif",
-					condition:  condition,
-				})
-			case "else":
-				branches = append(branches, elseBranch{
-					index:      i,
-					branchType: "else",
-					condition:  "",
-				})
-			}
-		}
-
-		switch controlType {
-		case "for", "if", "unless":
-			depth++
-		case "end":
-			depth--
-			if depth == 0 {
-				return i, branches, nil
-			}
+	// Convert render.ElseBranch to elseBranch
+	branches = make([]elseBranch, len(renderBranches))
+	for i, rb := range renderBranches {
+		branches[i] = elseBranch{
+			index:      rb.Index,
+			branchType: rb.BranchType,
+			condition:  rb.Condition,
 		}
 	}
-	return -1, nil, fmt.Errorf("no matching end found")
+
+	return endIdx, branches, nil
 }
 
 // renderTableIfElse renders an if/elsif/else in a table
