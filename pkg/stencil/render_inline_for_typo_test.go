@@ -30,7 +30,7 @@ func TestRenderInlineForLoopWithTypo(t *testing.T) {
 	}
 
 	render.MergeConsecutiveRuns(para)
-	controlType, controlContent := detectControlStructure(para)
+	controlType, controlContent := render.DetectControlStructure(para)
 
 	if controlType != "inline-for" {
 		t.Fatalf("Expected controlType='inline-for', got %q", controlType)
@@ -81,7 +81,7 @@ func TestRenderInlineForLoopCorrect(t *testing.T) {
 	}
 
 	render.MergeConsecutiveRuns(para)
-	controlType, controlContent := detectControlStructure(para)
+	controlType, controlContent := render.DetectControlStructure(para)
 
 	if controlType != "inline-for" {
 		t.Fatalf("Expected controlType='inline-for', got %q", controlType)
@@ -127,7 +127,7 @@ func TestHideRowFunctionInSuffix(t *testing.T) {
 	}
 
 	render.MergeConsecutiveRuns(para)
-	controlType, controlContent := detectControlStructure(para)
+	controlType, controlContent := render.DetectControlStructure(para)
 
 	if controlType != "inline-for" {
 		t.Fatalf("Expected controlType='inline-for', got %q", controlType)

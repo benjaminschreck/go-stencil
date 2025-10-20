@@ -153,54 +153,55 @@ The current architecture is clean and maintainable.
 
 ---
 
-#### Commit 2f: Remove wrapper functions and type duplication ⏳ PENDING
-**Status**: Not started - cleanup commit to remove unnecessary abstraction
-**Problem identified**:
-Current approach added unnecessary indirection:
-- Duplicated `elseBranch` type (stencil) and `ElseBranch` type (render)
-- 3 conversion functions doing manual struct copying (~45 lines boilerplate)
-- 9 wrapper functions that are one-line pass-throughs (~27 lines)
-- Total waste: ~72 lines of code that add zero value
+#### Commit 2f: Remove wrapper functions and type duplication ✅ COMPLETED
+**Status**: Completed - cleanup commit to remove unnecessary abstraction
+**Changes made**:
+1. **Deleted duplicate type**:
+   - Removed `type elseBranch` from render_docx.go
+   - Updated all references to use `render.ElseBranch` instead
 
-**Changes to make**:
-1. **Delete duplicate type** (~15 lines saved):
-   - Remove `type elseBranch` from render_docx.go
-   - Use `render.ElseBranch` everywhere instead
+2. **Removed type conversion boilerplate**:
+   - `findIfStructureInElements()`: now returns `render.ElseBranch` directly
+   - `findMatchingTableIfEnd()`: now returns `render.ElseBranch` directly
+   - `findMatchingTableIfEndInSlice()`: now returns `render.ElseBranch` directly
+   - Updated all callers to use `render.ElseBranch` (changed `.index` → `.Index`, etc.)
 
-2. **Remove type conversion boilerplate** (~45 lines saved):
-   - In `findIfStructureInElements()`: return render.ElseBranch directly
-   - In `findMatchingTableIfEnd()`: return render.ElseBranch directly
-   - In `findMatchingTableIfEndInSlice()`: return render.ElseBranch directly
-   - Update all callers to use `render.ElseBranch` (change `.index` → `.Index`, etc.)
+3. **Removed wrapper functions**:
+   - Deleted `detectControlStructure()` wrapper
+   - Deleted `getParagraphText()` wrapper
+   - Deleted `findMatchingEnd()` wrapper
+   - Deleted `detectTableRowControlStructure()` wrapper
+   - Deleted `findMatchingEndInElements()` wrapper
+   - Deleted `findIfStructureInElements()` wrapper
+   - Deleted `findMatchingTableEnd()` wrapper
+   - Deleted `findMatchingTableIfEnd()` wrapper
+   - Deleted `findMatchingTableEndInSlice()` wrapper
+   - Deleted `findMatchingTableIfEndInSlice()` wrapper
+   - Updated all call sites to use `render.*` functions directly
 
-3. **Remove wrapper functions** (~12 lines saved):
-   - Delete `detectControlStructure()` wrapper
-   - Delete `getParagraphText()` wrapper
-   - Delete `findMatchingEnd()` wrapper
-   - Delete `detectTableRowControlStructure()` wrapper
-   - Delete `findMatchingEndInElements()` wrapper (maybe keep if used frequently)
-   - Delete `findIfStructureInElements()` wrapper (keep if type conversion removed)
-   - Delete `findMatchingTableEnd()` wrapper
-   - Delete `findMatchingTableIfEnd()` wrapper (keep if type conversion removed)
-   - Delete `findMatchingTableEndInSlice()` wrapper
-   - Delete `findMatchingTableIfEndInSlice()` wrapper (keep if type conversion removed)
-   - Update all call sites to use `render.*` functions directly
+4. **Updated test files**:
+   - Added `render` import to test files
+   - Updated test function calls to use `render.*` functions
 
-**Files to update**:
-- [ ] pkg/stencil/render_docx.go
-  - Remove `elseBranch` type definition
-  - Update all `elseBranch` references to `render.ElseBranch`
-  - Remove wrapper functions
-  - Update all wrapper call sites to direct `render.*` calls
+**Files updated**:
+- [x] pkg/stencil/render_docx.go
+  - Removed `elseBranch` type definition
+  - Updated all `elseBranch` references to `render.ElseBranch`
+  - Removed all wrapper functions
+  - Updated all wrapper call sites to direct `render.*` calls
+- [x] pkg/stencil/render_docx_test.go (added render import, updated calls)
+- [x] pkg/stencil/render_inline_for_typo_test.go (updated calls)
+- [x] pkg/stencil/render_inline_for_with_if_test.go (updated calls)
+- [x] pkg/stencil/render_table_debug_test.go (added render import, updated calls)
 
-**Expected outcome**:
-- ~72 lines removed from render_docx.go
+**Outcome**:
+- 105 lines removed from render_docx.go (1,663 → 1,558 lines)
 - Cleaner, more direct code
 - No runtime conversion overhead
 - Easier to understand (fewer indirection layers)
-- All tests still passing ✅
+- All tests passing ✅
 
-**Risk**: Low - purely mechanical refactoring, no logic changes
+**Note**: Preserved the internal `ifBranch` type for token-level processing as it serves a different purpose than `render.ElseBranch`
 
 ---
 
@@ -446,9 +447,18 @@ This is NOT circular because:
 ---
 
 ## Current Status
-- **Commits completed**: 3 / 9 (Commit 1 done, Commit 2a done, Commit 2b done)
-- **Estimated time remaining**: 2.5-4 hours
-- **Next action**: Continue with Commit 2c - Extract body rendering functions
+- **Commits completed**: 7 / 9 (Commit 1 ✅, Commit 2a ✅, Commit 2b ✅, Commit 2c ✅, Commit 2d ✅, Commit 2e ✅, Commit 2f ✅)
+- **Estimated time remaining**: 2-3 hours (Commits 3 & 4)
+- **Next action**: Continue with Commit 3 - Move functions to functions/ package (optional)
+
+**Commit 2 Summary**:
+- render_docx.go reduced from ~2,270 lines to 1,558 lines (31% reduction, 712 lines removed)
+- Created 4 files in render/ package: helpers.go (187), control.go (208), body.go (78), table.go (134)
+- All pure helper functions extracted
+- All wrapper functions removed
+- All type duplication eliminated
+- Clean architecture without circular dependencies
+- All tests passing ✅
 
 ## Notes
 - Keeping re-exports permanently (Option A from REFACTORING_PLAN.md)
