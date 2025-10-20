@@ -15,66 +15,29 @@ type elseBranch struct {
 	condition  string // Condition for elsif branches
 }
 
-
-// findMatchingEndInElements finds the matching {{end}} for a control structure in elements
+// findMatchingEndInElements is a wrapper for render.FindMatchingEndInElements
 func findMatchingEndInElements(elements []BodyElement, startIdx int) (int, error) {
-	depth := 1
-	for i := startIdx + 1; i < len(elements); i++ {
-		if para, ok := elements[i].(*Paragraph); ok {
-			controlType, _ := render.DetectControlStructure(para)
-			switch controlType {
-			case "for", "if", "unless":
-				depth++
-			case "end":
-				depth--
-				if depth == 0 {
-					return i, nil
-				}
-			}
-		}
-	}
-	return -1, fmt.Errorf("no matching end found")
+	return render.FindMatchingEndInElements(elements, startIdx)
 }
 
-// findIfStructureInElements finds the structure of an if statement including elsif/else branches
+// findIfStructureInElements wraps render.FindIfStructureInElements and converts the result
 func findIfStructureInElements(elements []BodyElement, startIdx int) (endIdx int, branches []elseBranch, err error) {
-	depth := 1
-	branches = []elseBranch{}
+	endIdx, renderBranches, err := render.FindIfStructureInElements(elements, startIdx)
+	if err != nil {
+		return -1, nil, err
+	}
 
-	for i := startIdx + 1; i < len(elements); i++ {
-		if para, ok := elements[i].(*Paragraph); ok {
-			controlType, condition := render.DetectControlStructure(para)
-
-			if depth == 1 {
-				switch controlType {
-				case "elsif", "elseif", "elif":
-					branches = append(branches, elseBranch{
-						index:      i,
-						branchType: "elsif",
-						condition:  condition,
-					})
-				case "else":
-					branches = append(branches, elseBranch{
-						index:      i,
-						branchType: "else",
-						condition:  "",
-					})
-				}
-			}
-
-			switch controlType {
-			case "for", "if", "unless":
-				depth++
-			case "end":
-				depth--
-				if depth == 0 {
-					return i, branches, nil
-				}
-			}
+	// Convert render.ElseBranch to elseBranch
+	branches = make([]elseBranch, len(renderBranches))
+	for i, rb := range renderBranches {
+		branches[i] = elseBranch{
+			index:      rb.Index,
+			branchType: rb.BranchType,
+			condition:  rb.Condition,
 		}
 	}
 
-	return -1, nil, fmt.Errorf("no matching end found")
+	return endIdx, branches, nil
 }
 
 // renderElementsWithContext renders a slice of elements with the given context
