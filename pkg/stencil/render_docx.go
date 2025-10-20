@@ -874,7 +874,6 @@ func processUnlessStatement(tokens []Token, startIdx int, data TemplateData) (st
 			depth--
 			if depth == 0 {
 				endIdx = i
-				break
 			}
 		}
 		if endIdx != -1 {
@@ -938,7 +937,6 @@ func findIfBranches(tokens []Token, startIdx int) ([]ifBranch, int, error) {
 			depth--
 			if depth == 0 {
 				endIdx = i
-				break
 			}
 		}
 
