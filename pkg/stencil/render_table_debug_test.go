@@ -3,6 +3,8 @@ package stencil
 import (
 	"fmt"
 	"testing"
+
+	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
 )
 
 func TestRenderTableWithForLoop_Debug(t *testing.T) {
@@ -97,7 +99,7 @@ func TestRenderTableWithForLoop_Debug(t *testing.T) {
 	// Test row detection
 	fmt.Println("=== Testing row control structure detection ===")
 	for i, row := range table.Rows {
-		controlType, controlContent := detectTableRowControlStructure(&row)
+		controlType, controlContent := render.DetectTableRowControlStructure(&row)
 		fmt.Printf("Row %d: controlType=%q, controlContent=%q\n", i, controlType, controlContent)
 	}
 

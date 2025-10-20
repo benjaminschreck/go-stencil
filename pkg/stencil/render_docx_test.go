@@ -2,6 +2,8 @@ package stencil
 
 import (
 	"testing"
+
+	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
 )
 
 // Helper function to create a Body with Elements from paragraphs
@@ -165,7 +167,7 @@ func TestRenderBodyWithControlStructures(t *testing.T) {
 				if !ok {
 					continue
 				}
-				text := getParagraphText(para)
+				text := render.GetParagraphText(para)
 				if text != "" {
 					gotText = append(gotText, text)
 				}
@@ -275,12 +277,12 @@ func TestDetectControlStructure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotType, gotContent := detectControlStructure(tt.paragraph)
+			gotType, gotContent := render.DetectControlStructure(tt.paragraph)
 			if gotType != tt.wantType {
-				t.Errorf("detectControlStructure() type = %v, want %v", gotType, tt.wantType)
+				t.Errorf("render.DetectControlStructure() type = %v, want %v", gotType, tt.wantType)
 			}
 			if gotContent != tt.wantContent {
-				t.Errorf("detectControlStructure() content = %v, want %v", gotContent, tt.wantContent)
+				t.Errorf("render.DetectControlStructure() content = %v, want %v", gotContent, tt.wantContent)
 			}
 		})
 	}

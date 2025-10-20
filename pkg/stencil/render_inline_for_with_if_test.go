@@ -35,7 +35,7 @@ func TestRenderInlineForLoopWithIf(t *testing.T) {
 	render.MergeConsecutiveRuns(para)
 
 	// Check if this is an inline for loop
-	controlType, controlContent := detectControlStructure(para)
+	controlType, controlContent := render.DetectControlStructure(para)
 
 	if controlType != "inline-for" {
 		t.Fatalf("Expected controlType='inline-for', got %q", controlType)
@@ -86,7 +86,7 @@ func TestRenderInlineForLoopWithUnless(t *testing.T) {
 	}
 
 	render.MergeConsecutiveRuns(para)
-	controlType, controlContent := detectControlStructure(para)
+	controlType, controlContent := render.DetectControlStructure(para)
 
 	if controlType != "inline-for" {
 		t.Fatalf("Expected controlType='inline-for', got %q", controlType)
@@ -136,7 +136,7 @@ func TestRenderInlineForLoopWithComplexIf(t *testing.T) {
 	}
 
 	render.MergeConsecutiveRuns(para)
-	controlType, controlContent := detectControlStructure(para)
+	controlType, controlContent := render.DetectControlStructure(para)
 
 	if controlType != "inline-for" {
 		t.Fatalf("Expected controlType='inline-for', got %q", controlType)
@@ -188,7 +188,7 @@ func TestRenderInlineForLoopWithSuffix(t *testing.T) {
 	}
 
 	render.MergeConsecutiveRuns(para)
-	controlType, controlContent := detectControlStructure(para)
+	controlType, controlContent := render.DetectControlStructure(para)
 
 	if controlType != "inline-for" {
 		t.Fatalf("Expected controlType='inline-for', got %q", controlType)
@@ -236,7 +236,7 @@ func TestRenderInlineForLoopWithEmptyCollection(t *testing.T) {
 	}
 
 	render.MergeConsecutiveRuns(para)
-	controlType, controlContent := detectControlStructure(para)
+	controlType, controlContent := render.DetectControlStructure(para)
 
 	if controlType != "inline-for" {
 		t.Fatalf("Expected controlType='inline-for', got %q", controlType)
