@@ -40,3 +40,7 @@ Thumbs.db
 
 # Needed for the tests in examples/advanced
 # examples/advanced/output/*
+
+# Production files
+examples/advanced/production_legal.docx
+examples/advanced/output/production_legal_output.docx
