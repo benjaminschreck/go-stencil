@@ -502,8 +502,8 @@ func expandOOXMLFragments(run *Run, data TemplateData, ctx *renderContext) ([]Ru
 		} else {
 			// Fragment not found in context - this might be a legacy placeholder
 			// Check if it's one of the known types
-			if fragmentType == "*stencil.Break" {
-				// Legacy page break placeholder
+			if fragmentType == "*stencil.Break" || fragmentType == "*xml.Break" {
+				// Legacy page break placeholder (supports both old and new package structure)
 				breakRun := Run{
 					Properties: run.Properties,
 					Break:      &Break{Type: "page"},
