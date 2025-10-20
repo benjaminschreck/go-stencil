@@ -1477,6 +1477,21 @@ func RenderTableWithControlStructures(table *Table, data TemplateData, ctx *rend
 			rendered.Rows = append(rendered.Rows, renderedRows...)
 			i = endIdx + 1
 
+		case "unless":
+			// Find matching else/end
+			elseIdx, endIdx, err := findMatchingTableIfEnd(table.Rows, i)
+			if err != nil {
+				return nil, fmt.Errorf("no matching end for table unless: %w", err)
+			}
+
+			// Render unless/else (unless is inverted if)
+			renderedRows, err := renderTableUnlessElse(table.Rows[i:endIdx+1], controlContent, elseIdx-i, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			rendered.Rows = append(rendered.Rows, renderedRows...)
+			i = endIdx + 1
+
 		case "else", "end":
 			// Skip control structure rows - they shouldn't be in output
 			i++
@@ -1573,7 +1588,7 @@ func findMatchingTableEnd(rows []TableRow, startIdx int) (int, error) {
 		controlType, _ := detectTableRowControlStructure(&rows[i])
 
 		switch controlType {
-		case "for", "if":
+		case "for", "if", "unless":
 			depth++
 		case "end":
 			depth--
@@ -1585,7 +1600,7 @@ func findMatchingTableEnd(rows []TableRow, startIdx int) (int, error) {
 	return -1, fmt.Errorf("no matching end found")
 }
 
-// findMatchingTableIfEnd finds the matching else/end for a table if
+// findMatchingTableIfEnd finds the matching else/end for a table if/unless
 func findMatchingTableIfEnd(rows []TableRow, startIdx int) (int, int, error) {
 	depth := 1
 	elseIdx := -1
@@ -1594,7 +1609,7 @@ func findMatchingTableIfEnd(rows []TableRow, startIdx int) (int, int, error) {
 		controlType, _ := detectTableRowControlStructure(&rows[i])
 
 		switch controlType {
-		case "for", "if":
+		case "for", "if", "unless":
 			depth++
 		case "else":
 			if depth == 1 && elseIdx == -1 {
@@ -1684,6 +1699,21 @@ func renderTableForLoop(rows []TableRow, forExpr string, data TemplateData, ctx 
 				result = append(result, renderedRows...)
 				i = endIdx + 1
 
+			case "unless":
+				// Find matching else/end
+				elseIdx, endIdx, err := findMatchingTableIfEndInSlice(bodyRows, i)
+				if err != nil {
+					return nil, fmt.Errorf("failed to find matching end for nested unless: %w", err)
+				}
+
+				// Render unless/else block
+				renderedRows, err := renderTableUnlessElse(bodyRows[i:endIdx+1], controlContent, elseIdx-i, loopData, ctx)
+				if err != nil {
+					return nil, err
+				}
+				result = append(result, renderedRows...)
+				i = endIdx + 1
+
 			default:
 				// Regular row, render with loop data
 				renderedRow, err := RenderTableRow(row, loopData, ctx)
@@ -1707,7 +1737,7 @@ func findMatchingTableEndInSlice(rows []TableRow, startIdx int) (int, error) {
 		controlType, _ := detectTableRowControlStructure(&rows[i])
 
 		switch controlType {
-		case "for", "if":
+		case "for", "if", "unless":
 			depth++
 		case "end":
 			depth--
@@ -1727,7 +1757,7 @@ func findMatchingTableIfEndInSlice(rows []TableRow, startIdx int) (int, int, err
 		controlType, _ := detectTableRowControlStructure(&rows[i])
 
 		switch controlType {
-		case "for", "if":
+		case "for", "if", "unless":
 			depth++
 		case "else":
 			if depth == 1 && elseIdx == -1 {
@@ -1771,14 +1801,149 @@ func renderTableIfElse(rows []TableRow, ifExpr string, elseIdx int, data Templat
 		bodyRows = rows[elseIdx+1 : len(rows)-1]
 	}
 
-	// Render selected rows
+	// Render selected rows, handling nested control structures
 	var result []TableRow
-	for _, row := range bodyRows {
-		renderedRow, err := RenderTableRow(&row, data, ctx)
-		if err != nil {
-			return nil, err
+	i := 0
+	for i < len(bodyRows) {
+		row := &bodyRows[i]
+		controlType, controlContent := detectTableRowControlStructure(row)
+
+		switch controlType {
+		case "for":
+			// Find matching end for nested for loop
+			endIdx, err := findMatchingTableEndInSlice(bodyRows, i)
+			if err != nil {
+				return nil, fmt.Errorf("failed to find matching end for nested for: %w", err)
+			}
+
+			// Render nested for loop block
+			renderedRows, err := renderTableForLoop(bodyRows[i:endIdx+1], controlContent, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, renderedRows...)
+			i = endIdx + 1
+
+		case "if":
+			// Find matching else/end for nested if
+			nestedElseIdx, endIdx, err := findMatchingTableIfEndInSlice(bodyRows, i)
+			if err != nil {
+				return nil, fmt.Errorf("failed to find matching end for nested if: %w", err)
+			}
+
+			// Render nested if/else block
+			renderedRows, err := renderTableIfElse(bodyRows[i:endIdx+1], controlContent, nestedElseIdx-i, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, renderedRows...)
+			i = endIdx + 1
+
+		default:
+			// Regular row, render with data
+			renderedRow, err := RenderTableRow(row, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, *renderedRow)
+			i++
 		}
-		result = append(result, *renderedRow)
+	}
+
+	return result, nil
+}
+
+// renderTableUnlessElse renders an unless/else in a table (inverted if)
+func renderTableUnlessElse(rows []TableRow, unlessExpr string, elseIdx int, data TemplateData, ctx *renderContext) ([]TableRow, error) {
+	// Parse condition
+	cond, err := ParseExpression(unlessExpr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse unless condition: %w", err)
+	}
+
+	// Evaluate condition
+	condResult, err := cond.Evaluate(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate unless condition: %w", err)
+	}
+
+	var bodyRows []TableRow
+
+	// Unless is inverted: render unless branch if condition is falsy
+	if !isTruthy(condResult) {
+		// Use unless branch
+		if elseIdx > 0 {
+			bodyRows = rows[1:elseIdx]
+		} else {
+			bodyRows = rows[1 : len(rows)-1]
+		}
+	} else if elseIdx > 0 {
+		// Use else branch
+		bodyRows = rows[elseIdx+1 : len(rows)-1]
+	}
+
+	// Render selected rows, handling nested control structures
+	var result []TableRow
+	i := 0
+	for i < len(bodyRows) {
+		row := &bodyRows[i]
+		controlType, controlContent := detectTableRowControlStructure(row)
+
+		switch controlType {
+		case "for":
+			// Find matching end for nested for loop
+			endIdx, err := findMatchingTableEndInSlice(bodyRows, i)
+			if err != nil {
+				return nil, fmt.Errorf("failed to find matching end for nested for: %w", err)
+			}
+
+			// Render nested for loop block
+			renderedRows, err := renderTableForLoop(bodyRows[i:endIdx+1], controlContent, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, renderedRows...)
+			i = endIdx + 1
+
+		case "if":
+			// Find matching else/end for nested if
+			nestedElseIdx, endIdx, err := findMatchingTableIfEndInSlice(bodyRows, i)
+			if err != nil {
+				return nil, fmt.Errorf("failed to find matching end for nested if: %w", err)
+			}
+
+			// Render nested if/else block
+			renderedRows, err := renderTableIfElse(bodyRows[i:endIdx+1], controlContent, nestedElseIdx-i, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, renderedRows...)
+			i = endIdx + 1
+
+		case "unless":
+			// Find matching else/end for nested unless
+			nestedElseIdx, endIdx, err := findMatchingTableIfEndInSlice(bodyRows, i)
+			if err != nil {
+				return nil, fmt.Errorf("failed to find matching end for nested unless: %w", err)
+			}
+
+			// Render nested unless/else block
+			renderedRows, err := renderTableUnlessElse(bodyRows[i:endIdx+1], controlContent, nestedElseIdx-i, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, renderedRows...)
+			i = endIdx + 1
+
+		default:
+			// Regular row, render with data
+			renderedRow, err := RenderTableRow(row, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, *renderedRow)
+			i++
+		}
 	}
 
 	return result, nil
