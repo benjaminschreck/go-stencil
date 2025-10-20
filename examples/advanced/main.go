@@ -119,6 +119,10 @@ func main() {
 	// Example 7: Comprehensive features showcase
 	fmt.Println("\n=== Example 7: Comprehensive Features ===")
 	comprehensiveFeaturesExample(engine)
+
+	// Example 8: Production example with German legal document
+	fmt.Println("\n=== Example 8: Production Example (German Legal Document) ===")
+	productionExample(engine)
 }
 
 func basicExample(engine *stencil.Engine) {
@@ -381,6 +385,7 @@ func tableExample(engine *stencil.Engine) {
 				"showRow": true,
 			},
 		},
+		"companies":  []map[string]interface{}{},
 		"grandTotal": 1710000,
 	}
 
@@ -586,4 +591,30 @@ func comprehensiveFeaturesExample(engine *stencil.Engine) {
 	}
 
 	saveOutput(output, "output/comprehensive_features_output.docx")
+}
+
+func productionExample(engine *stencil.Engine) {
+	// This example uses a real-world production template
+	tmpl, err := engine.PrepareFile("production_legal.docx")
+	if err != nil {
+		log.Fatalf("Failed to prepare template: %v", err)
+	}
+	defer tmpl.Close()
+
+	// The template contains a {{customText}} variable that can be replaced
+	// with any custom text or clause
+	data := stencil.TemplateData{
+		"customText": `Sample text demonstrating template variable substitution.
+
+This shows how the template engine handles multi-line text replacement.
+
+Additional paragraphs are preserved with proper formatting.`,
+	}
+
+	output, err := tmpl.Render(data)
+	if err != nil {
+		log.Fatalf("Failed to render template: %v", err)
+	}
+
+	saveOutput(output, "output/production_legal_output.docx")
 }
