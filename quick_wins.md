@@ -28,21 +28,108 @@ Following Option 2 from REFACTORING_PLAN.md - the recommended quick wins approac
 
 ---
 
-### Commit 2: Split render_docx.go → render/ package ⏳ PENDING
-**Status**: Not started
+### Commit 2: Split render_docx.go → render/ package (SPLIT INTO SUB-COMMITS)
+**Status**: In progress - split into 2a, 2b, 2c, 2d, 2e for easier management
+**Challenge**: render_docx.go has 2,135 lines with tightly coupled functions that require careful dependency analysis
+
+---
+
+#### Commit 2a: Extract helper functions (run merging) ⏳ PENDING
+**Status**: Not started (ready for new agent with fresh context)
 **Files to create**:
-- [ ] pkg/stencil/render/context.go (RenderContext, data management)
-- [ ] pkg/stencil/render/paragraph.go (Paragraph rendering)
-- [ ] pkg/stencil/render/run.go (Run rendering, text substitution)
-- [ ] pkg/stencil/render/table.go (Table rendering logic)
-- [ ] pkg/stencil/render/control.go (If/for/unless control structures)
-- [ ] pkg/stencil/render/expression.go (Expression evaluation)
+- [ ] pkg/stencil/render/helpers.go
+  - mergeConsecutiveRuns()
+  - mergeConsecutiveRunsWithContent()
+  - mergeRunSlice()
+
+**Lines to extract from render_docx.go**: Lines 111-291 (~180 lines)
 
 **Files to update**:
-- [ ] pkg/stencil/render_docx.go (Add re-exports)
-- [ ] Update imports across codebase
+- [ ] pkg/stencil/render_docx.go (Remove extracted functions, import render package)
 
-**Expected outcome**: render_docx.go reduced from 1,785 lines to ~100 lines of re-exports
+**Expected outcome**: ~180 lines moved to render/helpers.go
+
+---
+
+#### Commit 2b: Extract control structure functions ⏳ PENDING
+**Status**: Not started
+**Files to create**:
+- [ ] pkg/stencil/render/control.go
+  - detectControlStructure()
+  - getParagraphText()
+  - findMatchingEnd()
+  - renderInlineForLoop()
+  - processTemplateText()
+  - hasCompleteControlStructures()
+  - processTokensSimple()
+  - processTokens()
+  - processIfStatement()
+  - processUnlessStatement()
+  - findIfBranches()
+  - evaluateCondition()
+
+**Lines to extract from render_docx.go**: Lines 760-1433 (~670 lines)
+
+**Files to update**:
+- [ ] pkg/stencil/render_docx.go (Remove extracted functions)
+
+**Expected outcome**: ~670 lines moved to render/control.go
+
+---
+
+#### Commit 2c: Extract body rendering functions ⏳ PENDING
+**Status**: Not started
+**Files to create**:
+- [ ] pkg/stencil/render/body.go
+  - elseBranch type
+  - findMatchingEndInElements()
+  - findIfStructureInElements()
+  - renderElementsWithContext()
+  - RenderBodyWithControlStructures()
+  - renderBodyWithElementOrder()
+
+**Lines to extract from render_docx.go**: Lines 9-757 (~750 lines)
+
+**Files to update**:
+- [ ] pkg/stencil/render_docx.go (Remove extracted functions)
+
+**Expected outcome**: ~750 lines moved to render/body.go
+
+---
+
+#### Commit 2d: Extract table rendering functions ⏳ PENDING
+**Status**: Not started
+**Files to create**:
+- [ ] pkg/stencil/render/table.go
+  - RenderTableWithControlStructures()
+  - detectTableRowControlStructure()
+  - RenderTableRow()
+  - RenderTableCell()
+  - findMatchingTableEnd()
+  - findMatchingTableIfEnd()
+  - renderTableForLoop()
+  - findMatchingTableEndInSlice()
+  - findMatchingTableIfEndInSlice()
+  - renderTableIfElse()
+  - renderTableUnlessElse()
+
+**Lines to extract from render_docx.go**: Lines 1434-2136 (~700 lines)
+
+**Files to update**:
+- [ ] pkg/stencil/render_docx.go (Should be empty or nearly empty after this)
+
+**Expected outcome**: ~700 lines moved to render/table.go
+
+---
+
+#### Commit 2e: Final cleanup and re-exports ⏳ PENDING
+**Status**: Not started
+**Files to update**:
+- [ ] pkg/stencil/render_docx.go (Convert to re-export file like xml.go)
+- [ ] Verify all imports
+- [ ] Run all tests
+
+**Expected outcome**: render_docx.go reduced to ~50 lines of re-exports, all tests passing
 
 ---
 
@@ -73,9 +160,9 @@ Following Option 2 from REFACTORING_PLAN.md - the recommended quick wins approac
 ---
 
 ## Current Status
-- **Commits completed**: 1 / 4
-- **Estimated time remaining**: 3.5-5.5 hours
-- **Next action**: Start Commit 2 - Split render_docx.go
+- **Commits completed**: 1 / 9 (Commit 1 done, Commit 2 split into 2a-2e)
+- **Estimated time remaining**: 4-6 hours
+- **Next action**: Start Commit 2a with fresh agent context - Extract helper functions
 
 ## Notes
 - Keeping re-exports permanently (Option A from REFACTORING_PLAN.md)
