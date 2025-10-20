@@ -314,7 +314,7 @@ func TestFragmentCircularReference(t *testing.T) {
 
 // Helper functions
 
-func createTestDOCXWithFragments(t *testing.T) []byte {
+func createTestDOCXWithFragments(_ *testing.T) []byte {
 	// Create a DOCX with multiple paragraphs, each containing an include or content
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
@@ -372,7 +372,7 @@ func createFragmentDOCX(t *testing.T, content string) []byte {
 	return createSimpleDOCX(t, content)
 }
 
-func createDOCXWithStyle(t *testing.T, content, styleName, styleProps string) []byte {
+func createDOCXWithStyle(_ *testing.T, content, styleName, styleProps string) []byte {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
 	

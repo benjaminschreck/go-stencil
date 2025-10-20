@@ -509,7 +509,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 }
 
 // renderInlineForLoop handles loops that are entirely within one paragraph
-func renderInlineForLoop(para *Paragraph, loopText string, data TemplateData, ctx *renderContext) ([]Paragraph, error) {
+func renderInlineForLoop(para *Paragraph, loopText string, data TemplateData, _ *renderContext) ([]Paragraph, error) {
 	// Extract the for syntax and body
 	// Format: "{{for item in items}} content {{end}}"
 	forStart := strings.Index(loopText, "{{for ")
@@ -814,7 +814,8 @@ func processIfStatement(tokens []Token, startIdx int, data TemplateData) (string
 
 	// Check elsif branches
 	for i, branch := range branches {
-		if branch.branchType == "elsif" {
+		switch branch.branchType {
+		case "elsif":
 			// Evaluate elsif condition
 			elsifResult, err := evaluateCondition(branch.condition, data)
 			if err != nil {
@@ -832,7 +833,7 @@ func processIfStatement(tokens []Token, startIdx int, data TemplateData) (string
 				result, _, err := processTokens(tokens[branchStart:branchEnd], 0, data)
 				return result, endIdx + 1, err
 			}
-		} else if branch.branchType == "else" {
+		case "else":
 			// Execute else branch
 			branchStart := branch.index + 1
 			result, _, err := processTokens(tokens[branchStart:endIdx], 0, data)

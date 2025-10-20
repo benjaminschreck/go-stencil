@@ -305,11 +305,12 @@ func TestStringCaseFunctionsInExpressions(t *testing.T) {
 			if tt.expr == "lowercase(name)" || tt.expr == "uppercase(name)" || tt.expr == "titlecase(name)" {
 				registry := GetDefaultFunctionRegistry()
 				funcName := ""
-				if tt.expr == "lowercase(name)" {
+				switch tt.expr {
+				case "lowercase(name)":
 					funcName = "lowercase"
-				} else if tt.expr == "uppercase(name)" {
+				case "uppercase(name)":
 					funcName = "uppercase"
-				} else if tt.expr == "titlecase(name)" {
+				case "titlecase(name)":
 					funcName = "titlecase"
 				}
 				
