@@ -54,29 +54,22 @@ Following Option 2 from REFACTORING_PLAN.md - the recommended quick wins approac
 
 ---
 
-#### Commit 2b: Extract control structure functions ⏳ PENDING
-**Status**: Not started
-**Files to create**:
-- [ ] pkg/stencil/render/control.go
-  - detectControlStructure()
-  - getParagraphText()
-  - findMatchingEnd()
-  - renderInlineForLoop()
-  - processTemplateText()
-  - hasCompleteControlStructures()
-  - processTokensSimple()
-  - processTokens()
-  - processIfStatement()
-  - processUnlessStatement()
-  - findIfBranches()
-  - evaluateCondition()
+#### Commit 2b: Extract control structure functions ✅ COMPLETED
+**Status**: Completed
+**Files created**:
+- [x] pkg/stencil/render/control.go (208 lines)
+  - DetectControlStructure() (exported)
+  - GetParagraphText() (exported)
+  - FindMatchingEnd() (exported)
 
-**Lines to extract from render_docx.go**: Lines 760-1433 (~670 lines)
+**Files updated**:
+- [x] pkg/stencil/render_docx.go (Replaced implementations with wrappers)
 
-**Files to update**:
-- [ ] pkg/stencil/render_docx.go (Remove extracted functions)
-
-**Expected outcome**: ~670 lines moved to render/control.go
+**Outcome**:
+- render_docx.go reduced from ~1956 to 1767 lines (189 lines extracted)
+- 208 lines in render/control.go
+- All tests passing
+- Note: Token-dependent functions (renderInlineForLoop, processTemplateText, etc.) remain in render_docx.go to avoid circular dependencies. These will be extracted in a future commit after proper abstraction.
 
 ---
 
@@ -163,9 +156,9 @@ Following Option 2 from REFACTORING_PLAN.md - the recommended quick wins approac
 ---
 
 ## Current Status
-- **Commits completed**: 1 / 9 (Commit 1 done, Commit 2 split into 2a-2e)
-- **Estimated time remaining**: 4-6 hours
-- **Next action**: Start Commit 2a with fresh agent context - Extract helper functions
+- **Commits completed**: 3 / 9 (Commit 1 done, Commit 2a done, Commit 2b done)
+- **Estimated time remaining**: 2.5-4 hours
+- **Next action**: Continue with Commit 2c - Extract body rendering functions
 
 ## Notes
 - Keeping re-exports permanently (Option A from REFACTORING_PLAN.md)
