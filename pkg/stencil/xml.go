@@ -1503,10 +1503,11 @@ func (h Height) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 
 // TableCellProperties represents cell properties
 type TableCellProperties struct {
-	Width    *Width         `xml:"tcW"`
-	VAlign   *VerticalAlign `xml:"vAlign"`
-	GridSpan *GridSpan      `xml:"gridSpan"`
-	Shading  *Shading       `xml:"shd"`
+	Width     *Width          `xml:"tcW"`
+	VAlign    *VerticalAlign  `xml:"vAlign"`
+	GridSpan  *GridSpan       `xml:"gridSpan"`
+	Shading   *Shading        `xml:"shd"`
+	TcBorders *TableCellBorders `xml:"tcBorders"`
 }
 
 // MarshalXML implements custom XML marshaling for TableCellProperties
@@ -1540,6 +1541,13 @@ func (p TableCellProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) 
 	// Encode shading if present
 	if p.Shading != nil {
 		if err := e.EncodeElement(p.Shading, xml.StartElement{Name: xml.Name{Local: "w:shd"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode table cell borders if present
+	if p.TcBorders != nil {
+		if err := e.EncodeElement(p.TcBorders, xml.StartElement{Name: xml.Name{Local: "w:tcBorders"}}); err != nil {
 			return err
 		}
 	}
@@ -1578,6 +1586,83 @@ func (s Shading) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	}
 	if s.Fill != "" {
 		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:fill"}, Value: s.Fill})
+	}
+
+	// Self-closing element
+	return e.EncodeElement(struct{}{}, start)
+}
+
+// TableCellBorders represents borders for a table cell
+type TableCellBorders struct {
+	Top    *BorderProperties `xml:"top"`
+	Bottom *BorderProperties `xml:"bottom"`
+	Left   *BorderProperties `xml:"left"`
+	Right  *BorderProperties `xml:"right"`
+}
+
+// MarshalXML implements custom XML marshaling for TableCellBorders
+func (b TableCellBorders) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:tcBorders"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode each border if present
+	if b.Top != nil {
+		if err := e.EncodeElement(b.Top, xml.StartElement{Name: xml.Name{Local: "w:top"}}); err != nil {
+			return err
+		}
+	}
+	if b.Bottom != nil {
+		if err := e.EncodeElement(b.Bottom, xml.StartElement{Name: xml.Name{Local: "w:bottom"}}); err != nil {
+			return err
+		}
+	}
+	if b.Left != nil {
+		if err := e.EncodeElement(b.Left, xml.StartElement{Name: xml.Name{Local: "w:left"}}); err != nil {
+			return err
+		}
+	}
+	if b.Right != nil {
+		if err := e.EncodeElement(b.Right, xml.StartElement{Name: xml.Name{Local: "w:right"}}); err != nil {
+			return err
+		}
+	}
+
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
+}
+
+// BorderProperties represents border styling
+type BorderProperties struct {
+	Val        string `xml:"val,attr,omitempty"`
+	Sz         string `xml:"sz,attr,omitempty"`
+	Space      string `xml:"space,attr,omitempty"`
+	Color      string `xml:"color,attr,omitempty"`
+	ThemeColor string `xml:"themeColor,attr,omitempty"`
+	ThemeShade string `xml:"themeShade,attr,omitempty"`
+}
+
+// MarshalXML implements custom XML marshaling for BorderProperties
+func (b BorderProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Attr = []xml.Attr{}
+
+	if b.Val != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:val"}, Value: b.Val})
+	}
+	if b.Sz != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:sz"}, Value: b.Sz})
+	}
+	if b.Space != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:space"}, Value: b.Space})
+	}
+	if b.Color != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:color"}, Value: b.Color})
+	}
+	if b.ThemeColor != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:themeColor"}, Value: b.ThemeColor})
+	}
+	if b.ThemeShade != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:themeShade"}, Value: b.ThemeShade})
 	}
 
 	// Self-closing element
