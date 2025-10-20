@@ -4,8 +4,6 @@ package stencil
 // All XML-related structures and functions have been moved to pkg/stencil/xml/ for better organization.
 
 import (
-	"io"
-
 	"github.com/benjaminschreck/go-stencil/pkg/stencil/xml"
 )
 
@@ -80,8 +78,3 @@ type (
 var (
 	ParseDocument = xml.ParseDocument
 )
-
-// ParseDocument parses a Word document XML (backward compatibility wrapper)
-func parseDocument(r io.Reader) (*Document, error) {
-	return xml.ParseDocument(r)
-}

@@ -79,9 +79,10 @@ func parseDate(value interface{}) (time.Time, error) {
 }
 
 // translateDateFormat converts Java SimpleDateFormat patterns to Go time format
-func translateDateFormat(javaFormat string, locale string) string {
+func translateDateFormat(javaFormat string, _ string) string {
 	// For now, we'll do a simple translation of common patterns
 	// This is not exhaustive but covers most common cases
+	// Note: locale parameter reserved for future locale-specific format translations
 	
 	format := javaFormat
 	

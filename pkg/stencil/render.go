@@ -388,7 +388,7 @@ func extractTextFromXMLElement(elem XMLElement) string {
 }
 
 // expandOOXMLFragments processes OOXML fragments in a run and returns multiple runs if needed
-func expandOOXMLFragments(run *Run, data TemplateData, ctx *renderContext) ([]Run, error) {
+func expandOOXMLFragments(run *Run, _ TemplateData, ctx *renderContext) ([]Run, error) {
 	content := run.Text.Content
 	
 	// Find all OOXML fragment placeholders
@@ -675,13 +675,14 @@ func RenderTextWithContext(text *Text, data TemplateData, ctx *renderContext) (*
 		default:
 			// For now, other token types are preserved as-is
 			result.WriteString("{{")
-			if token.Type == TokenIf {
+			switch token.Type {
+			case TokenIf:
 				result.WriteString("if ")
-			} else if token.Type == TokenFor {
+			case TokenFor:
 				result.WriteString("for ")
-			} else if token.Type == TokenEnd {
+			case TokenEnd:
 				result.WriteString("end")
-			} else if token.Type == TokenElse {
+			case TokenElse:
 				result.WriteString("else")
 			}
 			result.WriteString(token.Value)

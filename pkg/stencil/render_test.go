@@ -206,7 +206,7 @@ func TestRenderRun(t *testing.T) {
 }
 
 // Helper function to extract text from a rendered document
-func extractText(t *testing.T, doc *Document) string {
+func extractText(_ *testing.T, doc *Document) string {
 	var texts []string
 	if doc.Body != nil {
 		for _, elem := range doc.Body.Elements {
