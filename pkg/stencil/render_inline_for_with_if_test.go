@@ -3,6 +3,8 @@ package stencil
 import (
 	"strings"
 	"testing"
+
+	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
 )
 
 // TestRenderInlineForLoopWithIf tests the specific bug reported by the user:
@@ -30,7 +32,7 @@ func TestRenderInlineForLoopWithIf(t *testing.T) {
 	}
 
 	// Merge consecutive runs (simulates what happens in real rendering)
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 
 	// Check if this is an inline for loop
 	controlType, controlContent := detectControlStructure(para)
@@ -83,7 +85,7 @@ func TestRenderInlineForLoopWithUnless(t *testing.T) {
 		"items": []interface{}{"A", "B", "C"},
 	}
 
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 	controlType, controlContent := detectControlStructure(para)
 
 	if controlType != "inline-for" {
@@ -133,7 +135,7 @@ func TestRenderInlineForLoopWithComplexIf(t *testing.T) {
 		},
 	}
 
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 	controlType, controlContent := detectControlStructure(para)
 
 	if controlType != "inline-for" {
@@ -185,7 +187,7 @@ func TestRenderInlineForLoopWithSuffix(t *testing.T) {
 		},
 	}
 
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 	controlType, controlContent := detectControlStructure(para)
 
 	if controlType != "inline-for" {
@@ -233,7 +235,7 @@ func TestRenderInlineForLoopWithEmptyCollection(t *testing.T) {
 		"salesData": []interface{}{},
 	}
 
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 	controlType, controlContent := detectControlStructure(para)
 
 	if controlType != "inline-for" {

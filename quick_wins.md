@@ -34,20 +34,23 @@ Following Option 2 from REFACTORING_PLAN.md - the recommended quick wins approac
 
 ---
 
-#### Commit 2a: Extract helper functions (run merging) ⏳ PENDING
-**Status**: Not started (ready for new agent with fresh context)
-**Files to create**:
-- [ ] pkg/stencil/render/helpers.go
-  - mergeConsecutiveRuns()
+#### Commit 2a: Extract helper functions (run merging) ✅ COMPLETED
+**Status**: Completed
+**Files created**:
+- [x] pkg/stencil/render/helpers.go (187 lines)
+  - MergeConsecutiveRuns() (exported)
   - mergeConsecutiveRunsWithContent()
   - mergeRunSlice()
 
-**Lines to extract from render_docx.go**: Lines 111-291 (~180 lines)
+**Files updated**:
+- [x] pkg/stencil/render_docx.go (Removed extracted functions, added import)
+- [x] All test files updated to use render.MergeConsecutiveRuns()
 
-**Files to update**:
-- [ ] pkg/stencil/render_docx.go (Remove extracted functions, import render package)
-
-**Expected outcome**: ~180 lines moved to render/helpers.go
+**Outcome**:
+- render_docx.go reduced from ~2136 to 1956 lines (180 lines extracted)
+- 187 lines moved to render/helpers.go
+- All tests passing
+- No import cycles (uses xml package types directly)
 
 ---
 

@@ -3,6 +3,8 @@ package stencil
 import (
 	"fmt"
 	"strings"
+
+	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
 )
 
 
@@ -108,187 +110,6 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 	return result, nil
 }
 
-// mergeConsecutiveRuns merges consecutive runs in a paragraph to handle split template variables
-func mergeConsecutiveRuns(para *Paragraph) {
-	// Handle paragraphs with Content (which can contain hyperlinks)
-	if len(para.Content) > 0 {
-		mergeConsecutiveRunsWithContent(para)
-		return
-	}
-	
-	// Handle legacy paragraphs with only Runs array
-	if len(para.Runs) <= 1 {
-		return
-	}
-
-	var mergedRuns []Run
-	var currentRun *Run
-
-	for i, run := range para.Runs {
-		if i == 0 {
-			// Start with first run
-			newRun := run
-			currentRun = &newRun
-			continue
-		}
-
-		// Check if this run can be merged with the previous one
-		// Only merge if the current run has text AND no break
-		if run.Text != nil && run.Break == nil && currentRun != nil && currentRun.Text != nil {
-			// Merge text content
-			currentRun.Text.Content += run.Text.Content
-		} else {
-			// Save current run and start new one
-			if currentRun != nil {
-				mergedRuns = append(mergedRuns, *currentRun)
-			}
-			
-			// If this run has both break and text, we need to split it
-			if run.Break != nil && run.Text != nil {
-				// First add the break
-				breakRun := Run{
-					Properties: run.Properties,
-					Break:      run.Break,
-				}
-				mergedRuns = append(mergedRuns, breakRun)
-				
-				// Then create a new run with just the text
-				textRun := Run{
-					Properties: run.Properties,
-					Text:       run.Text,
-				}
-				currentRun = &textRun
-			} else {
-				newRun := run
-				currentRun = &newRun
-			}
-		}
-	}
-
-	// Don't forget the last run
-	if currentRun != nil {
-		mergedRuns = append(mergedRuns, *currentRun)
-	}
-
-	para.Runs = mergedRuns
-}
-
-// mergeConsecutiveRunsWithContent merges runs while preserving hyperlink boundaries
-func mergeConsecutiveRunsWithContent(para *Paragraph) {
-	if len(para.Content) == 0 {
-		return
-	}
-	
-	var mergedContent []interface{}
-	var pendingRuns []Run
-	
-	// Helper function to merge pending runs
-	mergePendingRuns := func() {
-		if len(pendingRuns) == 0 {
-			return
-		}
-		
-		merged := mergeRunSlice(pendingRuns)
-		for _, run := range merged {
-			r := run // Create a new variable to avoid aliasing
-			mergedContent = append(mergedContent, &r)
-		}
-		pendingRuns = nil
-	}
-	
-	// Process content elements
-	for _, content := range para.Content {
-		switch c := content.(type) {
-		case *Run:
-			// Accumulate runs outside hyperlinks
-			pendingRuns = append(pendingRuns, *c)
-			
-		case *Hyperlink:
-			// First, merge any pending runs
-			mergePendingRuns()
-			
-			// Process hyperlink runs separately
-			if len(c.Runs) > 1 {
-				mergedHyperlinkRuns := mergeRunSlice(c.Runs)
-				h := *c // Copy hyperlink
-				h.Runs = mergedHyperlinkRuns
-				mergedContent = append(mergedContent, &h)
-			} else {
-				mergedContent = append(mergedContent, c)
-			}
-		}
-	}
-	
-	// Merge any remaining runs
-	mergePendingRuns()
-	
-	// Update paragraph content
-	para.Content = make([]ParagraphContent, len(mergedContent))
-	for i, content := range mergedContent {
-		para.Content[i] = content.(ParagraphContent)
-	}
-	
-	// Also update the legacy Runs array for compatibility
-	para.Runs = nil
-	for _, content := range para.Content {
-		if run, ok := content.(*Run); ok {
-			para.Runs = append(para.Runs, *run)
-		}
-	}
-}
-
-// mergeRunSlice merges a slice of runs
-func mergeRunSlice(runs []Run) []Run {
-	if len(runs) <= 1 {
-		return runs
-	}
-	
-	var merged []Run
-	var current *Run
-	
-	for i, run := range runs {
-		if i == 0 {
-			newRun := run
-			current = &newRun
-			continue
-		}
-		
-		// Only merge text runs without breaks
-		if run.Text != nil && run.Break == nil && current != nil && current.Text != nil {
-			current.Text.Content += run.Text.Content
-		} else {
-			if current != nil {
-				merged = append(merged, *current)
-			}
-			
-			// Handle runs with both break and text
-			if run.Break != nil && run.Text != nil {
-				// First add the break
-				breakRun := Run{
-					Properties: run.Properties,
-					Break:      run.Break,
-				}
-				merged = append(merged, breakRun)
-				
-				// Then create a new run with just the text
-				textRun := Run{
-					Properties: run.Properties,
-					Text:       run.Text,
-				}
-				current = &textRun
-			} else {
-				newRun := run
-				current = &newRun
-			}
-		}
-	}
-	
-	if current != nil {
-		merged = append(merged, *current)
-	}
-	
-	return merged
-}
 
 // RenderBodyWithControlStructures renders a document body handling control structures
 func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
@@ -310,7 +131,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 		switch el := elem.(type) {
 		case *Paragraph:
 			p := *el // Create a copy
-			mergeConsecutiveRuns(&p)
+			render.MergeConsecutiveRuns(&p)
 			body.Elements[i] = &p // Update the element with merged runs
 		case *Table:
 			// Also merge runs in table cells
@@ -319,7 +140,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				for cellIdx, cell := range row.Cells {
 					for paraIdx, para := range cell.Paragraphs {
 						p := para // Create a copy
-						mergeConsecutiveRuns(&p)
+						render.MergeConsecutiveRuns(&p)
 						t.Rows[rowIdx].Cells[cellIdx].Paragraphs[paraIdx] = p
 					}
 				}
@@ -1573,7 +1394,7 @@ func RenderTableCell(cell *TableCell, data TemplateData, ctx *renderContext) (*T
 		// Create a copy of the paragraph and merge consecutive runs
 		// This is necessary because Word often splits template expressions across multiple runs
 		p := para
-		mergeConsecutiveRuns(&p)
+		render.MergeConsecutiveRuns(&p)
 
 		// Check if this paragraph contains an inline for loop
 		controlType, controlContent := detectControlStructure(&p)

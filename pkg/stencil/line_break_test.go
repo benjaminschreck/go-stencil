@@ -3,6 +3,8 @@ package stencil
 import (
 	"strings"
 	"testing"
+
+	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
 )
 
 func TestRenderParagraphWithLineBreaks(t *testing.T) {
@@ -157,7 +159,7 @@ func TestRenderParagraphWithMergedRuns(t *testing.T) {
 	}
 
 	// First merge consecutive runs
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 
 	// Test data
 	data := TemplateData{

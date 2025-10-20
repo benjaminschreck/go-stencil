@@ -3,6 +3,8 @@ package stencil
 import (
 	"strings"
 	"testing"
+
+	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
 )
 
 // TestRenderInlineForLoopWithTypo tests what happens when there's a typo in the variable name
@@ -27,7 +29,7 @@ func TestRenderInlineForLoopWithTypo(t *testing.T) {
 		},
 	}
 
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 	controlType, controlContent := detectControlStructure(para)
 
 	if controlType != "inline-for" {
@@ -78,7 +80,7 @@ func TestRenderInlineForLoopCorrect(t *testing.T) {
 		},
 	}
 
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 	controlType, controlContent := detectControlStructure(para)
 
 	if controlType != "inline-for" {
@@ -124,7 +126,7 @@ func TestHideRowFunctionInSuffix(t *testing.T) {
 		"companies": []interface{}{},
 	}
 
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 	controlType, controlContent := detectControlStructure(para)
 
 	if controlType != "inline-for" {

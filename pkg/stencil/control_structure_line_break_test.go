@@ -3,6 +3,8 @@ package stencil
 import (
 	"strings"
 	"testing"
+
+	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
 )
 
 // TestLineBreakBeforeControlStructure is removed because RenderText doesn't process control structures
@@ -37,7 +39,7 @@ func TestLineBreakInParagraphWithControlStructure(t *testing.T) {
 	}
 
 	// Merge runs
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 
 	data := TemplateData{
 		"age":   21,

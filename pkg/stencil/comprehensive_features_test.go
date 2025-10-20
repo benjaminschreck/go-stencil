@@ -3,6 +3,8 @@ package stencil
 import (
 	"strings"
 	"testing"
+
+	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
 )
 
 func TestComprehensiveFeaturesControlStructure(t *testing.T) {
@@ -47,9 +49,9 @@ func TestComprehensiveFeaturesControlStructure(t *testing.T) {
 	}
 
 	// First merge consecutive runs
-	mergeConsecutiveRuns(para)
-	mergeConsecutiveRuns(para2)
-	mergeConsecutiveRuns(para3)
+	render.MergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para2)
+	render.MergeConsecutiveRuns(para3)
 
 	// Test data
 	data := TemplateData{
