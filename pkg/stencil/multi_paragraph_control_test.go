@@ -3,6 +3,8 @@ package stencil
 import (
 	"strings"
 	"testing"
+
+	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
 )
 
 func TestMultiParagraphControlStructure(t *testing.T) {
@@ -181,7 +183,7 @@ func TestSingleParagraphIfWithLineBreak(t *testing.T) {
 	}
 	
 	// Merge runs
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 	
 	data := TemplateData{
 		"age":   21,

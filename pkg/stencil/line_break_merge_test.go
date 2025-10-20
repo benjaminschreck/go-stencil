@@ -2,6 +2,8 @@ package stencil
 
 import (
 	"testing"
+
+	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
 )
 
 func TestRenderParagraphWithLineBreaksBetweenVariables(t *testing.T) {
@@ -32,7 +34,7 @@ func TestRenderParagraphWithLineBreaksBetweenVariables(t *testing.T) {
 	}
 
 	// First merge consecutive runs to handle split template variables
-	mergeConsecutiveRuns(para)
+	render.MergeConsecutiveRuns(para)
 
 	// Check merged result
 	t.Logf("After merging, paragraph has %d runs", len(para.Runs))
