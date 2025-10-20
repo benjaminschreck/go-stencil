@@ -1463,14 +1463,24 @@ func RenderTableWithControlStructures(table *Table, data TemplateData, ctx *rend
 			i = endIdx + 1
 
 		case "if":
-			// Find matching else/end
-			elseIdx, endIdx, err := findMatchingTableIfEnd(table.Rows, i)
+			// Find matching else/elsif/end
+			endIdx, branches, err := findMatchingTableIfEnd(table.Rows, i)
 			if err != nil {
 				return nil, fmt.Errorf("no matching end for table if: %w", err)
 			}
 
-			// Render if/else
-			renderedRows, err := renderTableIfElse(table.Rows[i:endIdx+1], controlContent, elseIdx-i, data, ctx)
+			// Adjust branch indices to be relative to the slice
+			adjustedBranches := make([]elseBranch, len(branches))
+			for idx, branch := range branches {
+				adjustedBranches[idx] = elseBranch{
+					index:      branch.index - i,
+					branchType: branch.branchType,
+					condition:  branch.condition,
+				}
+			}
+
+			// Render if/elsif/else
+			renderedRows, err := renderTableIfElse(table.Rows[i:endIdx+1], controlContent, adjustedBranches, data, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -1478,21 +1488,31 @@ func RenderTableWithControlStructures(table *Table, data TemplateData, ctx *rend
 			i = endIdx + 1
 
 		case "unless":
-			// Find matching else/end
-			elseIdx, endIdx, err := findMatchingTableIfEnd(table.Rows, i)
+			// Find matching else/elsif/end
+			endIdx, branches, err := findMatchingTableIfEnd(table.Rows, i)
 			if err != nil {
 				return nil, fmt.Errorf("no matching end for table unless: %w", err)
 			}
 
-			// Render unless/else (unless is inverted if)
-			renderedRows, err := renderTableUnlessElse(table.Rows[i:endIdx+1], controlContent, elseIdx-i, data, ctx)
+			// Adjust branch indices to be relative to the slice
+			adjustedBranches := make([]elseBranch, len(branches))
+			for idx, branch := range branches {
+				adjustedBranches[idx] = elseBranch{
+					index:      branch.index - i,
+					branchType: branch.branchType,
+					condition:  branch.condition,
+				}
+			}
+
+			// Render unless/elsif/else (unless is inverted if)
+			renderedRows, err := renderTableUnlessElse(table.Rows[i:endIdx+1], controlContent, adjustedBranches, data, ctx)
 			if err != nil {
 				return nil, err
 			}
 			rendered.Rows = append(rendered.Rows, renderedRows...)
 			i = endIdx + 1
 
-		case "else", "end":
+		case "else", "elsif", "elseif", "elif", "end":
 			// Skip control structure rows - they shouldn't be in output
 			i++
 
@@ -1600,29 +1620,42 @@ func findMatchingTableEnd(rows []TableRow, startIdx int) (int, error) {
 	return -1, fmt.Errorf("no matching end found")
 }
 
-// findMatchingTableIfEnd finds the matching else/end for a table if/unless
-func findMatchingTableIfEnd(rows []TableRow, startIdx int) (int, int, error) {
+// findMatchingTableIfEnd finds the matching else/elsif/end for a table if/unless
+func findMatchingTableIfEnd(rows []TableRow, startIdx int) (endIdx int, branches []elseBranch, error error) {
 	depth := 1
-	elseIdx := -1
+	branches = []elseBranch{}
 
 	for i := startIdx + 1; i < len(rows); i++ {
-		controlType, _ := detectTableRowControlStructure(&rows[i])
+		controlType, condition := detectTableRowControlStructure(&rows[i])
+
+		if depth == 1 {
+			switch controlType {
+			case "elsif", "elseif", "elif":
+				branches = append(branches, elseBranch{
+					index:      i,
+					branchType: "elsif",
+					condition:  condition,
+				})
+			case "else":
+				branches = append(branches, elseBranch{
+					index:      i,
+					branchType: "else",
+					condition:  "",
+				})
+			}
+		}
 
 		switch controlType {
 		case "for", "if", "unless":
 			depth++
-		case "else":
-			if depth == 1 && elseIdx == -1 {
-				elseIdx = i
-			}
 		case "end":
 			depth--
 			if depth == 0 {
-				return elseIdx, i, nil
+				return i, branches, nil
 			}
 		}
 	}
-	return -1, -1, fmt.Errorf("no matching end found")
+	return -1, nil, fmt.Errorf("no matching end found")
 }
 
 // renderTableForLoop renders a for loop in a table
@@ -1685,14 +1718,24 @@ func renderTableForLoop(rows []TableRow, forExpr string, data TemplateData, ctx 
 				i = endIdx + 1
 
 			case "if":
-				// Find matching else/end
-				elseIdx, endIdx, err := findMatchingTableIfEndInSlice(bodyRows, i)
+				// Find matching else/elsif/end
+				endIdx, branches, err := findMatchingTableIfEndInSlice(bodyRows, i)
 				if err != nil {
 					return nil, fmt.Errorf("failed to find matching end for nested if: %w", err)
 				}
 
-				// Render if/else block
-				renderedRows, err := renderTableIfElse(bodyRows[i:endIdx+1], controlContent, elseIdx-i, loopData, ctx)
+				// Adjust branch indices to be relative to the slice
+				adjustedBranches := make([]elseBranch, len(branches))
+				for idx, branch := range branches {
+					adjustedBranches[idx] = elseBranch{
+						index:      branch.index - i,
+						branchType: branch.branchType,
+						condition:  branch.condition,
+					}
+				}
+
+				// Render if/elsif/else block
+				renderedRows, err := renderTableIfElse(bodyRows[i:endIdx+1], controlContent, adjustedBranches, loopData, ctx)
 				if err != nil {
 					return nil, err
 				}
@@ -1700,14 +1743,24 @@ func renderTableForLoop(rows []TableRow, forExpr string, data TemplateData, ctx 
 				i = endIdx + 1
 
 			case "unless":
-				// Find matching else/end
-				elseIdx, endIdx, err := findMatchingTableIfEndInSlice(bodyRows, i)
+				// Find matching else/elsif/end
+				endIdx, branches, err := findMatchingTableIfEndInSlice(bodyRows, i)
 				if err != nil {
 					return nil, fmt.Errorf("failed to find matching end for nested unless: %w", err)
 				}
 
-				// Render unless/else block
-				renderedRows, err := renderTableUnlessElse(bodyRows[i:endIdx+1], controlContent, elseIdx-i, loopData, ctx)
+				// Adjust branch indices to be relative to the slice
+				adjustedBranches := make([]elseBranch, len(branches))
+				for idx, branch := range branches {
+					adjustedBranches[idx] = elseBranch{
+						index:      branch.index - i,
+						branchType: branch.branchType,
+						condition:  branch.condition,
+					}
+				}
+
+				// Render unless/elsif/else block
+				renderedRows, err := renderTableUnlessElse(bodyRows[i:endIdx+1], controlContent, adjustedBranches, loopData, ctx)
 				if err != nil {
 					return nil, err
 				}
@@ -1749,32 +1802,45 @@ func findMatchingTableEndInSlice(rows []TableRow, startIdx int) (int, error) {
 	return -1, fmt.Errorf("no matching end found")
 }
 
-func findMatchingTableIfEndInSlice(rows []TableRow, startIdx int) (int, int, error) {
+func findMatchingTableIfEndInSlice(rows []TableRow, startIdx int) (endIdx int, branches []elseBranch, error error) {
 	depth := 1
-	elseIdx := -1
+	branches = []elseBranch{}
 
 	for i := startIdx + 1; i < len(rows); i++ {
-		controlType, _ := detectTableRowControlStructure(&rows[i])
+		controlType, condition := detectTableRowControlStructure(&rows[i])
+
+		if depth == 1 {
+			switch controlType {
+			case "elsif", "elseif", "elif":
+				branches = append(branches, elseBranch{
+					index:      i,
+					branchType: "elsif",
+					condition:  condition,
+				})
+			case "else":
+				branches = append(branches, elseBranch{
+					index:      i,
+					branchType: "else",
+					condition:  "",
+				})
+			}
+		}
 
 		switch controlType {
 		case "for", "if", "unless":
 			depth++
-		case "else":
-			if depth == 1 && elseIdx == -1 {
-				elseIdx = i
-			}
 		case "end":
 			depth--
 			if depth == 0 {
-				return elseIdx, i, nil
+				return i, branches, nil
 			}
 		}
 	}
-	return -1, -1, fmt.Errorf("no matching end found")
+	return -1, nil, fmt.Errorf("no matching end found")
 }
 
-// renderTableIfElse renders an if/else in a table
-func renderTableIfElse(rows []TableRow, ifExpr string, elseIdx int, data TemplateData, ctx *renderContext) ([]TableRow, error) {
+// renderTableIfElse renders an if/elsif/else in a table
+func renderTableIfElse(rows []TableRow, ifExpr string, branches []elseBranch, data TemplateData, ctx *renderContext) ([]TableRow, error) {
 	// Parse condition
 	cond, err := ParseExpression(ifExpr)
 	if err != nil {
@@ -1791,14 +1857,46 @@ func renderTableIfElse(rows []TableRow, ifExpr string, elseIdx int, data Templat
 
 	if isTruthy(condResult) {
 		// Use if branch
-		if elseIdx > 0 {
-			bodyRows = rows[1:elseIdx]
+		if len(branches) > 0 {
+			bodyRows = rows[1:branches[0].index]
 		} else {
 			bodyRows = rows[1 : len(rows)-1]
 		}
-	} else if elseIdx > 0 {
-		// Use else branch
-		bodyRows = rows[elseIdx+1 : len(rows)-1]
+	} else {
+		// Check elsif branches
+		branchFound := false
+		for i, branch := range branches {
+			if branch.branchType == "elsif" {
+				// Evaluate elsif condition
+				elsifCond, err := ParseExpression(branch.condition)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse elsif condition: %w", err)
+				}
+
+				elsifResult, err := elsifCond.Evaluate(data)
+				if err != nil {
+					return nil, fmt.Errorf("failed to evaluate elsif condition: %w", err)
+				}
+
+				if isTruthy(elsifResult) {
+					// Use this elsif branch
+					var branchEnd int
+					if i+1 < len(branches) {
+						branchEnd = branches[i+1].index
+					} else {
+						branchEnd = len(rows) - 1
+					}
+					bodyRows = rows[branch.index+1 : branchEnd]
+					branchFound = true
+					break
+				}
+			} else if branch.branchType == "else" && !branchFound {
+				// Use else branch
+				bodyRows = rows[branch.index+1 : len(rows)-1]
+				branchFound = true
+				break
+			}
+		}
 	}
 
 	// Render selected rows, handling nested control structures
@@ -1825,14 +1923,49 @@ func renderTableIfElse(rows []TableRow, ifExpr string, elseIdx int, data Templat
 			i = endIdx + 1
 
 		case "if":
-			// Find matching else/end for nested if
-			nestedElseIdx, endIdx, err := findMatchingTableIfEndInSlice(bodyRows, i)
+			// Find matching else/elsif/end for nested if
+			endIdx, nestedBranches, err := findMatchingTableIfEndInSlice(bodyRows, i)
 			if err != nil {
 				return nil, fmt.Errorf("failed to find matching end for nested if: %w", err)
 			}
 
-			// Render nested if/else block
-			renderedRows, err := renderTableIfElse(bodyRows[i:endIdx+1], controlContent, nestedElseIdx-i, data, ctx)
+			// Adjust branch indices to be relative to the slice
+			adjustedBranches := make([]elseBranch, len(nestedBranches))
+			for idx, branch := range nestedBranches {
+				adjustedBranches[idx] = elseBranch{
+					index:      branch.index - i,
+					branchType: branch.branchType,
+					condition:  branch.condition,
+				}
+			}
+
+			// Render nested if/elsif/else block
+			renderedRows, err := renderTableIfElse(bodyRows[i:endIdx+1], controlContent, adjustedBranches, data, ctx)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, renderedRows...)
+			i = endIdx + 1
+
+		case "unless":
+			// Find matching else/elsif/end for nested unless
+			endIdx, nestedBranches, err := findMatchingTableIfEndInSlice(bodyRows, i)
+			if err != nil {
+				return nil, fmt.Errorf("failed to find matching end for nested unless: %w", err)
+			}
+
+			// Adjust branch indices to be relative to the slice
+			adjustedBranches := make([]elseBranch, len(nestedBranches))
+			for idx, branch := range nestedBranches {
+				adjustedBranches[idx] = elseBranch{
+					index:      branch.index - i,
+					branchType: branch.branchType,
+					condition:  branch.condition,
+				}
+			}
+
+			// Render nested unless/elsif/else block
+			renderedRows, err := renderTableUnlessElse(bodyRows[i:endIdx+1], controlContent, adjustedBranches, data, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -1853,8 +1986,8 @@ func renderTableIfElse(rows []TableRow, ifExpr string, elseIdx int, data Templat
 	return result, nil
 }
 
-// renderTableUnlessElse renders an unless/else in a table (inverted if)
-func renderTableUnlessElse(rows []TableRow, unlessExpr string, elseIdx int, data TemplateData, ctx *renderContext) ([]TableRow, error) {
+// renderTableUnlessElse renders an unless/elsif/else in a table (inverted if)
+func renderTableUnlessElse(rows []TableRow, unlessExpr string, branches []elseBranch, data TemplateData, ctx *renderContext) ([]TableRow, error) {
 	// Parse condition
 	cond, err := ParseExpression(unlessExpr)
 	if err != nil {
@@ -1872,14 +2005,46 @@ func renderTableUnlessElse(rows []TableRow, unlessExpr string, elseIdx int, data
 	// Unless is inverted: render unless branch if condition is falsy
 	if !isTruthy(condResult) {
 		// Use unless branch
-		if elseIdx > 0 {
-			bodyRows = rows[1:elseIdx]
+		if len(branches) > 0 {
+			bodyRows = rows[1:branches[0].index]
 		} else {
 			bodyRows = rows[1 : len(rows)-1]
 		}
-	} else if elseIdx > 0 {
-		// Use else branch
-		bodyRows = rows[elseIdx+1 : len(rows)-1]
+	} else {
+		// Check elsif branches (evaluated when unless condition is true)
+		branchFound := false
+		for i, branch := range branches {
+			if branch.branchType == "elsif" {
+				// Evaluate elsif condition
+				elsifCond, err := ParseExpression(branch.condition)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse elsif condition: %w", err)
+				}
+
+				elsifResult, err := elsifCond.Evaluate(data)
+				if err != nil {
+					return nil, fmt.Errorf("failed to evaluate elsif condition: %w", err)
+				}
+
+				if isTruthy(elsifResult) {
+					// Use this elsif branch
+					var branchEnd int
+					if i+1 < len(branches) {
+						branchEnd = branches[i+1].index
+					} else {
+						branchEnd = len(rows) - 1
+					}
+					bodyRows = rows[branch.index+1 : branchEnd]
+					branchFound = true
+					break
+				}
+			} else if branch.branchType == "else" && !branchFound {
+				// Use else branch
+				bodyRows = rows[branch.index+1 : len(rows)-1]
+				branchFound = true
+				break
+			}
+		}
 	}
 
 	// Render selected rows, handling nested control structures
@@ -1906,14 +2071,24 @@ func renderTableUnlessElse(rows []TableRow, unlessExpr string, elseIdx int, data
 			i = endIdx + 1
 
 		case "if":
-			// Find matching else/end for nested if
-			nestedElseIdx, endIdx, err := findMatchingTableIfEndInSlice(bodyRows, i)
+			// Find matching else/elsif/end for nested if
+			endIdx, nestedBranches, err := findMatchingTableIfEndInSlice(bodyRows, i)
 			if err != nil {
 				return nil, fmt.Errorf("failed to find matching end for nested if: %w", err)
 			}
 
-			// Render nested if/else block
-			renderedRows, err := renderTableIfElse(bodyRows[i:endIdx+1], controlContent, nestedElseIdx-i, data, ctx)
+			// Adjust branch indices to be relative to the slice
+			adjustedBranches := make([]elseBranch, len(nestedBranches))
+			for idx, branch := range nestedBranches {
+				adjustedBranches[idx] = elseBranch{
+					index:      branch.index - i,
+					branchType: branch.branchType,
+					condition:  branch.condition,
+				}
+			}
+
+			// Render nested if/elsif/else block
+			renderedRows, err := renderTableIfElse(bodyRows[i:endIdx+1], controlContent, adjustedBranches, data, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -1921,14 +2096,24 @@ func renderTableUnlessElse(rows []TableRow, unlessExpr string, elseIdx int, data
 			i = endIdx + 1
 
 		case "unless":
-			// Find matching else/end for nested unless
-			nestedElseIdx, endIdx, err := findMatchingTableIfEndInSlice(bodyRows, i)
+			// Find matching else/elsif/end for nested unless
+			endIdx, nestedBranches, err := findMatchingTableIfEndInSlice(bodyRows, i)
 			if err != nil {
 				return nil, fmt.Errorf("failed to find matching end for nested unless: %w", err)
 			}
 
-			// Render nested unless/else block
-			renderedRows, err := renderTableUnlessElse(bodyRows[i:endIdx+1], controlContent, nestedElseIdx-i, data, ctx)
+			// Adjust branch indices to be relative to the slice
+			adjustedBranches := make([]elseBranch, len(nestedBranches))
+			for idx, branch := range nestedBranches {
+				adjustedBranches[idx] = elseBranch{
+					index:      branch.index - i,
+					branchType: branch.branchType,
+					condition:  branch.condition,
+				}
+			}
+
+			// Render nested unless/elsif/else block
+			renderedRows, err := renderTableUnlessElse(bodyRows[i:endIdx+1], controlContent, adjustedBranches, data, ctx)
 			if err != nil {
 				return nil, err
 			}
