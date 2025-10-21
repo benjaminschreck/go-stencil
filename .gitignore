@@ -44,3 +44,4 @@ Thumbs.db
 # Production files
 examples/advanced/production_legal.docx
 examples/advanced/output/production_legal_output.docx
+examples/advanced/fragments/fragmentWithImage.docx
