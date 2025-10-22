@@ -10,6 +10,13 @@ import (
 	"sync"
 )
 
+const (
+	// ID ranges for relationship management
+	MainTemplateIDRange  = 999 // Main template uses rId1 - rId999
+	FragmentIDRangeSize  = 100 // Each fragment gets 100 IDs
+	FragmentIDRangeStart = 1000 // Fragments start at rId1000
+)
+
 // template represents a parsed template document (internal use)
 type template struct {
 	docxReader *DocxReader
@@ -22,11 +29,13 @@ type template struct {
 
 // fragment represents a reusable template fragment (internal use)
 type fragment struct {
-	name     string
-	content  string
-	parsed   *Document
-	isDocx   bool
-	docxData []byte
+	name          string
+	content       string
+	parsed        *Document
+	isDocx        bool
+	docxData      []byte
+	mediaFiles    map[string][]byte // filename -> content
+	relationships []Relationship    // from word/_rels/document.xml.rels
 }
 
 // renderContext holds the context during rendering (internal use)
@@ -36,6 +45,13 @@ type renderContext struct {
 	fragmentStack  []string               // Track fragment inclusion stack for circular reference detection
 	renderDepth    int                    // Track render depth to prevent excessive nesting
 	ooxmlFragments map[string]interface{} // Store OOXML fragments for later processing
+
+	// Fragment resource tracking
+	fragmentMedia          map[string][]byte // remapped filename -> content
+	fragmentRelationships  []Relationship    // relationships to add
+	fragmentIDAllocations  map[string]int    // fragment name -> allocated range start
+	nextFragmentIDRange    int               // next available range start
+	fragmentResourcesAdded map[string]bool   // fragment name -> already added
 }
 
 // PreparedTemplate represents a compiled template ready for rendering.
@@ -140,11 +156,16 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 
 	// Create render context
 	renderCtx := &renderContext{
-		linkMarkers:    make(map[string]*LinkReplacementMarker),
-		fragments:      pt.template.fragments,
-		fragmentStack:  make([]string, 0),
-		renderDepth:    0,
-		ooxmlFragments: make(map[string]interface{}),
+		linkMarkers:            make(map[string]*LinkReplacementMarker),
+		fragments:              pt.template.fragments,
+		fragmentStack:          make([]string, 0),
+		renderDepth:            0,
+		ooxmlFragments:         make(map[string]interface{}),
+		fragmentMedia:          make(map[string][]byte),
+		fragmentRelationships:  make([]Relationship, 0),
+		fragmentIDAllocations:  make(map[string]int),
+		nextFragmentIDRange:    FragmentIDRangeStart,
+		fragmentResourcesAdded: make(map[string]bool),
 	}
 
 	// First pass: render the document with variable substitution
@@ -171,9 +192,11 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		return nil, NewDocumentError("marshal", "rendered document", err)
 	}
 
-	// Process link replacements if any
+	// Process link replacements and fragment relationships
 	var updatedRelationships []Relationship
-	if len(renderCtx.linkMarkers) > 0 {
+	needsRelationshipUpdate := len(renderCtx.linkMarkers) > 0 || len(renderCtx.fragmentRelationships) > 0
+
+	if needsRelationshipUpdate {
 		// Get current relationships
 		relsXML, err := pt.template.docxReader.GetRelationshipsXML()
 		if err != nil {
@@ -181,10 +204,19 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		}
 		currentRels := parseRelationships([]byte(relsXML))
 
-		// Process link replacements
-		renderedXML, updatedRelationships, err = processLinkReplacements(renderedXML, renderCtx.linkMarkers, currentRels)
-		if err != nil {
-			return nil, fmt.Errorf("failed to process link replacements: %w", err)
+		// Process link replacements if any
+		if len(renderCtx.linkMarkers) > 0 {
+			renderedXML, updatedRelationships, err = processLinkReplacements(renderedXML, renderCtx.linkMarkers, currentRels)
+			if err != nil {
+				return nil, fmt.Errorf("failed to process link replacements: %w", err)
+			}
+		} else {
+			updatedRelationships = currentRels
+		}
+
+		// Add fragment relationships
+		if len(renderCtx.fragmentRelationships) > 0 {
+			updatedRelationships = append(updatedRelationships, renderCtx.fragmentRelationships...)
 		}
 	}
 
@@ -212,21 +244,29 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
 		} else if file.Name == "word/_rels/document.xml.rels" && len(updatedRelationships) > 0 {
-			// Update relationships if we have link replacements
-			output, err := xml.MarshalIndent(&Relationships{
+			// Update relationships if we have link replacements or fragment relationships
+			// Use Marshal (not MarshalIndent) to produce compact XML like the original
+			output, err := xml.Marshal(&Relationships{
 				Namespace:    "http://schemas.openxmlformats.org/package/2006/relationships",
 				Relationship: updatedRelationships,
-			}, "", "  ")
+			})
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal relationships: %w", err)
 			}
-			rels := output
 
 			fw, err := w.Create(file.Name)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create %s: %w", file.Name, err)
 			}
-			_, err = fw.Write(rels)
+
+			// Write XML header with standalone="yes" (required by Word)
+			_, err = fw.Write([]byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n"))
+			if err != nil {
+				return nil, fmt.Errorf("failed to write XML header to %s: %w", file.Name, err)
+			}
+
+			// Write relationships XML
+			_, err = fw.Write(output)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
@@ -247,6 +287,18 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to copy %s: %w", file.Name, err)
 			}
+		}
+	}
+
+	// Add fragment media files
+	for filename, content := range renderCtx.fragmentMedia {
+		fw, err := w.Create("word/media/" + filename)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create fragment media file %s: %w", filename, err)
+		}
+		_, err = fw.Write(content)
+		if err != nil {
+			return nil, fmt.Errorf("failed to write fragment media file %s: %w", filename, err)
 		}
 	}
 
@@ -355,11 +407,66 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 		return fmt.Errorf("failed to parse fragment document: %w", err)
 	}
 
+	// Extract media files and relationships from fragment ZIP
+	zipReader, err := zip.NewReader(bytes.NewReader(docxBytes), int64(len(docxBytes)))
+	if err != nil {
+		return fmt.Errorf("failed to read fragment as ZIP: %w", err)
+	}
+
+	// Extract media files
+	mediaFiles := make(map[string][]byte)
+	for _, file := range zipReader.File {
+		if strings.HasPrefix(file.Name, "word/media/") {
+			rc, err := file.Open()
+			if err != nil {
+				return fmt.Errorf("failed to open media file %s: %w", file.Name, err)
+			}
+
+			content, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				return fmt.Errorf("failed to read media file %s: %w", file.Name, err)
+			}
+
+			// Store with path relative to word/ (e.g., "media/image1.png")
+			relativePath := strings.TrimPrefix(file.Name, "word/")
+			mediaFiles[relativePath] = content
+		}
+	}
+
+	// Extract relationships
+	var relationships []Relationship
+	for _, file := range zipReader.File {
+		if file.Name == "word/_rels/document.xml.rels" {
+			rc, err := file.Open()
+			if err != nil {
+				return fmt.Errorf("failed to open relationships: %w", err)
+			}
+
+			relsData, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				return fmt.Errorf("failed to read relationships: %w", err)
+			}
+
+			var rels Relationships
+			err = xml.Unmarshal(relsData, &rels)
+			if err != nil {
+				return fmt.Errorf("failed to parse relationships: %w", err)
+			}
+
+			relationships = rels.Relationship
+			break
+		}
+	}
+
 	frag := &fragment{
-		name:     name,
-		parsed:   doc,
-		isDocx:   true,
-		docxData: docxBytes,
+		name:          name,
+		parsed:        doc,
+		isDocx:        true,
+		docxData:      docxBytes,
+		mediaFiles:    mediaFiles,
+		relationships: relationships,
 	}
 
 	pt.template.fragments[name] = frag
