@@ -2,6 +2,7 @@ package stencil
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
@@ -468,13 +469,87 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 						return nil, fmt.Errorf("maximum render depth exceeded")
 					}
 
-					// Render the fragment body with the current data context
+					// Render the fragment body first
 					renderedBody, err := RenderBodyWithControlStructures(frag.parsed.Body, data, ctx)
 					if err != nil {
 						return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
 					}
 
-					// Append the rendered fragment elements
+					// Handle fragment resources (media files and relationships) AFTER rendering
+					if frag.isDocx && len(frag.relationships) > 0 {
+						// Allocate ID range for this fragment (if not already allocated)
+						rangeStart, exists := ctx.fragmentIDAllocations[fragmentName]
+						if !exists {
+							rangeStart = ctx.nextFragmentIDRange
+							ctx.fragmentIDAllocations[fragmentName] = rangeStart
+							ctx.nextFragmentIDRange += FragmentIDRangeSize
+						}
+
+						// Add fragment resources only once
+						if !ctx.fragmentResourcesAdded[fragmentName] {
+							imageCounter := 1
+
+							for _, rel := range frag.relationships {
+								// Only process media relationships (images, videos, etc.)
+								// Skip other relationships (headers, footers, styles, etc.) as they're not part of the fragment content
+								if !isMediaRelationship(rel) {
+									continue
+								}
+
+								// Extract ID number from rId6 → 6
+								idNum, err := extractRelationshipNumber(rel.ID)
+								if err != nil {
+									return nil, fmt.Errorf("invalid relationship ID %s in fragment %s: %w", rel.ID, fragmentName, err)
+								}
+
+								// Check if ID fits in allocated range
+								if idNum >= FragmentIDRangeSize {
+									return nil, fmt.Errorf("fragment %s relationship ID %s exceeds range size %d",
+										fragmentName, rel.ID, FragmentIDRangeSize)
+								}
+
+								// Create new relationship with offset ID
+								newID := fmt.Sprintf("rId%d", rangeStart+idNum)
+								newTarget := renameMediaPath(rel.Target, fragmentName, imageCounter)
+
+								// Copy media file with new name
+								if mediaContent, ok := frag.mediaFiles[rel.Target]; ok {
+									newFilename := filepath.Base(newTarget)
+									ctx.fragmentMedia[newFilename] = mediaContent
+								}
+
+								newRel := Relationship{
+									ID:     newID,
+									Type:   rel.Type,
+									Target: newTarget,
+								}
+
+								ctx.fragmentRelationships = append(ctx.fragmentRelationships, newRel)
+								imageCounter++
+							}
+
+							// Mark this fragment's resources as added
+							ctx.fragmentResourcesAdded[fragmentName] = true
+						}
+
+						// Build ID mapping for XML updates (always needed, even on second inclusion)
+						// Only remap media relationship IDs
+						idMap := make(map[string]string)
+						for _, rel := range frag.relationships {
+							if !isMediaRelationship(rel) {
+								continue
+							}
+							idNum, _ := extractRelationshipNumber(rel.ID)
+							newID := fmt.Sprintf("rId%d", rangeStart+idNum)
+							idMap[rel.ID] = newID
+						}
+
+						// Update relationship IDs in the rendered body
+						tempDoc := &Document{Body: renderedBody}
+						updateDocumentRelationshipIDs(tempDoc, idMap)
+					}
+
+					// Append the rendered (and ID-updated) fragment elements
 					rendered.Elements = append(rendered.Elements, renderedBody.Elements...)
 				}
 				i++
