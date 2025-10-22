@@ -601,6 +601,16 @@ func productionExample(engine *stencil.Engine) {
 	}
 	defer tmpl.Close()
 
+	//read production_header.docx from fragments folder
+	headerBytes, err := os.ReadFile("fragments/production_header.docx")
+	if err != nil {
+		log.Fatalf("Failed to read production header: %v", err)
+	}
+	err = tmpl.AddFragmentFromBytes("production_header", headerBytes)
+	if err != nil {
+		log.Fatalf("Failed to add production header: %v", err)
+	}
+
 	// The template contains a {{customText}} variable that can be replaced
 	// with any custom text or clause
 	data := stencil.TemplateData{
