@@ -4,6 +4,7 @@
 package stencil
 
 import (
+	"archive/zip"
 	"bytes"
 	"fmt"
 	"io"
@@ -118,14 +119,31 @@ func (t *TestTemplate) AddFragmentFromBytes(name string, docxBytes []byte) error
 	if err != nil {
 		return fmt.Errorf("failed to parse fragment document: %w", err)
 	}
-	
-	frag := &fragment{
-		name:     name,
-		parsed:   doc,
-		isDocx:   true,
-		docxData: docxBytes,
+
+	// Extract styles.xml from fragment if it exists
+	var stylesXML []byte
+	zipReader, err := zip.NewReader(bytes.NewReader(docxBytes), int64(len(docxBytes)))
+	if err == nil {
+		for _, file := range zipReader.File {
+			if file.Name == "word/styles.xml" {
+				rc, _ := file.Open()
+				if rc != nil {
+					stylesXML, _ = io.ReadAll(rc)
+					rc.Close()
+				}
+				break
+			}
+		}
 	}
-	
+
+	frag := &fragment{
+		name:      name,
+		parsed:    doc,
+		isDocx:    true,
+		docxData:  docxBytes,
+		stylesXML: stylesXML,
+	}
+
 	t.fragments[name] = frag
 	return nil
 }
