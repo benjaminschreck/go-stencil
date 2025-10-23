@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -231,6 +232,10 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		return nil, fmt.Errorf("failed to read source zip: %w", err)
 	}
 
+	// Track if we need to update Content Types for fragment media
+	var contentTypes *ContentTypes
+	hasFragmentMedia := len(renderCtx.fragmentMedia) > 0
+
 	for _, file := range zipReader.File {
 		// Special handling for document.xml
 		if file.Name == "word/document.xml" {
@@ -270,6 +275,25 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
+		} else if file.Name == "[Content_Types].xml" && hasFragmentMedia {
+			// Parse Content Types to potentially update it
+			fr, err := file.Open()
+			if err != nil {
+				return nil, fmt.Errorf("failed to open %s: %w", file.Name, err)
+			}
+			ctContent, err := io.ReadAll(fr)
+			fr.Close()
+			if err != nil {
+				return nil, fmt.Errorf("failed to read %s: %w", file.Name, err)
+			}
+
+			contentTypes = &ContentTypes{}
+			err = xml.Unmarshal(ctContent, contentTypes)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse %s: %w", file.Name, err)
+			}
+
+			// We'll write this later after ensuring PNG is registered
 		} else {
 			// Copy other files as-is
 			fw, err := w.Create(file.Name)
@@ -299,6 +323,79 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		_, err = fw.Write(content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write fragment media file %s: %w", filename, err)
+		}
+	}
+
+	// Write updated Content Types if we added fragment media
+	if contentTypes != nil {
+		// Collect all extensions from fragment media
+		mediaExtensions := make(map[string]bool)
+		for filename := range renderCtx.fragmentMedia {
+			ext := strings.TrimPrefix(filepath.Ext(filename), ".")
+			if ext != "" {
+				mediaExtensions[strings.ToLower(ext)] = true
+			}
+		}
+
+		// Build map of already registered extensions
+		registeredExtensions := make(map[string]bool)
+		for _, def := range contentTypes.Defaults {
+			registeredExtensions[strings.ToLower(def.Extension)] = true
+		}
+
+		// Add missing extensions with their content types
+		extensionContentTypes := map[string]string{
+			"png":  "image/png",
+			"jpg":  "image/jpeg",
+			"jpeg": "image/jpeg",
+			"gif":  "image/gif",
+			"bmp":  "image/bmp",
+			"tiff": "image/tiff",
+			"tif":  "image/tiff",
+			"svg":  "image/svg+xml",
+			"webp": "image/webp",
+			"emf":  "image/x-emf",
+			"wmf":  "image/x-wmf",
+		}
+
+		for ext := range mediaExtensions {
+			if !registeredExtensions[ext] {
+				contentType, ok := extensionContentTypes[ext]
+				if !ok {
+					// Default to generic image type for unknown extensions
+					contentType = "image/" + ext
+				}
+				contentTypes.Defaults = append(contentTypes.Defaults, ContentTypeDefault{
+					Extension:   ext,
+					ContentType: contentType,
+				})
+			}
+		}
+
+		// Set namespace if not present
+		if contentTypes.Namespace == "" {
+			contentTypes.Namespace = "http://schemas.openxmlformats.org/package/2006/content-types"
+		}
+
+		// Marshal and write Content Types
+		output, err := xml.Marshal(contentTypes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal Content Types: %w", err)
+		}
+
+		fw, err := w.Create("[Content_Types].xml")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create [Content_Types].xml: %w", err)
+		}
+
+		_, err = fw.Write([]byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n"))
+		if err != nil {
+			return nil, fmt.Errorf("failed to write XML header to [Content_Types].xml: %w", err)
+		}
+
+		_, err = fw.Write(output)
+		if err != nil {
+			return nil, fmt.Errorf("failed to write [Content_Types].xml: %w", err)
 		}
 	}
 
