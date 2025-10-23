@@ -499,9 +499,10 @@ type GridSpan struct {
 
 // Shading represents cell or paragraph shading
 type Shading struct {
-	Val   string `xml:"val,attr,omitempty"`
-	Color string `xml:"color,attr,omitempty"`
-	Fill  string `xml:"fill,attr,omitempty"`
+	Val       string `xml:"val,attr,omitempty"`
+	Color     string `xml:"color,attr,omitempty"`
+	Fill      string `xml:"fill,attr,omitempty"`
+	ThemeFill string `xml:"themeFill,attr,omitempty"`
 }
 
 // MarshalXML implements custom XML marshaling for Shading
@@ -517,6 +518,9 @@ func (s Shading) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	}
 	if s.Fill != "" {
 		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:fill"}, Value: s.Fill})
+	}
+	if s.ThemeFill != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:themeFill"}, Value: s.ThemeFill})
 	}
 
 	// Self-closing element
