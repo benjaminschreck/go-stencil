@@ -37,6 +37,26 @@ type Relationships struct {
 	Relationship []Relationship `xml:"Relationship"`
 }
 
+// ContentTypes represents the [Content_Types].xml file
+type ContentTypes struct {
+	XMLName   xml.Name            `xml:"Types"`
+	Namespace string              `xml:"xmlns,attr"`
+	Defaults  []ContentTypeDefault `xml:"Default"`
+	Overrides []ContentTypeOverride `xml:"Override"`
+}
+
+// ContentTypeDefault represents a default content type mapping by extension
+type ContentTypeDefault struct {
+	Extension   string `xml:"Extension,attr"`
+	ContentType string `xml:"ContentType,attr"`
+}
+
+// ContentTypeOverride represents a content type override for a specific part
+type ContentTypeOverride struct {
+	PartName    string `xml:"PartName,attr"`
+	ContentType string `xml:"ContentType,attr"`
+}
+
 // NewDocxReader creates a new DOCX reader
 func NewDocxReader(r io.ReaderAt, size int64) (*DocxReader, error) {
 	zipReader, err := zip.NewReader(r, size)
