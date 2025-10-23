@@ -37,6 +37,7 @@ type fragment struct {
 	docxData      []byte
 	mediaFiles    map[string][]byte // filename -> content
 	relationships []Relationship    // from word/_rels/document.xml.rels
+	stylesXML     []byte            // from word/styles.xml
 }
 
 // renderContext holds the context during rendering (internal use)
@@ -272,6 +273,45 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 
 			// Write relationships XML
 			_, err = fw.Write(output)
+			if err != nil {
+				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
+			}
+		} else if file.Name == "word/styles.xml" {
+			// Merge styles from fragments
+			fr, err := file.Open()
+			if err != nil {
+				return nil, fmt.Errorf("failed to open %s: %w", file.Name, err)
+			}
+			mainStyles, err := io.ReadAll(fr)
+			fr.Close()
+			if err != nil {
+				return nil, fmt.Errorf("failed to read %s: %w", file.Name, err)
+			}
+
+			// Collect fragment styles
+			var fragmentStyles [][]byte
+			for _, frag := range pt.template.fragments {
+				if frag.isDocx && len(frag.stylesXML) > 0 {
+					fragmentStyles = append(fragmentStyles, frag.stylesXML)
+				}
+			}
+
+			// Merge styles if we have fragments with styles
+			mergedStyles := mainStyles
+			if len(fragmentStyles) > 0 {
+				mergedStyles, err = mergeStyles(mainStyles, fragmentStyles...)
+				if err != nil {
+					// If merge fails, use original styles
+					mergedStyles = mainStyles
+				}
+			}
+
+			// Write merged styles
+			fw, err := w.Create(file.Name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create %s: %w", file.Name, err)
+			}
+			_, err = fw.Write(mergedStyles)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
@@ -531,8 +571,9 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 		}
 	}
 
-	// Extract relationships
+	// Extract relationships and styles
 	var relationships []Relationship
+	var stylesXML []byte
 	for _, file := range zipReader.File {
 		if file.Name == "word/_rels/document.xml.rels" {
 			rc, err := file.Open()
@@ -553,7 +594,17 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 			}
 
 			relationships = rels.Relationship
-			break
+		} else if file.Name == "word/styles.xml" {
+			rc, err := file.Open()
+			if err != nil {
+				continue // styles.xml is optional
+			}
+
+			stylesXML, err = io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				stylesXML = nil
+			}
 		}
 	}
 
@@ -564,6 +615,7 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 		docxData:      docxBytes,
 		mediaFiles:    mediaFiles,
 		relationships: relationships,
+		stylesXML:     stylesXML,
 	}
 
 	pt.template.fragments[name] = frag
