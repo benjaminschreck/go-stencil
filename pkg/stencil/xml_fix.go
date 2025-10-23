@@ -215,6 +215,8 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	xmlStr = strings.ReplaceAll(xmlStr, "</tblStyle>", `</w:tblStyle>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<tcW ", `<w:tcW `)
 	xmlStr = strings.ReplaceAll(xmlStr, "</tcW>", `</w:tcW>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<shd ", `<w:shd `)
+	xmlStr = strings.ReplaceAll(xmlStr, "</shd>", `</w:shd>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<gridCol ", `<w:gridCol `)
 	xmlStr = strings.ReplaceAll(xmlStr, "</gridCol>", `</w:gridCol>`)
 	
@@ -234,6 +236,9 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	xmlStr = strings.ReplaceAll(xmlStr, ` ascii="`, ` w:ascii="`)
 	xmlStr = strings.ReplaceAll(xmlStr, ` before="`, ` w:before="`)
 	xmlStr = strings.ReplaceAll(xmlStr, ` after="`, ` w:after="`)
+	xmlStr = strings.ReplaceAll(xmlStr, ` color="`, ` w:color="`)
+	xmlStr = strings.ReplaceAll(xmlStr, ` fill="`, ` w:fill="`)
+	xmlStr = strings.ReplaceAll(xmlStr, ` themeFill="`, ` w:themeFill="`)
 
 	// Now replace markers with actual raw XML (AFTER attribute fixing)
 	// IMPORTANT: Raw XML elements (like drawings) must be siblings of <w:t>, not children
