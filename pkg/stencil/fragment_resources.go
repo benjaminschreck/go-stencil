@@ -3,7 +3,7 @@ package stencil
 import (
 	"encoding/xml"
 	"fmt"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -25,11 +25,12 @@ func extractRelationshipNumber(rId string) (int, error) {
 
 // renameMediaPath renames a media path to avoid conflicts
 // Example: "media/image1.png" + "header" + 1 -> "media/image_header_1.png"
+// Note: Always use forward slashes for DOCX internal paths (ZIP format requirement)
 func renameMediaPath(originalPath, fragmentName string, counter int) string {
-	dir := filepath.Dir(originalPath)
-	ext := filepath.Ext(originalPath)
+	dir := path.Dir(originalPath)
+	ext := path.Ext(originalPath)
 	newName := fmt.Sprintf("image_%s_%d%s", fragmentName, counter, ext)
-	return filepath.Join(dir, newName)
+	return path.Join(dir, newName)
 }
 
 // isMediaRelationship checks if a relationship is for media (images, video, etc.)
