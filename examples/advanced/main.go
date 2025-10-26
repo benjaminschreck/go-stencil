@@ -123,6 +123,10 @@ func main() {
 	// Example 8: Production example with German legal document
 	fmt.Println("\n=== Example 8: Production Example (German Legal Document) ===")
 	productionExample(engine)
+
+	// Example 9: Nested fragments showcase
+	fmt.Println("\n=== Example 9: Nested Fragments Showcase ===")
+	nestedFragmentsExample(engine)
 }
 
 func basicExample(engine *stencil.Engine) {
@@ -627,4 +631,242 @@ Additional paragraphs are preserved with proper formatting.`,
 	}
 
 	saveOutput(output, "output/production_legal_output.docx")
+}
+
+func nestedFragmentsExample(engine *stencil.Engine) {
+	// This example demonstrates nested fragments with complex data structures
+
+	// Try to load the DOCX template, if it doesn't exist, inform the user
+	tmpl, err := engine.PrepareFile("comprehensive_features_with_fragments.docx")
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	defer tmpl.Close()
+
+	fragmentFiles := []string{"fragment1.docx", "fragment2.docx", "fragment3.docx"}
+	for _, fragFile := range fragmentFiles {
+		fragPath := filepath.Join("fragments", fragFile)
+		fragBytes, err := os.ReadFile(fragPath)
+		if err != nil {
+			fmt.Printf("Warning: Could not read %s : %v\n", fragFile, err)
+			continue
+		}
+
+		fragName := strings.TrimSuffix(fragFile, ".docx")
+		err = tmpl.AddFragmentFromBytes(fragName, fragBytes)
+		if err != nil {
+			fmt.Printf("Warning: Could not add fragment %s: %v\n", fragName, err)
+			continue
+		}
+		fmt.Printf("Added nested fragment: %s\n", fragName)
+	}
+
+	// Create comprehensive data that will be used by all nested fragments
+	data := stencil.TemplateData{
+		// Fragment 1 (Company Header) data
+		"showSales":          true,
+		"showSupport":        true,
+		"documentId":         "DOC-2025-001",
+		"version":            "1.0",
+		"classification":     "confidential",
+		"isConfidential":     true,
+		"includeSubFragment": true, // This will cause fragment1 to include fragment2
+
+		// Fragment 2 (Product Catalog) data
+		"quarter": "Q1",
+		"year":    2025,
+		"products": []map[string]interface{}{
+			{
+				"code":        "PROD-001",
+				"name":        "Pro Widget",
+				"category":    "electronics",
+				"price":       299.99,
+				"stock":       50,
+				"description": "High-performance widget with advanced features",
+				"features": []string{
+					"<b>Dual-core processor</b>",
+					"<i>Energy efficient</i>",
+					"<u>2-year warranty</u>",
+				},
+				"hasDiscount":     true,
+				"discountPercent": 15,
+				"salePrice":       254.99,
+			},
+			{
+				"code":         "PROD-002",
+				"name":         "Elite Gadget",
+				"category":     "accessories",
+				"price":        149.99,
+				"stock":        0,
+				"description":  "Premium gadget for professionals",
+				"features":     []string{"<b>Compact design</b>", "Water resistant"},
+				"hasDiscount":  false,
+				"expectedDate": "2025-02-15",
+			},
+			{
+				"code":        "PROD-003",
+				"name":        "Ultimate Tool",
+				"category":    "tools",
+				"price":       499.99,
+				"stock":       25,
+				"description": "Professional-grade tool for experts",
+				"features":    []string{"<b>Lifetime warranty</b>", "<i>Premium materials</i>", "Ergonomic design"},
+				"hasDiscount": false,
+			},
+		},
+		"electronicsCategories": []map[string]interface{}{
+			{"type": "Widgets", "count": 15},
+			{"type": "Gadgets", "count": 8},
+			{"type": "Tools", "count": 12},
+		},
+		"pricingTiers": []map[string]interface{}{
+			{"name": "Basic", "minQty": 1, "maxQty": 10, "unitPrice": 100.00, "savingsPercent": 0.0},
+			{"name": "Business", "minQty": 11, "maxQty": 50, "unitPrice": 90.00, "savingsPercent": 10.0},
+			{"name": "Enterprise", "minQty": 51, "maxQty": 999, "unitPrice": 75.00, "savingsPercent": 25.0},
+		},
+		"includeRecommendations": true,
+		"recommendations": []map[string]interface{}{
+			{"name": "Accessory Pack", "reason": "Complements your selection", "price": 49.99, "inStock": true},
+			{"name": "Extended Warranty", "reason": "Protect your investment", "price": 99.99, "inStock": true, "shipDays": 0},
+			{"name": "Premium Case", "reason": "Safe storage", "price": 29.99, "inStock": false, "shipDays": 3},
+		},
+		"basePrice":     100.0,
+		"quantity":      5,
+		"taxRate":       8.5,
+		"includeFooter": true, // This will cause fragment2 to include fragment3
+
+		// Fragment 3 (Legal Footer) data
+		"requiresFullTerms": true,
+		"companyName":       "ACME Corporation",
+		"companyWebsite":    "https://acme-corp.example.com",
+		"acceptsLiability":  false,
+		"includeGDPR":       true,
+		"authorizedRecipients": []map[string]interface{}{
+			{"name": "John Doe", "role": "CFO", "accessLevel": "full"},
+			{"name": "Jane Smith", "role": "Legal Counsel", "accessLevel": "full"},
+			{"name": "Mike Johnson", "role": "Auditor", "accessLevel": "read-only"},
+		},
+		"intellectualPropertyTypes": []string{
+			"Copyrights",
+			"Trademarks",
+			"Patents",
+			"Trade Secrets",
+			"Design Rights",
+		},
+		"dataController": map[string]interface{}{
+			"name":  "ACME Data Protection Officer",
+			"email": "dpo@acme-corp.example.com",
+		},
+		"dataPurpose":     "Business document generation and processing",
+		"legalBasis":      "Legitimate business interest",
+		"retentionPeriod": "7 years from document creation",
+		"dataSubjectRights": []map[string]interface{}{
+			{"name": "Right to Access", "description": "Request a copy of your personal data", "contactRequired": true},
+			{"name": "Right to Rectification", "description": "Request correction of inaccurate data", "contactRequired": true},
+			{"name": "Right to Erasure", "description": "Request deletion of your data", "contactRequired": true},
+		},
+		"multiJurisdiction": true,
+		"jurisdictions": []map[string]interface{}{
+			{
+				"country":              "Germany",
+				"governingLaw":         "German Civil Code (BGB)",
+				"competentCourts":      "Courts of Berlin",
+				"regulations":          []string{"GDPR", "BDSG", "TMG"},
+				"hasSpecialProvisions": true,
+				"specialProvisions":    []string{"German data protection requirements apply", "14-day cooling-off period for consumers"},
+			},
+			{
+				"country":              "United States",
+				"governingLaw":         "Laws of the State of Delaware",
+				"competentCourts":      "Delaware Court of Chancery",
+				"regulations":          []string{"CCPA", "CPRA"},
+				"hasSpecialProvisions": false,
+			},
+		},
+		"createdDate":  time.Now().AddDate(0, -1, -15),
+		"lastModified": time.Now(),
+		"author": map[string]interface{}{
+			"name":       "Alice Johnson",
+			"department": "Legal & Compliance",
+		},
+		"reviewer": map[string]interface{}{
+			"name": "Bob Smith",
+		},
+		"status":             "approved",
+		"showCertifications": true,
+		"certifications": []map[string]interface{}{
+			{"name": "ISO 27001", "standard": "Information Security", "issueDate": time.Now().AddDate(-2, 0, 0), "expiryDate": time.Now().AddDate(1, 0, 0), "isExpiringSoon": false},
+			{"name": "SOC 2 Type II", "standard": "Service Organization Control", "issueDate": time.Now().AddDate(-1, 0, 0), "expiryDate": time.Now().AddDate(0, 11, 0), "isExpiringSoon": true},
+		},
+		"legalAddress": map[string]interface{}{
+			"street":  "123 Business Blvd, Suite 456",
+			"city":    "Berlin",
+			"state":   "Berlin",
+			"zip":     "10115",
+			"country": "Germany",
+		},
+		"legalContact": map[string]interface{}{
+			"email":          "legal@acme-corp.example.com",
+			"phone":          "+49 30 12345678",
+			"fax":            "+49 30 12345679",
+			"officeHours":    "Monday-Friday, 9:00-17:00 CET",
+			"emergencyPhone": "+49 30 12345680",
+		},
+		"hasTrademarks":       true,
+		"trademarks":          []string{"ACME", "ACME Pro", "ACME Enterprise"},
+		"includeHash":         true,
+		"documentHash":        "a1b2c3d4e5f6g7h8i9j0",
+		"showRevisionHistory": true,
+		"revisionHistory": []map[string]interface{}{
+			{"version": "0.1", "date": time.Now().AddDate(0, -2, 0), "author": "Alice J.", "summary": "Initial draft"},
+			{"version": "0.5", "date": time.Now().AddDate(0, -1, -15), "author": "Alice J.", "summary": "Added legal sections"},
+			{"version": "1.0", "date": time.Now(), "author": "Alice J.", "summary": "Final approval"},
+		},
+		"templateEngineVersion": "1.0.0",
+
+		// Main document data
+		"user": map[string]interface{}{
+			"firstName": "Alice",
+			"lastName":  "Johnson",
+			"email":     "alice@example.com",
+		},
+		"items": []map[string]interface{}{
+			{"name": "Widget Pro", "price": 99.99},
+			{"name": "Gadget Plus", "price": 149.99},
+			{"name": "Tool Elite", "price": 199.99},
+		},
+		"score":         85,
+		"isWeekend":     false,
+		"weekDays":      []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"},
+		"isAdmin":       false,
+		"isOwner":       true,
+		"isLoggedIn":    true,
+		"stringNumber":  "42",
+		"stringPrice":   "19.99",
+		"eventDate":     time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC),
+		"optionalField": nil,
+		"fruits":        []string{"apple", "banana", "orange"},
+		"userTitle":     "",
+		"defaultTitle":  "Guest",
+		"description":   "This is the old version of the text",
+		"name":          "Go-Stencil Template Engine",
+		"features":      []string{"Fast", "Flexible", "Powerful"},
+		"discount":      15.0,
+		"age":           21,
+		"hasID":         true,
+		"isVIP":         false,
+	}
+
+	output, err := tmpl.Render(data)
+	if err != nil {
+		log.Fatalf("Failed to render nested fragments template: %v", err)
+	}
+
+	saveOutput(output, "output/nested_fragments_output.docx")
+
+	fmt.Println("\nNested Fragments Demo:")
+	fmt.Println("- fragment1 (Company Header) includes fragment2")
+	fmt.Println("- fragment2 (Product Catalog) includes fragment3")
+	fmt.Println("- fragment3 (Legal Footer) is the deepest level")
 }

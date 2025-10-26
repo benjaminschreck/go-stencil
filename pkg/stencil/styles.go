@@ -31,8 +31,13 @@ func parseStyles(stylesXML []byte) (*Styles, error) {
 	return &styles, nil
 }
 
-// mergeStyles merges fragment styles into the main styles
-// It adds any styles from fragmentStyles that don't exist in mainStyles (by styleId)
+// mergeStyles merges fragment styles into the main styles.
+// It adds any styles from fragmentStyles that don't exist in mainStyles (by styleId).
+// This supports all style types (paragraph, character, table, numbering, etc.) to ensure
+// fragments can bring their own formatting while avoiding duplicate style definitions.
+//
+// Originally designed to preserve table borders from fragments (see commit 6f6a439),
+// now extended to support all style types for complete fragment formatting support.
 func mergeStyles(mainStylesXML []byte, fragmentStylesXMLs ...[]byte) ([]byte, error) {
 	// Parse main styles
 	mainStyles, err := parseStyles(mainStylesXML)
@@ -56,8 +61,8 @@ func mergeStyles(mainStylesXML []byte, fragmentStylesXMLs ...[]byte) ([]byte, er
 		}
 
 		for _, style := range fragmentStyles.Styles {
-			// Only add table styles that don't already exist
-			if style.Type == "table" && !existingStyles[style.StyleID] {
+			// Add any style that doesn't already exist (regardless of type)
+			if !existingStyles[style.StyleID] {
 				newStyles = append(newStyles, style)
 				existingStyles[style.StyleID] = true
 			}
@@ -102,31 +107,4 @@ func rebuildStylesXML(originalXML []byte, newStyles []DocumentStyle) ([]byte, er
 	result := xmlStr[:closingIndex] + newStylesXML + xmlStr[closingIndex:]
 
 	return []byte(result), nil
-}
-
-// extractTableStyleIDs extracts all table style IDs referenced in a document
-func extractTableStyleIDs(doc *Document) []string {
-	styleIDs := make(map[string]bool)
-
-	if doc.Body == nil {
-		return nil
-	}
-
-	for _, elem := range doc.Body.Elements {
-		if table, ok := elem.(*Table); ok {
-			if table.Properties != nil && table.Properties.Style != nil {
-				if table.Properties.Style.Val != "" {
-					styleIDs[table.Properties.Style.Val] = true
-				}
-			}
-		}
-	}
-
-	// Convert map to slice
-	var result []string
-	for id := range styleIDs {
-		result = append(result, id)
-	}
-
-	return result
 }

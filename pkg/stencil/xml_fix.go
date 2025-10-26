@@ -253,9 +253,12 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.openxmlformats.org/drawingml/2006/main:", "a:")
 			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.openxmlformats.org/drawingml/2006/picture:", "pic:")
 			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing:", "wp14:")
+			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.microsoft.com/office/word/2010/wordml:", "w14:")
 			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.microsoft.com/office/drawing/2010/main:", "a14:")
 			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.openxmlformats.org/officeDocument/2006/relationships:", "r:")
 			cleanedXML = strings.ReplaceAll(cleanedXML, "http://www.w3.org/XML/1998/namespace:", "xml:")
+			cleanedXML = strings.ReplaceAll(cleanedXML, "urn:schemas-microsoft-com:vml:", "v:")
+			cleanedXML = strings.ReplaceAll(cleanedXML, "urn:schemas-microsoft-com:office:office:", "o:")
 			// For attributes: space + uri: + name becomes space + prefix: + name
 			// Note: attributes have a space before the namespace URI
 			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.openxmlformats.org/wordprocessingml/2006/main:", " w:")
@@ -263,9 +266,12 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.openxmlformats.org/drawingml/2006/main:", " a:")
 			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.openxmlformats.org/drawingml/2006/picture:", " pic:")
 			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing:", " wp14:")
+			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.microsoft.com/office/word/2010/wordml:", " w14:")
 			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.microsoft.com/office/drawing/2010/main:", " a14:")
 			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.openxmlformats.org/officeDocument/2006/relationships:", " r:")
 			cleanedXML = strings.ReplaceAll(cleanedXML, " http://www.w3.org/XML/1998/namespace:", " xml:")
+			cleanedXML = strings.ReplaceAll(cleanedXML, " urn:schemas-microsoft-com:vml:", " v:")
+			cleanedXML = strings.ReplaceAll(cleanedXML, " urn:schemas-microsoft-com:office:office:", " o:")
 
 			// Check if this is a paragraph property marker
 			if strings.HasPrefix(marker, "__PARA_PROP_MARKER_") {

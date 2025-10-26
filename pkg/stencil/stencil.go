@@ -38,6 +38,7 @@ type fragment struct {
 	mediaFiles    map[string][]byte // filename -> content
 	relationships []Relationship    // from word/_rels/document.xml.rels
 	stylesXML     []byte            // from word/styles.xml
+	namespaces    map[string]string // prefix -> URI, extracted from fragment document
 }
 
 // renderContext holds the context during rendering (internal use)
@@ -54,6 +55,9 @@ type renderContext struct {
 	fragmentIDAllocations  map[string]int    // fragment name -> allocated range start
 	nextFragmentIDRange    int               // next available range start
 	fragmentResourcesAdded map[string]bool   // fragment name -> already added
+
+	// Namespace collection
+	collectedNamespaces map[string]string // prefix -> URI, collected from all fragments
 }
 
 // PreparedTemplate represents a compiled template ready for rendering.
@@ -168,6 +172,15 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		fragmentIDAllocations:  make(map[string]int),
 		nextFragmentIDRange:    FragmentIDRangeStart,
 		fragmentResourcesAdded: make(map[string]bool),
+		collectedNamespaces:    make(map[string]string),
+	}
+
+	// Collect namespaces from the main template document (V5: REQUIRED)
+	if pt.template.document != nil {
+		mainNamespaces := pt.template.document.ExtractNamespaces()
+		for prefix, uri := range mainNamespaces {
+			renderCtx.collectedNamespaces[prefix] = uri
+		}
 	}
 
 	// First pass: render the document with variable substitution
@@ -188,7 +201,13 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		return nil, WithContext(err, "processing table column markers", nil)
 	}
 
+	// V5: Merge collected namespaces from fragments into main document
+	if len(renderCtx.collectedNamespaces) > 0 {
+		renderedDoc.MergeNamespaces(renderCtx.collectedNamespaces)
+	}
+
 	// Convert the rendered document back to XML with proper namespaces
+	// NOTE: This uses the existing marshalDocumentWithNamespaces which writes doc.Attrs!
 	renderedXML, err := marshalDocumentWithNamespaces(renderedDoc)
 	if err != nil {
 		return nil, NewDocumentError("marshal", "rendered document", err)
@@ -544,6 +563,9 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 		return fmt.Errorf("failed to parse fragment document: %w", err)
 	}
 
+	// Extract namespaces from parsed document
+	namespaces := doc.ExtractNamespaces()
+
 	// Extract media files and relationships from fragment ZIP
 	zipReader, err := zip.NewReader(bytes.NewReader(docxBytes), int64(len(docxBytes)))
 	if err != nil {
@@ -616,6 +638,7 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 		mediaFiles:    mediaFiles,
 		relationships: relationships,
 		stylesXML:     stylesXML,
+		namespaces:    namespaces,
 	}
 
 	pt.template.fragments[name] = frag

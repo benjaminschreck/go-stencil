@@ -183,3 +183,66 @@ func (t *TestTemplate) RenderToBytes(data map[string]interface{}) ([]byte, error
 func (t *TestTemplate) Close() error {
 	return t.template.Close()
 }
+
+// createDOCXWithNamespaces creates a DOCX with specified namespace declarations
+func createDOCXWithNamespaces(namespaces map[string]string) []byte {
+	return createDOCXWithContent("Test content", namespaces)
+}
+
+// createDOCXWithContent creates a DOCX with content and namespace declarations
+func createDOCXWithContent(content string, namespaces map[string]string) []byte {
+	var buf bytes.Buffer
+	zipWriter := zip.NewWriter(&buf)
+
+	// Add [Content_Types].xml
+	contentTypes := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`
+	w, _ := zipWriter.Create("[Content_Types].xml")
+	w.Write([]byte(contentTypes))
+
+	// Add _rels/.rels
+	rels := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`
+	w, _ = zipWriter.Create("_rels/.rels")
+	w.Write([]byte(rels))
+
+	// Add word/_rels/document.xml.rels
+	docRels := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>`
+	w, _ = zipWriter.Create("word/_rels/document.xml.rels")
+	w.Write([]byte(docRels))
+
+	// Build namespace declarations
+	nsDecls := `xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"`
+	for prefix, uri := range namespaces {
+		if prefix == "" {
+			nsDecls += fmt.Sprintf(` xmlns="%s"`, uri)
+		} else {
+			nsDecls += fmt.Sprintf(` xmlns:%s="%s"`, prefix, uri)
+		}
+	}
+
+	// Add word/document.xml with custom namespaces
+	doc := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document %s>
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:t>%s</w:t>
+      </w:r>
+    </w:p>
+  </w:body>
+</w:document>`, nsDecls, content)
+	w, _ = zipWriter.Create("word/document.xml")
+	w.Write([]byte(doc))
+
+	zipWriter.Close()
+	return buf.Bytes()
+}

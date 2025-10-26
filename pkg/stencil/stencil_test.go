@@ -250,3 +250,25 @@ func createTestDocx(t *testing.T, content string) *bytes.Buffer {
 	w.Close()
 	return buf
 }
+
+func TestMainTemplatePreservesNamespaces(t *testing.T) {
+	// Create a template from a DOCX with known namespaces
+	templatePath := "../../examples/advanced/comprehensive_features_with_fragments.docx"
+	templateBytes, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Skip("Template file not available")
+	}
+
+	// Prepare template
+	tmpl, err := Prepare(bytes.NewReader(templateBytes))
+	if err != nil {
+		t.Fatalf("Failed to prepare template: %v", err)
+	}
+
+	// Check that main template document has Attrs
+	if len(tmpl.template.document.Attrs) == 0 {
+		t.Fatal("Main template document has no Attrs!")
+	}
+
+	t.Logf("✅ Main template has %d attributes", len(tmpl.template.document.Attrs))
+}

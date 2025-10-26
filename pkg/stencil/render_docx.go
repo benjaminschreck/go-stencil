@@ -445,6 +445,35 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					return nil, fmt.Errorf("fragment not found: %s", fragmentName)
 				}
 
+				// V5: Collect namespaces IMMEDIATELY (before defer, before rendering)
+				if frag.namespaces != nil {
+					for prefix, uri := range frag.namespaces {
+						if existingURI, exists := ctx.collectedNamespaces[prefix]; exists {
+							// Prefix already used
+							if existingURI != uri {
+								// CONFLICT: Same prefix, different URI
+								// V5: Special handling for default namespace
+								if prefix == "" {
+									// Default namespace conflict - log warning but don't fail
+									// (documented limitation: main template wins)
+									// Note: In production, this should use a logger
+									// For now, we continue without adding
+									continue
+								}
+
+								// Regular namespace conflict - this is an error
+								return nil, fmt.Errorf(
+									"namespace conflict in fragment %q: prefix %q used for both %q and %q",
+									fragmentName, prefix, existingURI, uri)
+							}
+							// Same prefix, same URI → OK, already collected
+						} else {
+							// New namespace → collect it
+							ctx.collectedNamespaces[prefix] = uri
+						}
+					}
+				}
+
 				// Render the fragment content
 				if frag.parsed != nil && frag.parsed.Body != nil {
 					// Push fragment to stack for circular reference detection

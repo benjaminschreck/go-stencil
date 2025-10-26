@@ -174,3 +174,83 @@ func ParseDocument(r io.Reader) (*Document, error) {
 
 	return &doc, nil
 }
+
+// ExtractNamespaces returns all namespace declarations from document attributes
+// Returns a map of prefix -> namespace URI
+func (doc *Document) ExtractNamespaces() map[string]string {
+	namespaces := make(map[string]string)
+
+	for _, attr := range doc.Attrs {
+		// Handle different forms that Go's XML parser produces:
+		// Form 1: Name.Space = "xmlns", Name.Local = "prefix"
+		// Form 2: Name.Local = "xmlns:prefix", Name.Space = ""
+		// Form 3: Name.Local = "xmlns" (default namespace)
+
+		if attr.Name.Space == "xmlns" {
+			// Form 1: xmlns:prefix="uri"
+			namespaces[attr.Name.Local] = attr.Value
+		} else if attr.Name.Local == "xmlns" {
+			// Form 3: xmlns="uri" (default namespace)
+			namespaces[""] = attr.Value
+		} else if strings.HasPrefix(attr.Name.Local, "xmlns:") {
+			// Form 2: xmlns:prefix as single local name
+			prefix := strings.TrimPrefix(attr.Name.Local, "xmlns:")
+			namespaces[prefix] = attr.Value
+		}
+	}
+
+	return namespaces
+}
+
+// MergeNamespaces adds namespace declarations to the document attributes
+// If a prefix already exists, the existing declaration is preserved (first wins)
+func (doc *Document) MergeNamespaces(additionalNamespaces map[string]string) {
+	if len(additionalNamespaces) == 0 {
+		return
+	}
+
+	// Extract existing namespace prefixes
+	existingPrefixes := make(map[string]string) // prefix -> URI
+	for _, attr := range doc.Attrs {
+		if attr.Name.Space == "xmlns" {
+			existingPrefixes[attr.Name.Local] = attr.Value
+		} else if attr.Name.Local == "xmlns" {
+			existingPrefixes[""] = attr.Value
+		} else if strings.HasPrefix(attr.Name.Local, "xmlns:") {
+			prefix := strings.TrimPrefix(attr.Name.Local, "xmlns:")
+			existingPrefixes[prefix] = attr.Value
+		}
+	}
+
+	// Add missing namespace declarations
+	for prefix, uri := range additionalNamespaces {
+		if existingURI, exists := existingPrefixes[prefix]; exists {
+			// Log if there's a URI mismatch (shouldn't happen after collection phase)
+			if existingURI != uri {
+				// This indicates a bug in the collection phase
+				// Log but continue (existing declaration wins)
+				// Note: In production, this should use a logger
+				// For now, we silently continue
+			}
+			continue // Already declared in main document
+		}
+
+		var attr xml.Attr
+		if prefix == "" {
+			// Default namespace: xmlns="uri"
+			attr = xml.Attr{
+				Name:  xml.Name{Local: "xmlns"},
+				Value: uri,
+			}
+		} else {
+			// Prefixed namespace: xmlns:prefix="uri"
+			// Use the Local form (compatible with marshalDocumentWithNamespaces)
+			attr = xml.Attr{
+				Name:  xml.Name{Local: "xmlns:" + prefix},
+				Value: uri,
+			}
+		}
+
+		doc.Attrs = append(doc.Attrs, attr)
+	}
+}
