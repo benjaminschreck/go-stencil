@@ -1533,33 +1533,23 @@ func RenderTableCell(cell *TableCell, data TemplateData, ctx *renderContext) (*T
 		Properties: cell.Properties,
 	}
 
-	// Render each paragraph in the cell
-	for _, para := range cell.Paragraphs {
-		// Create a copy of the paragraph and merge consecutive runs
-		// This is necessary because Word often splits template expressions across multiple runs
-		p := para
-		render.MergeConsecutiveRuns(&p)
+	// Convert paragraphs to BodyElements so we can handle multi-paragraph control structures
+	elements := make([]BodyElement, len(cell.Paragraphs))
+	for i, para := range cell.Paragraphs {
+		p := para // Create a copy
+		elements[i] = &p
+	}
 
-		// Check if this paragraph contains an inline for loop
-		controlType, controlContent := render.DetectControlStructure(&p)
+	// Use renderElementsWithContext to handle control structures that span multiple paragraphs
+	renderedElements, err := renderElementsWithContext(elements, data, ctx)
+	if err != nil {
+		return nil, err
+	}
 
-		if controlType == "inline-for" {
-			// Handle inline for loop - this will expand to multiple paragraphs
-			renderedParas, err := renderInlineForLoop(&p, controlContent, data, ctx)
-			if err != nil {
-				return nil, err
-			}
-			// Add all expanded paragraphs
-			for _, rp := range renderedParas {
-				rendered.Paragraphs = append(rendered.Paragraphs, rp)
-			}
-		} else {
-			// Normal paragraph rendering
-			renderedPara, err := RenderParagraphWithContext(&p, data, ctx)
-			if err != nil {
-				return nil, err
-			}
-			rendered.Paragraphs = append(rendered.Paragraphs, *renderedPara)
+	// Convert back to paragraphs
+	for _, elem := range renderedElements {
+		if para, ok := elem.(*Paragraph); ok {
+			rendered.Paragraphs = append(rendered.Paragraphs, *para)
 		}
 	}
 
