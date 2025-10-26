@@ -12,6 +12,30 @@ import (
 // renderElementsWithContext renders a slice of elements with the given context
 // This function DOES process control structures to support nested loops and conditionals
 func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *renderContext) ([]BodyElement, error) {
+	// First, merge runs in all paragraphs to handle split template variables
+	// This is critical for detecting control structures in fragments where markers may be split
+	for i, elem := range elements {
+		switch el := elem.(type) {
+		case *Paragraph:
+			p := *el // Create a copy
+			render.MergeConsecutiveRuns(&p)
+			elements[i] = &p // Update the element with merged runs
+		case *Table:
+			// Also merge runs in table cells
+			t := *el // Create a copy
+			for rowIdx, row := range t.Rows {
+				for cellIdx, cell := range row.Cells {
+					for paraIdx, para := range cell.Paragraphs {
+						p := para // Create a copy
+						render.MergeConsecutiveRuns(&p)
+						t.Rows[rowIdx].Cells[cellIdx].Paragraphs[paraIdx] = p
+					}
+				}
+			}
+			elements[i] = &t // Update the element with merged runs
+		}
+	}
+
 	result := make([]BodyElement, 0, len(elements))
 
 	// Process elements in order, handling control structures

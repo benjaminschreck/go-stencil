@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
 )
 
 // RenderDocument renders a document with the given data
@@ -48,10 +50,15 @@ func RenderParagraph(para *Paragraph, data TemplateData) (*Paragraph, error) {
 
 // RenderParagraphWithContext renders a paragraph with context
 func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderContext) (*Paragraph, error) {
+	// CRITICAL: Merge consecutive runs FIRST to handle split template markers
+	// This must happen before we check for control structures, especially for
+	// paragraphs generated during for loop iterations in fragments
+	render.MergeConsecutiveRuns(para)
+
 	// First check if the paragraph contains control structures
 	// by getting the full text content including line breaks
 	fullText := ""
-	
+
 	// Use Content if available, otherwise fall back to Runs
 	if len(para.Content) > 0 {
 		for _, content := range para.Content {
