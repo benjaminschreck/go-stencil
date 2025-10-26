@@ -101,7 +101,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 	hasControlStructures := false
 	for _, token := range tokens {
 		switch token.Type {
-		case TokenIf, TokenFor, TokenUnless, TokenElse, TokenElsif, TokenEnd:
+		case TokenIf, TokenFor, TokenUnless, TokenElse, TokenElsif, TokenEnd, TokenInclude:
 			hasControlStructures = true
 		}
 	}
@@ -119,7 +119,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 			hasActualControlStructures := false
 			for _, structure := range structures {
 				switch structure.(type) {
-				case *IfNode, *ForNode, *UnlessNode:
+				case *IfNode, *ForNode, *UnlessNode, *IncludeNode:
 					hasActualControlStructures = true
 				}
 			}

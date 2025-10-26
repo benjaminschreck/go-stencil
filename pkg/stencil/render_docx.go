@@ -3,6 +3,7 @@ package stencil
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/benjaminschreck/go-stencil/pkg/stencil/render"
@@ -22,7 +23,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 		case *Paragraph:
 			para := *el
 
-			// Check if this paragraph contains a control structure
+			// Check if this paragraph contains a control structure FIRST
 			controlType, controlContent := render.DetectControlStructure(&para)
 
 			switch controlType {
@@ -224,6 +225,49 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 				if err != nil {
 					return nil, err
 				}
+
+				// Check if the rendered paragraph contains a DOCX fragment marker
+				paraText := renderedPara.GetText()
+				if strings.Contains(paraText, "__DOCX_FRAGMENT__") {
+					// Extract the fragment name from the marker
+					re := regexp.MustCompile(`__DOCX_FRAGMENT__(.+?)__`)
+					matches := re.FindStringSubmatch(paraText)
+					if len(matches) > 1 {
+						fragmentName := matches[1]
+						markerKey := fmt.Sprintf("__DOCX_FRAGMENT__%s__", fragmentName)
+
+						// Get the fragment from context
+						if frag, ok := ctx.ooxmlFragments[markerKey]; ok {
+							fragment := frag.(*fragment)
+
+							// Render the fragment's body elements with the current data context
+							if fragment.parsed != nil && fragment.parsed.Body != nil {
+								// Recursively render the fragment's body elements
+								// This will also handle any nested fragment inclusions
+								fragmentElements, err := renderElementsWithContext(fragment.parsed.Body.Elements, data, ctx)
+								if err != nil {
+									return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
+								}
+
+								// Insert the fragment's elements instead of the marker paragraph
+								// Note: These elements have already been recursively processed,
+								// so any nested markers should already be resolved
+								result = append(result, fragmentElements...)
+								i++
+								continue
+							} else {
+								// Fragment exists but has no parsed body
+								return nil, fmt.Errorf("fragment %s has no parsed body", fragmentName)
+							}
+						} else {
+							// Fragment not found in context - this is an error
+							return nil, fmt.Errorf("fragment marker %s found but fragment not in context (available: %v)", fragmentName, getFragmentKeys(ctx))
+						}
+					}
+					// If we get here, couldn't extract fragment name from marker
+					return nil, fmt.Errorf("found DOCX fragment marker but couldn't extract name from: %s", paraText)
+				}
+
 				result = append(result, renderedPara)
 				i++
 			}
@@ -247,6 +291,17 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 	return result, nil
 }
 
+// getFragmentKeys returns the keys of fragments in the context for debugging
+func getFragmentKeys(ctx *renderContext) []string {
+	if ctx == nil || ctx.ooxmlFragments == nil {
+		return []string{}
+	}
+	keys := make([]string, 0, len(ctx.ooxmlFragments))
+	for k := range ctx.ooxmlFragments {
+		keys = append(keys, k)
+	}
+	return keys
+}
 
 // RenderBodyWithControlStructures renders a document body handling control structures
 func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
@@ -799,6 +854,46 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				if err != nil {
 					return nil, err
 				}
+
+				// Check if the rendered paragraph contains a DOCX fragment marker
+				paraText := renderedPara.GetText()
+				if strings.Contains(paraText, "__DOCX_FRAGMENT__") {
+					// Extract the fragment name from the marker
+					re := regexp.MustCompile(`__DOCX_FRAGMENT__(.+?)__`)
+					matches := re.FindStringSubmatch(paraText)
+					if len(matches) > 1 {
+						fragmentName := matches[1]
+						markerKey := fmt.Sprintf("__DOCX_FRAGMENT__%s__", fragmentName)
+
+						// Get the fragment from context
+						if frag, ok := ctx.ooxmlFragments[markerKey]; ok {
+							fragment := frag.(*fragment)
+
+							// Render the fragment's body elements with the current data context
+							if fragment.parsed != nil && fragment.parsed.Body != nil {
+								// Recursively render the fragment's body elements
+								fragmentBody, err := RenderBodyWithControlStructures(fragment.parsed.Body, data, ctx)
+								if err != nil {
+									return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
+								}
+
+								// Insert the fragment's elements instead of the marker paragraph
+								rendered.Elements = append(rendered.Elements, fragmentBody.Elements...)
+								i++
+								continue
+							} else {
+								// Fragment exists but has no parsed body
+								return nil, fmt.Errorf("fragment %s has no parsed body", fragmentName)
+							}
+						} else {
+							// Fragment not found in context - this is an error
+							return nil, fmt.Errorf("fragment marker %s found but fragment not in context (available: %v)", fragmentName, getFragmentKeys(ctx))
+						}
+					}
+					// If we get here, couldn't extract fragment name from marker
+					return nil, fmt.Errorf("found DOCX fragment marker but couldn't extract name from: %s", paraText)
+				}
+
 				rendered.Elements = append(rendered.Elements, renderedPara)
 				i++
 			}

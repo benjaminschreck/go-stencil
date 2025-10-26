@@ -130,38 +130,43 @@ func (n *IncludeNode) RenderWithContext(data TemplateData, ctx *renderContext) (
 	if ctx == nil || ctx.fragments == nil {
 		return "", fmt.Errorf("fragments not available in render context")
 	}
-	
+
 	// Check render depth
 	config := GetGlobalConfig()
 	if ctx.renderDepth >= config.MaxRenderDepth {
 		return "", fmt.Errorf("maximum render depth exceeded: %d", config.MaxRenderDepth)
 	}
-	
+
 	// Evaluate the fragment name expression
 	nameValue, err := n.FragmentName.Evaluate(data)
 	if err != nil {
 		return "", fmt.Errorf("failed to evaluate fragment name: %w", err)
 	}
-	
+
 	// Fragment name must be a string
+	// Handle nil case (when variable doesn't exist)
+	if nameValue == nil {
+		return "", fmt.Errorf("fragment name evaluated to nil - make sure the fragment name is a string literal in quotes or a variable that exists in the data")
+	}
+
 	fragmentName, ok := nameValue.(string)
 	if !ok {
 		return "", fmt.Errorf("fragment name must be a string, got %T", nameValue)
 	}
-	
+
 	// Check for circular references
 	for _, stackName := range ctx.fragmentStack {
 		if stackName == fragmentName {
 			return "", fmt.Errorf("circular fragment reference detected: %s", fragmentName)
 		}
 	}
-	
+
 	// Find the fragment
 	fragment, exists := ctx.fragments[fragmentName]
 	if !exists {
 		return "", fmt.Errorf("fragment not found: %s", fragmentName)
 	}
-	
+
 	// Push fragment onto stack and increment depth
 	ctx.fragmentStack = append(ctx.fragmentStack, fragmentName)
 	ctx.renderDepth++
@@ -170,13 +175,29 @@ func (n *IncludeNode) RenderWithContext(data TemplateData, ctx *renderContext) (
 		ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
 		ctx.renderDepth--
 	}()
-	
-	// Parse the fragment content as control structures
+
+	// For DOCX fragments, store a marker that will be replaced at the element level
+	// This is because DOCX fragments contain body elements (paragraphs, tables) not just text
+	if fragment.isDocx {
+		// Create a special marker for DOCX fragment inclusion
+		markerKey := fmt.Sprintf("__DOCX_FRAGMENT__%s__", fragmentName)
+
+		// Store the fragment in the context for later replacement
+		if ctx.ooxmlFragments == nil {
+			ctx.ooxmlFragments = make(map[string]interface{})
+		}
+		ctx.ooxmlFragments[markerKey] = fragment
+
+		// Return the marker
+		return markerKey, nil
+	}
+
+	// For text fragments, parse and render as control structures
 	structures, err := ParseControlStructures(fragment.content)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse fragment %s: %w", fragmentName, err)
 	}
-	
+
 	// Render the fragment structures with context
 	return renderControlBodyWithContext(structures, data, ctx)
 }

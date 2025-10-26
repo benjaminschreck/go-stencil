@@ -351,18 +351,18 @@ func TestTemplateResourcesSafety(t *testing.T) {
 	}
 	
 	// Test 2: Template with fragments
-	reader := createTestDocx(t, "Main: {{name}}, Fragment: {{include fragment1}}")
+	reader := createTestDocx(t, "Main: {{name}}, Fragment: {{include \"fragment1\"}}")
 	tmpl, err := Prepare(reader)
 	if err != nil {
 		t.Fatalf("Failed to prepare template with fragments: %v", err)
 	}
-	
+
 	// Add a fragment
 	err = tmpl.AddFragment("fragment1", "Fragment content: {{data}}")
 	if err != nil {
 		t.Fatalf("Failed to add fragment: %v", err)
 	}
-	
+
 	// Use the template
 	data := map[string]interface{}{
 		"name": "Test",
