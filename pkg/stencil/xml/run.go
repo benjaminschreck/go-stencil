@@ -7,6 +7,31 @@ import (
 	"strings"
 )
 
+// namespaceToPrefix converts a namespace URI to its conventional prefix
+func namespaceToPrefix(uri string) string {
+	switch uri {
+	case "http://schemas.openxmlformats.org/wordprocessingml/2006/main":
+		return "w"
+	case "http://www.w3.org/XML/1998/namespace":
+		return "xml"
+	case "http://schemas.openxmlformats.org/officeDocument/2006/relationships":
+		return "r"
+	case "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing":
+		return "wp"
+	case "http://schemas.openxmlformats.org/drawingml/2006/main":
+		return "a"
+	case "http://schemas.openxmlformats.org/drawingml/2006/picture":
+		return "pic"
+	case "urn:schemas-microsoft-com:vml":
+		return "v"
+	case "urn:schemas-microsoft-com:office:office":
+		return "o"
+	default:
+		// For unknown namespaces, return the URI as-is (shouldn't happen in practice)
+		return uri
+	}
+}
+
 // Run represents a run of text with common properties
 type Run struct {
 	Properties *RunProperties `xml:"rPr"`
@@ -65,14 +90,17 @@ func (r *Run) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 				// Start with the opening tag
 				buf.WriteString("<")
 				if t.Name.Space != "" {
-					buf.WriteString(t.Name.Space)
+					// Convert namespace URI to prefix
+					prefix := namespaceToPrefix(t.Name.Space)
+					buf.WriteString(prefix)
 					buf.WriteString(":")
 				}
 				buf.WriteString(t.Name.Local)
 				for _, attr := range t.Attr {
 					buf.WriteString(" ")
 					if attr.Name.Space != "" {
-						buf.WriteString(attr.Name.Space)
+						prefix := namespaceToPrefix(attr.Name.Space)
+						buf.WriteString(prefix)
 						buf.WriteString(":")
 					}
 					buf.WriteString(attr.Name.Local)
@@ -93,14 +121,16 @@ func (r *Run) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 						depth++
 						buf.WriteString("<")
 						if tt.Name.Space != "" {
-							buf.WriteString(tt.Name.Space)
+							prefix := namespaceToPrefix(tt.Name.Space)
+							buf.WriteString(prefix)
 							buf.WriteString(":")
 						}
 						buf.WriteString(tt.Name.Local)
 						for _, attr := range tt.Attr {
 							buf.WriteString(" ")
 							if attr.Name.Space != "" {
-								buf.WriteString(attr.Name.Space)
+								prefix := namespaceToPrefix(attr.Name.Space)
+								buf.WriteString(prefix)
 								buf.WriteString(":")
 							}
 							buf.WriteString(attr.Name.Local)
@@ -111,27 +141,28 @@ func (r *Run) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 						buf.WriteString(">")
 					case xml.EndElement:
 						depth--
-						if depth > 0 {
-							buf.WriteString("</")
-							if tt.Name.Space != "" {
-								buf.WriteString(tt.Name.Space)
-								buf.WriteString(":")
-							}
-							buf.WriteString(tt.Name.Local)
-							buf.WriteString(">")
+						// Write closing tag with proper namespace prefix
+						buf.WriteString("</")
+						if tt.Name.Space != "" {
+							prefix := namespaceToPrefix(tt.Name.Space)
+							buf.WriteString(prefix)
+							buf.WriteString(":")
 						}
+						buf.WriteString(tt.Name.Local)
+						buf.WriteString(">")
 					case xml.CharData:
-						buf.Write(tt)
+						// Write character data with XML escaping
+						escaped := string(tt)
+						escaped = strings.Replace(escaped, "&", "&amp;", -1)
+						escaped = strings.Replace(escaped, "<", "&lt;", -1)
+						escaped = strings.Replace(escaped, ">", "&gt;", -1)
+						escaped = strings.Replace(escaped, "\"", "&quot;", -1)
+						buf.WriteString(escaped)
 					}
 				}
 
-				buf.WriteString("</")
-				if t.Name.Space != "" {
-					buf.WriteString(t.Name.Space)
-					buf.WriteString(":")
-				}
-				buf.WriteString(t.Name.Local)
-				buf.WriteString(">")
+				// The closing tag is already written in the loop above
+				// Don't add it again here!
 
 				raw.Content = []byte(buf.String())
 				r.RawXML = append(r.RawXML, raw)
@@ -312,6 +343,18 @@ func (l Lang) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 // Font represents font information
 type Font struct {
 	ASCII string `xml:"ascii,attr"`
+}
+
+// MarshalXML implements custom XML marshaling for Font
+func (f Font) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	// Ensure the element has the w: prefix
+	if !strings.HasPrefix(start.Name.Local, "w:") {
+		start.Name.Local = "w:" + start.Name.Local
+	}
+	start.Attr = []xml.Attr{
+		{Name: xml.Name{Local: "w:ascii"}, Value: f.ASCII},
+	}
+	return e.EncodeElement(struct{}{}, start)
 }
 
 // RunStyle represents a run style reference

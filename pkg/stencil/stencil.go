@@ -14,8 +14,8 @@ import (
 
 const (
 	// ID ranges for relationship management
-	MainTemplateIDRange  = 999 // Main template uses rId1 - rId999
-	FragmentIDRangeSize  = 100 // Each fragment gets 100 IDs
+	MainTemplateIDRange  = 999  // Main template uses rId1 - rId999
+	FragmentIDRangeSize  = 100  // Each fragment gets 100 IDs
 	FragmentIDRangeStart = 1000 // Fragments start at rId1000
 )
 
@@ -146,6 +146,44 @@ func prepare(r io.Reader) (*PreparedTemplate, error) {
 //	    log.Fatal(err)
 //	}
 
+// cleanEmptyRuns removes empty run elements from a paragraph
+// Empty runs (with no text content) can cause Word to fail opening the document
+func cleanEmptyRuns(para *Paragraph) {
+	if para == nil {
+		return
+	}
+
+	// Filter out runs that have no text or empty text
+	var nonEmptyRuns []Run
+	for _, run := range para.Runs {
+		// Determine if this run should be kept
+		keepRun := false
+
+		// Keep run if it has text content (even if just whitespace that should be preserved)
+		if run.Text != nil && run.Text.Content != "" {
+			keepRun = true
+		}
+
+		// Keep runs with breaks or raw XML elements (like drawings) even if they have no text
+		if run.Break != nil || len(run.RawXML) > 0 {
+			keepRun = true
+		}
+
+		// Skip runs with only properties - they can cause issues in headers/footers
+		// Word will inherit paragraph properties anyway
+		if !keepRun && run.Properties != nil {
+			keepRun = false
+		}
+
+		if keepRun {
+			nonEmptyRuns = append(nonEmptyRuns, run)
+		}
+		// Otherwise skip completely empty runs
+	}
+
+	para.Runs = nonEmptyRuns
+}
+
 // renderHeaderOrFooter processes a header or footer XML file with template rendering
 func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext) ([]byte, error) {
 	// Read the original header/footer XML
@@ -163,10 +201,10 @@ func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext)
 	// Parse using a generic structure that handles both <w:hdr> and <w:ftr>
 	// These have the same structure as document body - just paragraphs and tables
 	var headerFooter struct {
-		XMLName    xml.Name      `xml:""`
-		Attrs      []xml.Attr    `xml:",any,attr"`
-		Paragraphs []*Paragraph  `xml:"p"`
-		Tables     []*Table      `xml:"tbl"`
+		XMLName    xml.Name     `xml:""`
+		Attrs      []xml.Attr   `xml:",any,attr"`
+		Paragraphs []*Paragraph `xml:"p"`
+		Tables     []*Table     `xml:"tbl"`
 	}
 
 	if err := xml.Unmarshal(content, &headerFooter); err != nil {
@@ -200,8 +238,52 @@ func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext)
 		}
 	}
 
+	// Clean empty runs from paragraphs to avoid Word corruption issues
+	for _, p := range renderedParas {
+		cleanEmptyRuns(p)
+	}
+
+	// Also clean empty runs from table cells
+	for _, t := range renderedTables {
+		for i := range t.Rows {
+			for j := range t.Rows[i].Cells {
+				for k := range t.Rows[i].Cells[j].Paragraphs {
+					cleanEmptyRuns(&t.Rows[i].Cells[j].Paragraphs[k])
+				}
+			}
+		}
+	}
+
 	headerFooter.Paragraphs = renderedParas
 	headerFooter.Tables = renderedTables
+
+	// Create a map to track runs with RawXML that need to be injected
+	rawXMLMap := make(map[string][]byte)
+	markerIndex := 0
+
+	// Replace RawXML with markers before marshaling
+	for _, p := range renderedParas {
+		for i := range p.Runs {
+			if len(p.Runs[i].RawXML) > 0 {
+				// Create a marker
+				marker := fmt.Sprintf("__RAWXML_MARKER_%d__", markerIndex)
+				markerIndex++
+
+				// Collect all RawXML content
+				var rawContent bytes.Buffer
+				for _, raw := range p.Runs[i].RawXML {
+					rawContent.Write(raw.Content)
+				}
+
+				// Store the raw XML
+				rawXMLMap[marker] = rawContent.Bytes()
+
+				// Replace RawXML with a text marker
+				p.Runs[i].Text = &Text{Content: marker}
+				p.Runs[i].RawXML = nil
+			}
+		}
+	}
 
 	// Marshal the body elements
 	var bodyXML bytes.Buffer
@@ -217,6 +299,18 @@ func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext)
 		}
 	}
 	encoder.Flush()
+
+	// Replace markers with actual RawXML
+	bodyXMLStr := bodyXML.String()
+	for marker, rawXML := range rawXMLMap {
+		// The marker will be inside <w:t>marker</w:t>, replace the entire text element
+		bodyXMLStr = strings.Replace(bodyXMLStr,
+			fmt.Sprintf("<w:t>%s</w:t>", marker),
+			string(rawXML),
+			1)
+	}
+	bodyXML.Reset()
+	bodyXML.WriteString(bodyXMLStr)
 
 	// Extract the opening tag with namespaces from the original content
 	contentStr := string(content)
@@ -254,9 +348,9 @@ func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext)
 
 	// Reconstruct: XML declaration + original opening tag + rendered body + closing tag
 	result := []byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n")
-	result = append(result, content[rootTagStart:openTagEnd+1]...)  // Opening tag with namespaces
-	result = append(result, bodyXML.Bytes()...)                      // Rendered body
-	result = append(result, []byte(closingTag)...)                   // Closing tag
+	result = append(result, content[rootTagStart:openTagEnd+1]...) // Opening tag with namespaces
+	result = append(result, bodyXML.Bytes()...)                    // Rendered body
+	result = append(result, []byte(closingTag)...)                 // Closing tag
 
 	return result, nil
 }

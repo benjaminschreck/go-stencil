@@ -503,6 +503,16 @@ func comprehensiveFeaturesExample(engine *stencil.Engine) {
 		log.Fatalf("Failed to add footer fragment: %v", err)
 	}
 
+	err = tmpl.AddFragment("kopfzeile", "Kopfzeile: {{timestamp()}}")
+	if err != nil {
+		log.Fatalf("Failed to add header fragment: %v", err)
+	}
+
+	err = tmpl.AddFragment("fusszeile", "Fusszeile: {{timestamp()}}")
+	if err != nil {
+		log.Fatalf("Failed to add footer fragment: %v", err)
+	}
+
 	// Create comprehensive test data
 	data := stencil.TemplateData{
 		// User data for bracket notation and advanced access
