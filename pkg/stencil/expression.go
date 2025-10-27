@@ -229,10 +229,11 @@ var (
 	numberRegex     = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?`)
 	stringRegex     = regexp.MustCompile(`^"([^"\\]|\\.)*"`)
 	singleQuoteRegex = regexp.MustCompile(`^'([^'\\]|\\.)*'`)
-	// German typographic quotes: „..." (U+201E opening and U+201C/U+201D closing)
-	// Matches both „text" (with U+201C right quote) and „text" (with U+201D right quote)
-	// Using UTF-8 bytes: \xe2\x80\x9e = „, \xe2\x80\x9c = ", \xe2\x80\x9d = "
-	germanQuoteRegex = regexp.MustCompile("^\xe2\x80\x9e([^\xe2\x80\x9c\xe2\x80\x9d\\\\]|\\\\.)*[\xe2\x80\x9c\xe2\x80\x9d]")
+	// German typographic quotes: „..." (U+201E opening)
+	// Matches „text" with closing quotes: " (U+201C), " (U+201D), or " (U+0022 regular ASCII)
+	// Using UTF-8 bytes: \xe2\x80\x9e = „, \xe2\x80\x9c = ", \xe2\x80\x9d = ", \x22 = "
+	// The regex needs to exclude the opening quote and any of the closing quotes in the middle
+	germanQuoteRegex = regexp.MustCompile("^\xe2\x80\x9e([^\xe2\x80\x9c\xe2\x80\x9d\"\\\\]|\\\\.)*[\xe2\x80\x9c\xe2\x80\x9d\"]")
 	// French/Swiss quotes: »...« (U+00BB and U+00AB)
 	frenchQuoteRegex = regexp.MustCompile(`^»([^«\\]|\\.)*«`)
 	operatorRegex   = regexp.MustCompile(`^(==|!=|<=|>=|\+|\-|\*|\/|\%|\&|\||\!|<|>|=)`)

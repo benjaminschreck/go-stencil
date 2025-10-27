@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -144,6 +145,122 @@ func prepare(r io.Reader) (*PreparedTemplate, error) {
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
+
+// renderHeaderOrFooter processes a header or footer XML file with template rendering
+func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext) ([]byte, error) {
+	// Read the original header/footer XML
+	fr, err := file.Open()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open %s: %w", file.Name, err)
+	}
+	defer fr.Close()
+
+	content, err := io.ReadAll(fr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", file.Name, err)
+	}
+
+	// Parse using a generic structure that handles both <w:hdr> and <w:ftr>
+	// These have the same structure as document body - just paragraphs and tables
+	var headerFooter struct {
+		XMLName    xml.Name      `xml:""`
+		Attrs      []xml.Attr    `xml:",any,attr"`
+		Paragraphs []*Paragraph  `xml:"p"`
+		Tables     []*Table      `xml:"tbl"`
+	}
+
+	if err := xml.Unmarshal(content, &headerFooter); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", file.Name, err)
+	}
+
+	// Convert paragraphs and tables to BodyElements
+	var elements []BodyElement
+	for _, p := range headerFooter.Paragraphs {
+		elements = append(elements, p)
+	}
+	for _, t := range headerFooter.Tables {
+		elements = append(elements, t)
+	}
+
+	// Render the elements with context
+	renderedElements, err := renderElementsWithContext(elements, data, ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to render elements in %s: %w", file.Name, err)
+	}
+
+	// Separate rendered elements back into paragraphs and tables
+	var renderedParas []*Paragraph
+	var renderedTables []*Table
+	for _, elem := range renderedElements {
+		switch e := elem.(type) {
+		case *Paragraph:
+			renderedParas = append(renderedParas, e)
+		case *Table:
+			renderedTables = append(renderedTables, e)
+		}
+	}
+
+	headerFooter.Paragraphs = renderedParas
+	headerFooter.Tables = renderedTables
+
+	// Marshal the body elements
+	var bodyXML bytes.Buffer
+	encoder := xml.NewEncoder(&bodyXML)
+	for _, p := range renderedParas {
+		if err := encoder.Encode(p); err != nil {
+			return nil, fmt.Errorf("failed to encode paragraph: %w", err)
+		}
+	}
+	for _, t := range renderedTables {
+		if err := encoder.Encode(t); err != nil {
+			return nil, fmt.Errorf("failed to encode table: %w", err)
+		}
+	}
+	encoder.Flush()
+
+	// Extract the opening tag with namespaces from the original content
+	contentStr := string(content)
+
+	// Skip the XML declaration if present
+	xmlDeclEnd := strings.Index(contentStr, "?>")
+	searchStart := 0
+	if xmlDeclEnd != -1 && strings.HasPrefix(strings.TrimSpace(contentStr), "<?xml") {
+		searchStart = xmlDeclEnd + 2
+	}
+
+	// Find the opening root tag (starts after XML declaration)
+	rootTagStart := strings.Index(contentStr[searchStart:], "<")
+	if rootTagStart == -1 {
+		return nil, fmt.Errorf("malformed XML: no root tag found")
+	}
+	rootTagStart += searchStart
+
+	// Find the end of the opening tag
+	openTagEnd := strings.Index(contentStr[rootTagStart:], ">")
+	if openTagEnd == -1 {
+		return nil, fmt.Errorf("malformed XML: no opening tag end found")
+	}
+	openTagEnd += rootTagStart
+
+	// Find where the closing tag starts
+	var closingTag string
+	if strings.Contains(contentStr, "</w:hdr>") {
+		closingTag = "</w:hdr>"
+	} else if strings.Contains(contentStr, "</w:ftr>") {
+		closingTag = "</w:ftr>"
+	} else {
+		return nil, fmt.Errorf("unknown root element type")
+	}
+
+	// Reconstruct: XML declaration + original opening tag + rendered body + closing tag
+	result := []byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n")
+	result = append(result, content[rootTagStart:openTagEnd+1]...)  // Opening tag with namespaces
+	result = append(result, bodyXML.Bytes()...)                      // Rendered body
+	result = append(result, []byte(closingTag)...)                   // Closing tag
+
+	return result, nil
+}
+
 func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	if pt == nil || pt.template == nil {
 		return nil, NewTemplateError("invalid or nil template", 0, 0)
@@ -265,6 +382,34 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 				return nil, fmt.Errorf("failed to create %s: %w", file.Name, err)
 			}
 			_, err = fw.Write(renderedXML)
+			if err != nil {
+				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
+			}
+		} else if matched, _ := regexp.MatchString(`^word/header\d+\.xml$`, file.Name); matched {
+			// Process header files
+			renderedHeader, err := renderHeaderOrFooter(file, renderData, renderCtx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to render %s: %w", file.Name, err)
+			}
+			fw, err := w.Create(file.Name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create %s: %w", file.Name, err)
+			}
+			_, err = fw.Write(renderedHeader)
+			if err != nil {
+				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
+			}
+		} else if matched, _ := regexp.MatchString(`^word/footer\d+\.xml$`, file.Name); matched {
+			// Process footer files
+			renderedFooter, err := renderHeaderOrFooter(file, renderData, renderCtx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to render %s: %w", file.Name, err)
+			}
+			fw, err := w.Create(file.Name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create %s: %w", file.Name, err)
+			}
+			_, err = fw.Write(renderedFooter)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}

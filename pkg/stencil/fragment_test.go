@@ -41,6 +41,15 @@ func TestFragmentInclude(t *testing.T) {
 			expected: "Before Fragment Content After",
 		},
 		{
+			name:     "fragment include with German typographic quotes",
+			template: "Before {{include \u201Eheader\"}} After", // „header" with ASCII closing quote
+			fragments: map[string]string{
+				"header": "Header Content",
+			},
+			data:     map[string]interface{}{},
+			expected: "Before Header Content After",
+		},
+		{
 			name:     "fragment with template expressions",
 			template: "{{include \"greeting\"}}",
 			fragments: map[string]string{

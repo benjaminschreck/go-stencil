@@ -77,6 +77,14 @@ func TestTokenizeExpression(t *testing.T) {
 			},
 		},
 		{
+			name: "German typographic quotes with ASCII closing quote",
+			expr: "\u201Eheader\"",  // „ opens, " (ASCII) closes
+			want: []ExpressionToken{
+				{Type: ExprTokenString, Value: "header", Pos: 0},
+				{Type: ExprTokenEOF, Pos: 10},  // 3 bytes for „ + 6 for "header" + 1 byte for " = 10
+			},
+		},
+		{
 			name: "French/Swiss typographic quotes",
 			expr: `»Bonjour le monde«`,
 			want: []ExpressionToken{
