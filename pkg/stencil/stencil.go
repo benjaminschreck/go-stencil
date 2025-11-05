@@ -745,6 +745,11 @@ func (pt *PreparedTemplate) AddFragment(name string, content string) error {
 		return fmt.Errorf("invalid template")
 	}
 
+	// Lazy initialize fragments map if needed
+	if pt.template.fragments == nil {
+		pt.template.fragments = make(map[string]*fragment)
+	}
+
 	// Parse the fragment content as a document
 	parsed, err := ParseDocument(strings.NewReader(wrapInDocumentXML(content)))
 	if err != nil {
@@ -781,6 +786,11 @@ func (pt *PreparedTemplate) AddFragment(name string, content string) error {
 func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) error {
 	if pt == nil || pt.template == nil {
 		return fmt.Errorf("invalid template")
+	}
+
+	// Lazy initialize fragments map if needed
+	if pt.template.fragments == nil {
+		pt.template.fragments = make(map[string]*fragment)
 	}
 
 	// Parse the DOCX fragment
