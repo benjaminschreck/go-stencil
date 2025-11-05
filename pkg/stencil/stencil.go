@@ -198,6 +198,13 @@ func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext)
 		return nil, fmt.Errorf("failed to read %s: %w", file.Name, err)
 	}
 
+	// Check if this header/footer contains any template markers
+	// If not, return it as-is to preserve all XML structure and namespaces
+	originalContent := string(content)
+	if !strings.Contains(originalContent, "{{") && !strings.Contains(originalContent, "}}") {
+		return content, nil
+	}
+
 	// Parse using a generic structure that handles both <w:hdr> and <w:ftr>
 	// These have the same structure as document body - just paragraphs and tables
 	var headerFooter struct {
@@ -534,6 +541,32 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
+		} else if file.Name == "word/settings.xml" {
+			// Special handling for settings.xml - remove attachedTemplate reference
+			// This reference points to an external template file that may not exist
+			fr, err := file.Open()
+			if err != nil {
+				return nil, fmt.Errorf("failed to open %s: %w", file.Name, err)
+			}
+			settingsContent, err := io.ReadAll(fr)
+			fr.Close()
+			if err != nil {
+				return nil, fmt.Errorf("failed to read %s: %w", file.Name, err)
+			}
+
+			// Remove <w:attachedTemplate r:id="..."/> tag if present
+			settingsStr := string(settingsContent)
+			// Match both self-closing and regular tags
+			settingsStr = regexp.MustCompile(`<w:attachedTemplate[^>]*/?>`).ReplaceAllString(settingsStr, "")
+
+			fw, err := w.Create(file.Name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create %s: %w", file.Name, err)
+			}
+			_, err = fw.Write([]byte(settingsStr))
+			if err != nil {
+				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
+			}
 		} else if file.Name == "word/styles.xml" {
 			// Merge styles from fragments
 			fr, err := file.Open()
@@ -592,6 +625,66 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 			}
 
 			// We'll write this later after ensuring PNG is registered
+		} else if file.Name == "word/_rels/settings.xml.rels" {
+			// Special handling for settings.xml.rels - filter out attachedTemplate relationships
+			// These reference external template files that may not exist, causing Word to fail opening the document
+			fr, err := file.Open()
+			if err != nil {
+				return nil, fmt.Errorf("failed to open %s: %w", file.Name, err)
+			}
+			relsContent, err := io.ReadAll(fr)
+			fr.Close()
+			if err != nil {
+				return nil, fmt.Errorf("failed to read %s: %w", file.Name, err)
+			}
+
+			// Parse relationships
+			var rels Relationships
+			err = xml.Unmarshal(relsContent, &rels)
+			if err != nil {
+				// If parsing fails, copy the file as-is
+				fw, err := w.Create(file.Name)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create %s: %w", file.Name, err)
+				}
+				_, err = fw.Write(relsContent)
+				if err != nil {
+					return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
+				}
+				continue
+			}
+
+			// Filter out attachedTemplate relationships (references to .dotm template files)
+			var filteredRels []Relationship
+			for _, rel := range rels.Relationship {
+				if !strings.Contains(rel.Type, "attachedTemplate") {
+					filteredRels = append(filteredRels, rel)
+				}
+			}
+
+			// Always write the file, even if empty after filtering
+			// Word expects this file to exist if settings.xml exists
+			rels.Relationship = filteredRels
+			output, err := xml.Marshal(&rels)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal %s: %w", file.Name, err)
+			}
+
+			fw, err := w.Create(file.Name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create %s: %w", file.Name, err)
+			}
+
+			// Write XML header
+			_, err = fw.Write([]byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n"))
+			if err != nil {
+				return nil, fmt.Errorf("failed to write XML header to %s: %w", file.Name, err)
+			}
+
+			_, err = fw.Write(output)
+			if err != nil {
+				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
+			}
 		} else {
 			// Copy other files as-is
 			fw, err := w.Create(file.Name)
