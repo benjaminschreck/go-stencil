@@ -55,6 +55,11 @@ func MergeConsecutiveRuns(para *xml.Paragraph) {
 		if run.Text != nil && run.Break == nil && currentRun != nil && currentRun.Text != nil && runPropertiesEquivalent(run.Properties, currentRun.Properties) {
 			// Merge text content
 			currentRun.Text.Content += run.Text.Content
+			// Preserve xml:space="preserve" if either run has it
+			// This is important for preserving leading/trailing spaces
+			if run.Text.Space == "preserve" || currentRun.Text.Space == "preserve" {
+				currentRun.Text.Space = "preserve"
+			}
 		} else {
 			// Save current run and start new one
 			if currentRun != nil {
@@ -174,6 +179,10 @@ func mergeRunSlice(runs []xml.Run) []xml.Run {
 		// Only merge text runs without breaks that have equivalent properties
 		if run.Text != nil && run.Break == nil && current != nil && current.Text != nil && runPropertiesEquivalent(run.Properties, current.Properties) {
 			current.Text.Content += run.Text.Content
+			// Preserve xml:space="preserve" if either run has it
+			if run.Text.Space == "preserve" || current.Text.Space == "preserve" {
+				current.Text.Space = "preserve"
+			}
 		} else {
 			if current != nil {
 				merged = append(merged, *current)
