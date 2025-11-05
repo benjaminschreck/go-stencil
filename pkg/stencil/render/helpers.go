@@ -1,8 +1,28 @@
 package render
 
 import (
+	"reflect"
+
 	"github.com/benjaminschreck/go-stencil/pkg/stencil/xml"
 )
+
+// runPropertiesEquivalent checks if two run properties are equivalent for merging purposes
+// This is important to preserve formatting like bold, italic, etc.
+func runPropertiesEquivalent(p1, p2 *xml.RunProperties) bool {
+	// If both are nil, they're equivalent
+	if p1 == nil && p2 == nil {
+		return true
+	}
+
+	// If one is nil and the other isn't, they're not equivalent
+	if (p1 == nil) != (p2 == nil) {
+		return false
+	}
+
+	// Use reflect.DeepEqual to compare the properties
+	// This will check all fields including Bold, Italic, Underline, etc.
+	return reflect.DeepEqual(p1, p2)
+}
 
 // MergeConsecutiveRuns merges consecutive runs in a paragraph to handle split template variables
 func MergeConsecutiveRuns(para *xml.Paragraph) {
@@ -29,8 +49,10 @@ func MergeConsecutiveRuns(para *xml.Paragraph) {
 		}
 
 		// Check if this run can be merged with the previous one
-		// Only merge if the current run has text AND no break
-		if run.Text != nil && run.Break == nil && currentRun != nil && currentRun.Text != nil {
+		// Only merge if:
+		// 1. Both runs have text and no break
+		// 2. Both runs have equivalent formatting properties
+		if run.Text != nil && run.Break == nil && currentRun != nil && currentRun.Text != nil && runPropertiesEquivalent(run.Properties, currentRun.Properties) {
 			// Merge text content
 			currentRun.Text.Content += run.Text.Content
 		} else {
@@ -149,8 +171,8 @@ func mergeRunSlice(runs []xml.Run) []xml.Run {
 			continue
 		}
 
-		// Only merge text runs without breaks
-		if run.Text != nil && run.Break == nil && current != nil && current.Text != nil {
+		// Only merge text runs without breaks that have equivalent properties
+		if run.Text != nil && run.Break == nil && current != nil && current.Text != nil && runPropertiesEquivalent(run.Properties, current.Properties) {
 			current.Text.Content += run.Text.Content
 		} else {
 			if current != nil {
