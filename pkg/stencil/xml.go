@@ -56,6 +56,7 @@ type (
 	Table                = xml.Table
 	TableProperties      = xml.TableProperties
 	TableIndentation     = xml.TableIndentation
+	TableBorders         = xml.TableBorders
 	TableLayout          = xml.TableLayout
 	TableCellMargins     = xml.TableCellMargins
 	CellMargin           = xml.CellMargin

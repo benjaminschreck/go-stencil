@@ -55,6 +55,7 @@ type TableProperties struct {
 	Style       *Style            `xml:"tblStyle"`
 	Width       *Width            `xml:"tblW"`
 	Indentation *TableIndentation `xml:"tblInd"`
+	Borders     *TableBorders     `xml:"tblBorders"`
 	Layout      *TableLayout      `xml:"tblLayout"`
 	CellMargins *TableCellMargins `xml:"tblCellMar"`
 	Look        *TableLook        `xml:"tblLook"`
@@ -84,6 +85,13 @@ func (p TableProperties) MarshalXML(e *xml.Encoder, start xml.StartElement) erro
 	// Encode indentation if present
 	if p.Indentation != nil {
 		if err := e.EncodeElement(p.Indentation, xml.StartElement{Name: xml.Name{Local: "w:tblInd"}}); err != nil {
+			return err
+		}
+	}
+
+	// Encode borders if present
+	if p.Borders != nil {
+		if err := e.EncodeElement(p.Borders, xml.StartElement{Name: xml.Name{Local: "w:tblBorders"}}); err != nil {
 			return err
 		}
 	}
@@ -525,6 +533,59 @@ func (s Shading) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 
 	// Self-closing element
 	return e.EncodeElement(struct{}{}, start)
+}
+
+// TableBorders represents borders for a table (w:tblBorders)
+// This includes inner borders (insideH, insideV) in addition to outer borders
+type TableBorders struct {
+	Top     *BorderProperties `xml:"top"`
+	Left    *BorderProperties `xml:"left"`
+	Bottom  *BorderProperties `xml:"bottom"`
+	Right   *BorderProperties `xml:"right"`
+	InsideH *BorderProperties `xml:"insideH"`
+	InsideV *BorderProperties `xml:"insideV"`
+}
+
+// MarshalXML implements custom XML marshaling for TableBorders
+func (b TableBorders) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:tblBorders"}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	// Encode each border if present (order matters in Word XML)
+	if b.Top != nil {
+		if err := e.EncodeElement(b.Top, xml.StartElement{Name: xml.Name{Local: "w:top"}}); err != nil {
+			return err
+		}
+	}
+	if b.Left != nil {
+		if err := e.EncodeElement(b.Left, xml.StartElement{Name: xml.Name{Local: "w:left"}}); err != nil {
+			return err
+		}
+	}
+	if b.Bottom != nil {
+		if err := e.EncodeElement(b.Bottom, xml.StartElement{Name: xml.Name{Local: "w:bottom"}}); err != nil {
+			return err
+		}
+	}
+	if b.Right != nil {
+		if err := e.EncodeElement(b.Right, xml.StartElement{Name: xml.Name{Local: "w:right"}}); err != nil {
+			return err
+		}
+	}
+	if b.InsideH != nil {
+		if err := e.EncodeElement(b.InsideH, xml.StartElement{Name: xml.Name{Local: "w:insideH"}}); err != nil {
+			return err
+		}
+	}
+	if b.InsideV != nil {
+		if err := e.EncodeElement(b.InsideV, xml.StartElement{Name: xml.Name{Local: "w:insideV"}}); err != nil {
+			return err
+		}
+	}
+
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
 }
 
 // TableCellBorders represents borders for a table cell
