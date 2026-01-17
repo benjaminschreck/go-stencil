@@ -615,7 +615,8 @@ func productionExample(engine *stencil.Engine) {
 	// This example uses a real-world production template
 	tmpl, err := engine.PrepareFile("production_legal.docx")
 	if err != nil {
-		log.Fatalf("Failed to prepare template: %v", err)
+		fmt.Printf("Skipping: %v\n", err)
+		return
 	}
 	defer tmpl.Close()
 
