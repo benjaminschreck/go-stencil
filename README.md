@@ -291,7 +291,7 @@ go-stencil includes a comprehensive set of built-in functions:
 - `uppercase(text)` - Convert to uppercase
 - `titlecase(text)` - Convert to title case
 - `join(items, separator)` - Join items with separator
-- `joinAnd(items)` - Join items with commas and "and"
+- `joinAnd(items, separator, lastSeparator)` - Join items with two separators (e.g., `joinAnd(names, ", ", " and ")`)
 - `replace(text, old, new)` - Replace text
 - `length(value)` - Get length of string, array, or map
 
@@ -302,7 +302,7 @@ go-stencil includes a comprehensive set of built-in functions:
 - `round(number)` - Round to nearest integer
 - `floor(number)` - Round down
 - `ceil(number)` - Round up
-- `sum(numbers...)` - Sum of numbers
+- `sum(list)` - Sum of numbers in a list
 
 ### Formatting Functions
 

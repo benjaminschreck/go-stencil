@@ -363,7 +363,7 @@ See the [Functions Documentation](FUNCTIONS.md) for a complete list of built-in 
 ## Thread Safety
 
 - `Engine` instances are thread-safe and can be shared across goroutines
-- `Template` instances are NOT thread-safe; use one per goroutine or synchronize access
+- `PreparedTemplate` is safe for concurrent use. Multiple goroutines can call `Render()` on the same template simultaneously
 - The global template cache is thread-safe
 - Custom functions should be thread-safe if used concurrently
 

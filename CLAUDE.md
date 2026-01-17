@@ -564,8 +564,8 @@ All template expressions use double curly braces `{{}}` with descriptive keyword
 **Important**: All functions require parentheses `()`, even when called with no arguments.
 
 - String functions: `{{uppercase(name)}}`, `{{lowercase(text)}}`, `{{join(items, ", ")}}`
-- Math functions: `{{round(price)}}`, `{{sum(numbers)}}`, `{{floor(value)}}`
-- Formatting: `{{format("%.2f", price)}}`, `{{date("YYYY-MM-DD", dateValue)}}`
+- Math functions: `{{round(price)}}`, `{{sum(prices)}}`, `{{floor(value)}}`
+- Formatting: `{{format("%.2f", price)}}`, `{{date("2006-01-02", dateValue)}}`
 - Type conversion: `{{str(number)}}`, `{{integer(text)}}`, `{{decimal(value)}}`
 
 #### Document Operations

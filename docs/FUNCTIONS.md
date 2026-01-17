@@ -128,14 +128,15 @@ Joins array elements with a separator
 ```
 
 ### joinAnd
-Joins array elements with commas and "and" before the last item
+Joins array elements with two separators: one for most items and one for the last item
 
-**Syntax:** `joinAnd(array)`
+**Syntax:** `joinAnd(array, separator, lastSeparator)`
 
 **Examples:**
 ```
-{{joinAnd(list("Tom", "Jane", "Bob"))}}  // "Tom, Jane and Bob"
-{{joinAnd(features)}}  // "fast, reliable and secure"
+{{joinAnd(list("Tom", "Jane", "Bob"), ", ", " and ")}}  // "Tom, Jane and Bob"
+{{joinAnd(features, ", ", " and ")}}  // "fast, reliable and secure"
+{{joinAnd(list("A", "B"), "; ", " or ")}}  // "A or B"
 ```
 
 ### replace
@@ -220,13 +221,13 @@ Rounds a number up to the nearest integer
 ```
 
 ### sum
-Calculates the sum of numbers
+Calculates the sum of numbers in a list
 
-**Syntax:** `sum(numbers...)`
+**Syntax:** `sum(list)`
 
 **Examples:**
 ```
-{{sum(1, 2, 3)}}  // 6
+{{sum(list(1, 2, 3))}}  // 6
 {{sum(map("price", items))}}  // Sum of all prices
 ```
 
@@ -356,7 +357,7 @@ Inserts a page break in the document
 
 **Examples:**
 ```
-{{pageBreak}}
+{{pageBreak()}}
 // Content after this appears on a new page
 ```
 
@@ -382,17 +383,18 @@ Hides a table column
 **Syntax:** `hideColumn()` or `hideColumn(strategy)`
 
 **Strategies:**
-- `"resize-last"` - Resize the last column (default)
-- `"resize-first"` - Resize the first column
-- `"resize-all"` - Distribute space among all columns
+- `"fixed"` - Keep remaining column widths unchanged (default)
+- `"redistribute"` - Distribute removed width equally among remaining columns
+- `"proportional"` - Distribute removed width proportionally based on column widths
 
 **Examples:**
 ```
 {{if not(showPrices)}}
-{{hideColumn}}  // Hides the price column
+{{hideColumn()}}  // Hides the price column with default strategy
 {{end}}
 
-{{hideColumn("resize-first")}}
+{{hideColumn("redistribute")}}
+{{hideColumn("proportional")}}
 ```
 
 ### html
@@ -404,13 +406,11 @@ Renders HTML content as formatted text
 - `<b>`, `<strong>` - Bold
 - `<i>`, `<em>` - Italic
 - `<u>` - Underline
-- `<s>`, `<strike>` - Strikethrough
+- `<s>` - Strikethrough
 - `<sub>` - Subscript
 - `<sup>` - Superscript
 - `<br>` - Line break
-- `<span style="">` - Custom styling
-- `<a href="">` - Hyperlinks
-- Lists: `<ul>`, `<ol>`, `<li>`
+- `<span>` - Container (attributes parsed but styling limited)
 
 **Examples:**
 ```
