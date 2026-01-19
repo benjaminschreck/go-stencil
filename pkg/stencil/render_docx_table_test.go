@@ -105,6 +105,7 @@ func TestRenderTableCellWithSplitRuns(t *testing.T) {
 
 func TestMergeConsecutiveRunsInTableCell(t *testing.T) {
 	// Test that mergeConsecutiveRuns is called within RenderTableCell
+	// This tests that split runs like "{{", "for", " ", "item", ... are merged correctly
 	cell := &TableCell{
 		Paragraphs: []Paragraph{
 			{
@@ -118,6 +119,8 @@ func TestMergeConsecutiveRunsInTableCell(t *testing.T) {
 					{Text: &Text{Content: " "}},
 					{Text: &Text{Content: "items"}},
 					{Text: &Text{Content: "}}"}},
+					{Text: &Text{Content: "{{item}}"}},
+					{Text: &Text{Content: "{{end}}"}},
 				},
 			},
 		},

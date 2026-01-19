@@ -65,6 +65,74 @@ func namespaceURIToPrefix(uri string) string {
 	return uri
 }
 
+// convertNamespaceURIsToPrefix converts all namespace URIs in an XML string to their prefixes
+func convertNamespaceURIsToPrefix(xml string) string {
+	// All namespace URI to prefix conversions
+	// These must be applied for both element names and attribute names
+	conversions := []struct {
+		uri    string
+		prefix string
+	}{
+		// Core Word namespaces
+		{"http://schemas.openxmlformats.org/wordprocessingml/2006/main:", "w:"},
+		{"http://schemas.openxmlformats.org/officeDocument/2006/relationships:", "r:"},
+		{"http://schemas.openxmlformats.org/officeDocument/2006/math:", "m:"},
+		{"http://www.w3.org/XML/1998/namespace:", "xml:"},
+		// Drawing namespaces
+		{"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing:", "wp:"},
+		{"http://schemas.openxmlformats.org/drawingml/2006/main:", "a:"},
+		{"http://schemas.openxmlformats.org/drawingml/2006/picture:", "pic:"},
+		{"http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing:", "wp14:"},
+		{"http://schemas.microsoft.com/office/drawing/2010/main:", "a14:"},
+		// VML namespaces
+		{"urn:schemas-microsoft-com:vml:", "v:"},
+		{"urn:schemas-microsoft-com:office:office:", "o:"},
+		{"urn:schemas-microsoft-com:office:word:", "w10:"},
+		// Markup compatibility namespace
+		{"http://schemas.openxmlformats.org/markup-compatibility/2006:", "mc:"},
+		// Word processing shapes and canvas
+		{"http://schemas.microsoft.com/office/word/2010/wordprocessingShape:", "wps:"},
+		{"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas:", "wpc:"},
+		{"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup:", "wpg:"},
+		{"http://schemas.microsoft.com/office/word/2010/wordprocessingInk:", "wpi:"},
+		// Extended Word namespaces
+		{"http://schemas.microsoft.com/office/word/2010/wordml:", "w14:"},
+		{"http://schemas.microsoft.com/office/word/2012/wordml:", "w15:"},
+		{"http://schemas.microsoft.com/office/word/2015/wordml/symex:", "w16se:"},
+		{"http://schemas.microsoft.com/office/word/2016/wordml/cid:", "w16cid:"},
+		{"http://schemas.microsoft.com/office/word/2018/wordml:", "w16:"},
+		{"http://schemas.microsoft.com/office/word/2018/wordml/cex:", "w16cex:"},
+		{"http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash:", "w16sdtdh:"},
+		{"http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock:", "w16sdtfl:"},
+		{"http://schemas.microsoft.com/office/word/2023/wordml/word16du:", "w16du:"},
+		{"http://schemas.microsoft.com/office/word/2006/wordml:", "wne:"},
+		// Chart namespaces
+		{"http://schemas.microsoft.com/office/drawing/2014/chartex:", "cx:"},
+		{"http://schemas.microsoft.com/office/drawing/2015/9/8/chartex:", "cx1:"},
+		{"http://schemas.microsoft.com/office/drawing/2015/10/21/chartex:", "cx2:"},
+		{"http://schemas.microsoft.com/office/drawing/2016/5/9/chartex:", "cx3:"},
+		{"http://schemas.microsoft.com/office/drawing/2016/5/10/chartex:", "cx4:"},
+		{"http://schemas.microsoft.com/office/drawing/2016/5/11/chartex:", "cx5:"},
+		{"http://schemas.microsoft.com/office/drawing/2016/5/12/chartex:", "cx6:"},
+		{"http://schemas.microsoft.com/office/drawing/2016/5/13/chartex:", "cx7:"},
+		{"http://schemas.microsoft.com/office/drawing/2016/5/14/chartex:", "cx8:"},
+		// Other drawing namespaces
+		{"http://schemas.microsoft.com/office/drawing/2016/ink:", "aink:"},
+		{"http://schemas.microsoft.com/office/drawing/2017/model3d:", "am3d:"},
+		// Office extension namespaces
+		{"http://schemas.microsoft.com/office/2019/extlst:", "oel:"},
+	}
+
+	result := xml
+	for _, c := range conversions {
+		// Replace for element names (e.g., <uri:name>)
+		result = strings.ReplaceAll(result, c.uri, c.prefix)
+		// Replace for attribute names (e.g., uri:attr="value")
+		// This is handled by the same replacement since both use uri:
+	}
+	return result
+}
+
 // marshalDocumentWithNamespaces marshals a document with proper namespaces
 func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	// First, collect all raw XML elements indexed by a unique marker
@@ -246,32 +314,7 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	for marker, rawXML := range rawXMLMap {
 		if strings.Contains(xmlStr, marker) {
 			// Convert full namespace URIs to namespace prefixes in the raw XML
-			cleanedXML := string(rawXML)
-			// For elements: <uri:name> becomes <prefix:name>
-			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.openxmlformats.org/wordprocessingml/2006/main:", "w:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing:", "wp:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.openxmlformats.org/drawingml/2006/main:", "a:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.openxmlformats.org/drawingml/2006/picture:", "pic:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing:", "wp14:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.microsoft.com/office/word/2010/wordml:", "w14:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.microsoft.com/office/drawing/2010/main:", "a14:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, "http://schemas.openxmlformats.org/officeDocument/2006/relationships:", "r:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, "http://www.w3.org/XML/1998/namespace:", "xml:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, "urn:schemas-microsoft-com:vml:", "v:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, "urn:schemas-microsoft-com:office:office:", "o:")
-			// For attributes: space + uri: + name becomes space + prefix: + name
-			// Note: attributes have a space before the namespace URI
-			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.openxmlformats.org/wordprocessingml/2006/main:", " w:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing:", " wp:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.openxmlformats.org/drawingml/2006/main:", " a:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.openxmlformats.org/drawingml/2006/picture:", " pic:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing:", " wp14:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.microsoft.com/office/word/2010/wordml:", " w14:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.microsoft.com/office/drawing/2010/main:", " a14:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, " http://schemas.openxmlformats.org/officeDocument/2006/relationships:", " r:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, " http://www.w3.org/XML/1998/namespace:", " xml:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, " urn:schemas-microsoft-com:vml:", " v:")
-			cleanedXML = strings.ReplaceAll(cleanedXML, " urn:schemas-microsoft-com:office:office:", " o:")
+			cleanedXML := convertNamespaceURIsToPrefix(string(rawXML))
 
 			// Check if this is a paragraph property marker
 			if strings.HasPrefix(marker, "__PARA_PROP_MARKER_") {
@@ -370,27 +413,7 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 				sectBuf.WriteString(">")
 
 				// Add content with namespace conversion
-				sectContent := string(doc.Body.SectionProperties.Content)
-
-				// Convert namespace URIs to prefixes (same as we do for raw XML elements)
-				sectContent = strings.ReplaceAll(sectContent, "http://schemas.openxmlformats.org/wordprocessingml/2006/main:", "w:")
-				sectContent = strings.ReplaceAll(sectContent, "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing:", "wp:")
-				sectContent = strings.ReplaceAll(sectContent, "http://schemas.openxmlformats.org/drawingml/2006/main:", "a:")
-				sectContent = strings.ReplaceAll(sectContent, "http://schemas.openxmlformats.org/drawingml/2006/picture:", "pic:")
-				sectContent = strings.ReplaceAll(sectContent, "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing:", "wp14:")
-				sectContent = strings.ReplaceAll(sectContent, "http://schemas.microsoft.com/office/drawing/2010/main:", "a14:")
-				sectContent = strings.ReplaceAll(sectContent, "http://schemas.openxmlformats.org/officeDocument/2006/relationships:", "r:")
-				sectContent = strings.ReplaceAll(sectContent, "http://www.w3.org/XML/1998/namespace:", "xml:")
-
-				// For attributes (with leading space)
-				sectContent = strings.ReplaceAll(sectContent, " http://schemas.openxmlformats.org/wordprocessingml/2006/main:", " w:")
-				sectContent = strings.ReplaceAll(sectContent, " http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing:", " wp:")
-				sectContent = strings.ReplaceAll(sectContent, " http://schemas.openxmlformats.org/drawingml/2006/main:", " a:")
-				sectContent = strings.ReplaceAll(sectContent, " http://schemas.openxmlformats.org/drawingml/2006/picture:", " pic:")
-				sectContent = strings.ReplaceAll(sectContent, " http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing:", " wp14:")
-				sectContent = strings.ReplaceAll(sectContent, " http://schemas.microsoft.com/office/drawing/2010/main:", " a14:")
-				sectContent = strings.ReplaceAll(sectContent, " http://schemas.openxmlformats.org/officeDocument/2006/relationships:", " r:")
-				sectContent = strings.ReplaceAll(sectContent, " http://www.w3.org/XML/1998/namespace:", " xml:")
+				sectContent := convertNamespaceURIsToPrefix(string(doc.Body.SectionProperties.Content))
 
 				sectBuf.WriteString(sectContent)
 				sectBuf.WriteString("</w:sectPr>")
