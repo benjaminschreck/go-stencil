@@ -127,6 +127,10 @@ func main() {
 	// Example 9: Nested fragments showcase
 	fmt.Println("\n=== Example 9: Nested Fragments Showcase ===")
 	nestedFragmentsExample(engine)
+
+	// Example 10: Template validation
+	fmt.Println("\n=== Example 10: Template Validation ===")
+	validationExample(engine)
 }
 
 func basicExample(engine *stencil.Engine) {
@@ -611,7 +615,8 @@ func productionExample(engine *stencil.Engine) {
 	// This example uses a real-world production template
 	tmpl, err := engine.PrepareFile("production_legal.docx")
 	if err != nil {
-		log.Fatalf("Failed to prepare template: %v", err)
+		fmt.Printf("Skipping: %v\n", err)
+		return
 	}
 	defer tmpl.Close()
 
@@ -879,4 +884,165 @@ func nestedFragmentsExample(engine *stencil.Engine) {
 	fmt.Println("- fragment1 (Company Header) includes fragment2")
 	fmt.Println("- fragment2 (Product Catalog) includes fragment3")
 	fmt.Println("- fragment3 (Legal Footer) is the deepest level")
+}
+
+func validationExample(engine *stencil.Engine) {
+	fmt.Println("Template Validation API allows checking templates for errors without rendering.")
+	fmt.Println()
+
+	// Example 1: Validate a template file
+	fmt.Println("--- Validating invoice.docx ---")
+	tmpl, err := engine.PrepareFile("invoice.docx")
+	if err != nil {
+		fmt.Printf("Could not prepare template: %v\n", err)
+	} else {
+		defer tmpl.Close()
+
+		// Basic validation
+		result := tmpl.Validate()
+
+		fmt.Printf("Valid: %v\n", result.Valid)
+		fmt.Printf("Variables found: %v\n", result.Variables)
+		fmt.Printf("Functions called: %v\n", result.Functions)
+		fmt.Printf("Control structures: %d\n", len(result.ControlStructs))
+
+		if len(result.Errors) > 0 {
+			fmt.Println("Errors:")
+			for _, e := range result.Errors {
+				fmt.Printf("  - %s\n", e.Error())
+			}
+		}
+
+		if len(result.Warnings) > 0 {
+			fmt.Println("Warnings:")
+			for _, w := range result.Warnings {
+				fmt.Printf("  - %s\n", w.Error())
+			}
+		}
+	}
+	fmt.Println()
+
+	// Example 2: Validate with fragment checking
+	fmt.Println("--- Validating report.docx with fragment checking ---")
+	reportTmpl, err := engine.PrepareFile("report.docx")
+	if err != nil {
+		fmt.Printf("Could not prepare template: %v\n", err)
+	} else {
+		defer reportTmpl.Close()
+
+		// First validate without adding fragments - should show missing fragment errors
+		result := reportTmpl.Validate()
+		fmt.Printf("Before adding fragments - Valid: %v\n", result.Valid)
+		if len(result.FragmentRefs) > 0 {
+			fmt.Printf("Fragments referenced: %v\n", result.FragmentRefs)
+		}
+		if len(result.Errors) > 0 {
+			fmt.Println("Missing fragment errors:")
+			for _, e := range result.Errors {
+				if e.Type == stencil.ValidationErrorMissingFragment {
+					fmt.Printf("  - %s\n", e.Error())
+				}
+			}
+		}
+
+		// Add required fragments
+		reportTmpl.AddFragment("disclaimer", "This is confidential.")
+		reportTmpl.AddFragment("copyright", "© 2024 ACME Corp")
+		reportTmpl.AddFragment("header", "ACME Report Header")
+
+		// Validate again - should pass now
+		result = reportTmpl.Validate()
+		fmt.Printf("After adding fragments - Valid: %v\n", result.Valid)
+	}
+	fmt.Println()
+
+	// Example 3: Validate expressions directly
+	fmt.Println("--- Direct expression validation ---")
+	expressions := []string{
+		"name",
+		"customer.address.city",
+		"price * quantity",
+		"uppercase(name)",
+		"unclosed(",        // Invalid - unclosed parenthesis
+		"'unclosed string", // Invalid - unclosed string
+	}
+
+	for _, expr := range expressions {
+		err := stencil.ValidateExpression(expr)
+		if err != nil {
+			fmt.Printf("  %-25s -> INVALID: %v\n", expr, err)
+		} else {
+			fmt.Printf("  %-25s -> valid\n", expr)
+		}
+	}
+	fmt.Println()
+
+	// Example 4: Validate for loop syntax
+	fmt.Println("--- For loop syntax validation ---")
+	forLoops := []string{
+		"item in items",
+		"i, item in items",
+		"x in range(1, 10)",
+		"invalid syntax",    // Invalid - missing 'in'
+		"x y z in items",    // Invalid - too many variables
+	}
+
+	for _, loop := range forLoops {
+		err := stencil.ValidateForSyntax(loop)
+		if err != nil {
+			fmt.Printf("  %-25s -> INVALID: %v\n", loop, err)
+		} else {
+			fmt.Printf("  %-25s -> valid\n", loop)
+		}
+	}
+	fmt.Println()
+
+	// Example 5: Validation with custom options
+	fmt.Println("--- Validation with custom options ---")
+	if tmpl != nil {
+		// Disable function checking - useful when using custom functions
+		opts := stencil.ValidationOptions{
+			CheckFunctions: false, // Don't check if functions exist
+			CheckFragments: true,
+			StrictMode:     false,
+		}
+
+		result := tmpl.ValidateWithOptions(opts)
+		fmt.Printf("With function checking disabled - Valid: %v\n", result.Valid)
+
+		// Enable strict mode - warnings become errors
+		opts.StrictMode = true
+		result = tmpl.ValidateWithOptions(opts)
+		fmt.Printf("With strict mode enabled - Valid: %v\n", result.Valid)
+	}
+	fmt.Println()
+
+	// Example 6: Extract template tokens for analysis
+	fmt.Println("--- Token extraction ---")
+	sampleText := "Hello {{name}}, your order {{order.id}} totals {{format('%.2f', total)}}."
+	tokens := stencil.ExtractTemplateTokens(sampleText)
+	fmt.Printf("Sample: %s\n", sampleText)
+	fmt.Printf("Tokens found: %v\n", tokens)
+	fmt.Println()
+
+	// Example 7: Using ValidationResult methods
+	fmt.Println("--- ValidationResult methods ---")
+	if tmpl != nil {
+		result := tmpl.Validate()
+
+		// Check using helper methods
+		fmt.Printf("HasErrors(): %v\n", result.HasErrors())
+		fmt.Printf("HasWarnings(): %v\n", result.HasWarnings())
+
+		// Get combined error (useful for error handling)
+		if err := result.Error(); err != nil {
+			fmt.Printf("Error(): %v\n", err)
+		} else {
+			fmt.Println("Error(): nil (template is valid)")
+		}
+
+		// Get human-readable summary
+		fmt.Println("\nFull validation summary:")
+		fmt.Println(result.String())
+	}
 }
