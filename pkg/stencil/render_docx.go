@@ -1191,6 +1191,15 @@ func processTokens(tokens []Token, startIdx int, data TemplateData) (string, int
 			result.WriteString(rendered)
 			i = nextIdx
 
+		case TokenFor:
+			// Process for loop statement
+			rendered, nextIdx, err := processForStatement(tokens, i, data)
+			if err != nil {
+				return "", i, err
+			}
+			result.WriteString(rendered)
+			i = nextIdx
+
 		case TokenElse, TokenElsif:
 			// These should be handled by their parent if/unless
 			// If we encounter them here, we're at the end of a branch
@@ -1294,7 +1303,7 @@ func processUnlessStatement(tokens []Token, startIdx int, data TemplateData) (st
 
 	for i := startIdx + 1; i < len(tokens); i++ {
 		switch tokens[i].Type {
-		case TokenIf, TokenUnless:
+		case TokenIf, TokenUnless, TokenFor:
 			depth++
 		case TokenElse:
 			if depth == 1 && elseIdx == -1 {
@@ -1361,7 +1370,7 @@ func findIfBranches(tokens []Token, startIdx int) ([]ifBranch, int, error) {
 		}
 
 		switch tokens[i].Type {
-		case TokenIf, TokenUnless:
+		case TokenIf, TokenUnless, TokenFor:
 			depth++
 		case TokenEnd:
 			depth--
@@ -1387,6 +1396,76 @@ type ifBranch struct {
 	index      int
 	branchType string
 	condition  string
+}
+
+// processForStatement processes a for loop and returns the rendered result
+func processForStatement(tokens []Token, startIdx int, data TemplateData) (string, int, error) {
+	if startIdx >= len(tokens) || tokens[startIdx].Type != TokenFor {
+		return "", startIdx, fmt.Errorf("expected for token at index %d", startIdx)
+	}
+
+	// Parse the for expression (e.g. "item in items" or "idx, item in items")
+	forNode, err := parseForSyntax(tokens[startIdx].Value)
+	if err != nil {
+		return "", startIdx, fmt.Errorf("invalid for syntax: %w", err)
+	}
+
+	// Find the matching {{end}} by tracking nesting depth
+	endIdx := -1
+	depth := 1
+	for i := startIdx + 1; i < len(tokens); i++ {
+		switch tokens[i].Type {
+		case TokenIf, TokenUnless, TokenFor:
+			depth++
+		case TokenEnd:
+			depth--
+			if depth == 0 {
+				endIdx = i
+			}
+		}
+		if endIdx != -1 {
+			break
+		}
+	}
+
+	if endIdx == -1 {
+		return "", startIdx, fmt.Errorf("no matching end for for loop")
+	}
+
+	// Evaluate the collection
+	collectionVal, err := forNode.Collection.Evaluate(data)
+	if err != nil {
+		return "", endIdx + 1, fmt.Errorf("failed to evaluate for collection: %w", err)
+	}
+
+	items, err := toSlice(collectionVal)
+	if err != nil {
+		return "", endIdx + 1, fmt.Errorf("failed to convert collection to slice: %w", err)
+	}
+
+	// Extract body tokens (between for and end)
+	bodyTokens := tokens[startIdx+1 : endIdx]
+
+	// Iterate and render
+	var result strings.Builder
+	for idx, item := range items {
+		loopData := make(TemplateData)
+		for k, v := range data {
+			loopData[k] = v
+		}
+		loopData[forNode.Variable] = item
+		if forNode.IndexVar != "" {
+			loopData[forNode.IndexVar] = idx
+		}
+
+		rendered, _, err := processTokens(bodyTokens, 0, loopData)
+		if err != nil {
+			return "", startIdx, err
+		}
+		result.WriteString(rendered)
+	}
+
+	return result.String(), endIdx + 1, nil
 }
 
 // evaluateCondition evaluates a condition expression
