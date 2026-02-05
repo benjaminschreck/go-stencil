@@ -761,18 +761,15 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 
 				// Render the fragment content
 				if frag.parsed != nil && frag.parsed.Body != nil {
-					// Push fragment to stack for circular reference detection
-					ctx.fragmentStack = append(ctx.fragmentStack, fragmentName)
-					defer func() {
-						ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
-					}()
-
-					// Check for circular references
-					for _, f := range ctx.fragmentStack[:len(ctx.fragmentStack)-1] {
+					// Check for circular references (same fragment already in current stack)
+					for _, f := range ctx.fragmentStack {
 						if f == fragmentName {
 							return nil, fmt.Errorf("circular fragment reference detected: %s", fragmentName)
 						}
 					}
+
+					// Push fragment to stack for circular reference detection
+					ctx.fragmentStack = append(ctx.fragmentStack, fragmentName)
 
 					// Check render depth
 					maxDepth := 10
@@ -780,11 +777,17 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 						maxDepth = ctx.renderDepth
 					}
 					if len(ctx.fragmentStack) > maxDepth {
+						ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
 						return nil, fmt.Errorf("maximum render depth exceeded")
 					}
 
 					// Render the fragment body first
-					renderedBody, err := RenderBodyWithControlStructures(frag.parsed.Body, data, ctx)
+					renderedBody, err := func() ([]*Token, error) {
+						defer func() {
+							ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
+						}()
+						return RenderBodyWithControlStructures(frag.parsed.Body, data, ctx)
+					}()
 					if err != nil {
 						return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
 					}
