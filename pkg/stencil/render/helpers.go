@@ -2,6 +2,7 @@ package render
 
 import (
 	"reflect"
+	"strings"
 
 	"github.com/benjaminschreck/go-stencil/pkg/stencil/xml"
 )
@@ -92,6 +93,9 @@ func MergeConsecutiveRuns(para *xml.Paragraph) {
 	if currentRun != nil {
 		mergedRuns = append(mergedRuns, *currentRun)
 	}
+
+	// Second pass: merge runs that are part of a split template expression
+	mergedRuns = mergeTemplateExpressionRuns(mergedRuns)
 
 	para.Runs = mergedRuns
 }
@@ -214,5 +218,84 @@ func mergeRunSlice(runs []xml.Run) []xml.Run {
 		merged = append(merged, *current)
 	}
 
+	// Second pass: merge runs that are part of a split template expression {{...}}
+	// This handles cases where Word splits template expressions across runs with
+	// different formatting (e.g., emoji characters using different fonts).
+	merged = mergeTemplateExpressionRuns(merged)
+
 	return merged
+}
+
+// mergeTemplateExpressionRuns performs a second pass that merges runs containing
+// parts of a template expression ({{...}}) even if they have different formatting.
+// This is needed because Word may split a single template expression across multiple
+// runs when different characters use different fonts (e.g., emoji characters).
+func mergeTemplateExpressionRuns(runs []xml.Run) []xml.Run {
+	if len(runs) <= 1 {
+		return runs
+	}
+
+	var result []xml.Run
+	i := 0
+
+	for i < len(runs) {
+		run := runs[i]
+
+		// Check if this run's text contains an unclosed {{ template marker
+		if run.Text != nil && hasUnclosedTemplateMarker(run.Text.Content) {
+			// Merge subsequent runs until we find the closing }}
+			mergedText := run.Text.Content
+			j := i + 1
+			for j < len(runs) {
+				if runs[j].Text != nil {
+					mergedText += runs[j].Text.Content
+				}
+				if strings.Contains(mergedText, "}}") {
+					// Found the closing marker, check if all template expressions are closed
+					if !hasUnclosedTemplateMarker(mergedText) {
+						break
+					}
+				}
+				j++
+			}
+
+			// If we actually merged additional runs, create a combined run
+			if j > i {
+				combinedRun := xml.Run{
+					Properties: run.Properties, // Use formatting from the first run
+					Text: &xml.Text{
+						XMLName: run.Text.XMLName,
+						Space:   "preserve", // Preserve spaces in merged content
+						Content: mergedText,
+					},
+				}
+				result = append(result, combinedRun)
+				i = j + 1
+			} else {
+				result = append(result, run)
+				i++
+			}
+		} else {
+			result = append(result, run)
+			i++
+		}
+	}
+
+	return result
+}
+
+// hasUnclosedTemplateMarker checks if a string contains a {{ that doesn't have
+// a matching }}. It properly handles nested/multiple template expressions.
+func hasUnclosedTemplateMarker(s string) bool {
+	depth := 0
+	for i := 0; i < len(s)-1; i++ {
+		if s[i] == '{' && s[i+1] == '{' {
+			depth++
+			i++ // skip next char
+		} else if s[i] == '}' && s[i+1] == '}' {
+			depth--
+			i++ // skip next char
+		}
+	}
+	return depth > 0
 }

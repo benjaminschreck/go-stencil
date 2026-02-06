@@ -2,10 +2,12 @@ package main
 
 import (
 	"archive/zip"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/benjaminschreck/go-stencil/pkg/stencil"
 )
@@ -123,7 +125,7 @@ func TestReportOutput(t *testing.T) {
 	}
 
 	// Check for copyright fragment - it dynamically uses current year
-	currentYear := "2025" // Based on time.Now().Year() in fragmentsExample
+	currentYear := fmt.Sprintf("%d", time.Now().Year())
 	expectedCopyright := "© " + currentYear + " Acme Corporation. All rights reserved."
 	if !strings.Contains(documentXML, expectedCopyright) {
 		t.Errorf("Copyright fragment content not found in output. Expected: %s", expectedCopyright)
