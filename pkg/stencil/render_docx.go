@@ -782,7 +782,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					}
 
 					// Render the fragment body first
-					renderedBody, err := func() ([]*Token, error) {
+					renderedBody, err := func() (*Body, error) {
 						defer func() {
 							ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
 						}()
