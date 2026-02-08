@@ -59,12 +59,12 @@ func (n *BinaryOpNode) Evaluate(data TemplateData) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	rightVal, err := n.Right.Evaluate(data)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return EvaluateBinaryOperation(leftVal, n.Operator, rightVal)
 }
 
@@ -83,7 +83,7 @@ func (n *UnaryOpNode) Evaluate(data TemplateData) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	switch n.Operator {
 	case "!":
 		return !isTruthy(operandVal), nil
@@ -135,12 +135,12 @@ func (n *IndexAccessNode) Evaluate(data TemplateData) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	indexVal, err := n.Index.Evaluate(data)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Handle string keys and integer indices
 	switch idx := indexVal.(type) {
 	case int:
@@ -168,7 +168,7 @@ func (n *FunctionCallNode) Evaluate(data TemplateData) (interface{}, error) {
 	if n.Name == "data" && len(n.Args) == 0 {
 		return data, nil
 	}
-	
+
 	// Get the function registry from data context if available
 	var registry FunctionRegistry
 	if reg, ok := data["__functions__"]; ok {
@@ -176,18 +176,18 @@ func (n *FunctionCallNode) Evaluate(data TemplateData) (interface{}, error) {
 			registry = funcReg
 		}
 	}
-	
+
 	// If no registry, use default registry
 	if registry == nil {
 		registry = GetDefaultFunctionRegistry()
 	}
-	
+
 	// Look up the function
 	fn, exists := registry.GetFunction(n.Name)
 	if !exists {
 		return nil, fmt.Errorf("unknown function: %s", n.Name)
 	}
-	
+
 	// Evaluate arguments
 	args := make([]interface{}, len(n.Args))
 	for i, arg := range n.Args {
@@ -197,7 +197,7 @@ func (n *FunctionCallNode) Evaluate(data TemplateData) (interface{}, error) {
 		}
 		args[i] = val
 	}
-	
+
 	// Call the function
 	return fn.Call(args...)
 }
@@ -225,9 +225,9 @@ const (
 
 var (
 	// Regular expressions for tokenizing expressions
-	identifierRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*`)
-	numberRegex     = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?`)
-	stringRegex     = regexp.MustCompile(`^"([^"\\]|\\.)*"`)
+	identifierRegex  = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*`)
+	numberRegex      = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?`)
+	stringRegex      = regexp.MustCompile(`^"([^"\\]|\\.)*"`)
 	singleQuoteRegex = regexp.MustCompile(`^'([^'\\]|\\.)*'`)
 	// German typographic quotes: „..." (U+201E opening)
 	// Matches „text" with closing quotes: " (U+201C), " (U+201D), or " (U+0022 regular ASCII)
@@ -236,23 +236,23 @@ var (
 	germanQuoteRegex = regexp.MustCompile("^\xe2\x80\x9e([^\xe2\x80\x9c\xe2\x80\x9d\"\\\\]|\\\\.)*[\xe2\x80\x9c\xe2\x80\x9d\"]")
 	// French/Swiss quotes: »...« (U+00BB and U+00AB)
 	frenchQuoteRegex = regexp.MustCompile(`^»([^«\\]|\\.)*«`)
-	operatorRegex   = regexp.MustCompile(`^(==|!=|<=|>=|\+|\-|\*|\/|\%|\&|\||\!|<|>|=)`)
+	operatorRegex    = regexp.MustCompile(`^(==|!=|<=|>=|\+|\-|\*|\/|\%|\&|\||\!|<|>|=)`)
 )
 
 // TokenizeExpression tokenizes an expression string
 func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 	var tokens []ExpressionToken
 	pos := 0
-	
+
 	for pos < len(expr) {
 		// Skip whitespace
 		if expr[pos] == ' ' || expr[pos] == '\t' || expr[pos] == '\n' {
 			pos++
 			continue
 		}
-		
+
 		remaining := expr[pos:]
-		
+
 		// Try to match identifiers (variables, function names, keywords)
 		if match := identifierRegex.FindString(remaining); match != "" {
 			tokens = append(tokens, ExpressionToken{
@@ -263,7 +263,7 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 			pos += len(match)
 			continue
 		}
-		
+
 		// Try to match numbers
 		if match := numberRegex.FindString(remaining); match != "" {
 			tokens = append(tokens, ExpressionToken{
@@ -274,7 +274,7 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 			pos += len(match)
 			continue
 		}
-		
+
 		// Try to match double-quoted strings
 		if match := stringRegex.FindString(remaining); match != "" {
 			// Remove quotes from the value
@@ -290,7 +290,7 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 			pos += len(match)
 			continue
 		}
-		
+
 		// Try to match single-quoted strings
 		if match := singleQuoteRegex.FindString(remaining); match != "" {
 			// Remove quotes from the value
@@ -349,7 +349,7 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 			pos += len(match)
 			continue
 		}
-		
+
 		// Handle parentheses
 		if expr[pos] == '(' {
 			tokens = append(tokens, ExpressionToken{
@@ -360,7 +360,7 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 			pos++
 			continue
 		}
-		
+
 		if expr[pos] == ')' {
 			tokens = append(tokens, ExpressionToken{
 				Type:  ExprTokenRightParen,
@@ -370,7 +370,7 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 			pos++
 			continue
 		}
-		
+
 		// Handle commas
 		if expr[pos] == ',' {
 			tokens = append(tokens, ExpressionToken{
@@ -381,7 +381,7 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 			pos++
 			continue
 		}
-		
+
 		// Handle dots for field access
 		if expr[pos] == '.' {
 			// Check if this is part of a number (e.g., .5)
@@ -406,7 +406,7 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 			pos++
 			continue
 		}
-		
+
 		// Handle brackets for array/map access
 		if expr[pos] == '[' {
 			tokens = append(tokens, ExpressionToken{
@@ -417,7 +417,7 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 			pos++
 			continue
 		}
-		
+
 		if expr[pos] == ']' {
 			tokens = append(tokens, ExpressionToken{
 				Type:  ExprTokenOperator,
@@ -427,33 +427,53 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 			pos++
 			continue
 		}
-		
+
 		// If we get here, we have an unrecognized character
 		return nil, fmt.Errorf("unexpected character '%c' at position %d", expr[pos], pos)
 	}
-	
+
 	// Add EOF token
 	tokens = append(tokens, ExpressionToken{
 		Type: ExprTokenEOF,
 		Pos:  pos,
 	})
-	
+
 	return tokens, nil
 }
 
 // ParseExpression parses an expression string into an AST
 func ParseExpression(expr string) (ExpressionNode, error) {
+	return parseExpressionWithMode(expr, false)
+}
+
+// ParseExpressionStrict parses an expression string into an AST and requires full token consumption.
+// This is used by validation flows to reject trailing tokens such as "name name2".
+func ParseExpressionStrict(expr string) (ExpressionNode, error) {
+	return parseExpressionWithMode(expr, true)
+}
+
+func parseExpressionWithMode(expr string, requireEOF bool) (ExpressionNode, error) {
 	tokens, err := TokenizeExpression(expr)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	parser := &ExpressionParser{
 		tokens: tokens,
 		pos:    0,
 	}
-	
-	return parser.parseExpression()
+
+	node, err := parser.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	if requireEOF && parser.current().Type != ExprTokenEOF {
+		token := parser.current()
+		return nil, fmt.Errorf("unexpected trailing token %q at position %d", token.Value, token.Pos)
+	}
+
+	return node, nil
 }
 
 // ExpressionParser parses expressions into AST nodes
@@ -486,7 +506,7 @@ func (p *ExpressionParser) parseLogicalOr() (ExpressionNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for p.current().Type == ExprTokenOperator && p.current().Value == "|" {
 		op := p.current().Value
 		p.advance()
@@ -496,7 +516,7 @@ func (p *ExpressionParser) parseLogicalOr() (ExpressionNode, error) {
 		}
 		left = &BinaryOpNode{Left: left, Operator: op, Right: right}
 	}
-	
+
 	return left, nil
 }
 
@@ -506,7 +526,7 @@ func (p *ExpressionParser) parseLogicalAnd() (ExpressionNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for p.current().Type == ExprTokenOperator && p.current().Value == "&" {
 		op := p.current().Value
 		p.advance()
@@ -516,7 +536,7 @@ func (p *ExpressionParser) parseLogicalAnd() (ExpressionNode, error) {
 		}
 		left = &BinaryOpNode{Left: left, Operator: op, Right: right}
 	}
-	
+
 	return left, nil
 }
 
@@ -526,7 +546,7 @@ func (p *ExpressionParser) parseEquality() (ExpressionNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for p.current().Type == ExprTokenOperator && (p.current().Value == "==" || p.current().Value == "!=") {
 		op := p.current().Value
 		p.advance()
@@ -536,7 +556,7 @@ func (p *ExpressionParser) parseEquality() (ExpressionNode, error) {
 		}
 		left = &BinaryOpNode{Left: left, Operator: op, Right: right}
 	}
-	
+
 	return left, nil
 }
 
@@ -546,10 +566,10 @@ func (p *ExpressionParser) parseComparison() (ExpressionNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	
-	for p.current().Type == ExprTokenOperator && 
-		(p.current().Value == "<" || p.current().Value == ">" || 
-		 p.current().Value == "<=" || p.current().Value == ">=") {
+
+	for p.current().Type == ExprTokenOperator &&
+		(p.current().Value == "<" || p.current().Value == ">" ||
+			p.current().Value == "<=" || p.current().Value == ">=") {
 		op := p.current().Value
 		p.advance()
 		right, err := p.parseTerm()
@@ -558,7 +578,7 @@ func (p *ExpressionParser) parseComparison() (ExpressionNode, error) {
 		}
 		left = &BinaryOpNode{Left: left, Operator: op, Right: right}
 	}
-	
+
 	return left, nil
 }
 
@@ -568,7 +588,7 @@ func (p *ExpressionParser) parseTerm() (ExpressionNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for p.current().Type == ExprTokenOperator && (p.current().Value == "+" || p.current().Value == "-") {
 		op := p.current().Value
 		p.advance()
@@ -578,7 +598,7 @@ func (p *ExpressionParser) parseTerm() (ExpressionNode, error) {
 		}
 		left = &BinaryOpNode{Left: left, Operator: op, Right: right}
 	}
-	
+
 	return left, nil
 }
 
@@ -588,8 +608,8 @@ func (p *ExpressionParser) parseFactor() (ExpressionNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	
-	for p.current().Type == ExprTokenOperator && 
+
+	for p.current().Type == ExprTokenOperator &&
 		(p.current().Value == "*" || p.current().Value == "/" || p.current().Value == "%") {
 		op := p.current().Value
 		p.advance()
@@ -599,13 +619,13 @@ func (p *ExpressionParser) parseFactor() (ExpressionNode, error) {
 		}
 		left = &BinaryOpNode{Left: left, Operator: op, Right: right}
 	}
-	
+
 	return left, nil
 }
 
 // parseUnary parses unary expressions (!, -, +)
 func (p *ExpressionParser) parseUnary() (ExpressionNode, error) {
-	if p.current().Type == ExprTokenOperator && 
+	if p.current().Type == ExprTokenOperator &&
 		(p.current().Value == "!" || p.current().Value == "-" || p.current().Value == "+") {
 		op := p.current().Value
 		p.advance()
@@ -615,7 +635,7 @@ func (p *ExpressionParser) parseUnary() (ExpressionNode, error) {
 		}
 		return &UnaryOpNode{Operator: op, Operand: operand}, nil
 	}
-	
+
 	return p.parseFieldAccess()
 }
 
@@ -625,7 +645,7 @@ func (p *ExpressionParser) parseFieldAccess() (ExpressionNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for {
 		if p.current().Type == ExprTokenOperator && p.current().Value == "." {
 			p.advance() // consume '.'
@@ -650,14 +670,14 @@ func (p *ExpressionParser) parseFieldAccess() (ExpressionNode, error) {
 			break
 		}
 	}
-	
+
 	return left, nil
 }
 
 // parsePrimary parses primary expressions (literals, variables, parenthesized expressions)
 func (p *ExpressionParser) parsePrimary() (ExpressionNode, error) {
 	token := p.current()
-	
+
 	switch token.Type {
 	case ExprTokenNumber:
 		p.advance()
@@ -670,11 +690,11 @@ func (p *ExpressionParser) parsePrimary() (ExpressionNode, error) {
 			return &LiteralNode{Value: floatVal}, nil
 		}
 		return nil, fmt.Errorf("invalid number: %s", token.Value)
-		
+
 	case ExprTokenString:
 		p.advance()
 		return &LiteralNode{Value: token.Value}, nil
-		
+
 	case ExprTokenIdentifier:
 		p.advance()
 		// Check if this is a boolean literal
@@ -687,15 +707,15 @@ func (p *ExpressionParser) parsePrimary() (ExpressionNode, error) {
 		if token.Value == "null" || token.Value == "nil" {
 			return &LiteralNode{Value: nil}, nil
 		}
-		
+
 		// Check for function call
 		if p.current().Type == ExprTokenLeftParen {
 			return p.parseFunctionCall(token.Value)
 		}
-		
+
 		// Otherwise it's a variable
 		return &VariableNode{Name: token.Value}, nil
-		
+
 	case ExprTokenLeftParen:
 		p.advance()
 		expr, err := p.parseExpression()
@@ -707,7 +727,7 @@ func (p *ExpressionParser) parsePrimary() (ExpressionNode, error) {
 		}
 		p.advance()
 		return expr, nil
-		
+
 	default:
 		return nil, fmt.Errorf("unexpected token: %s", token.Value)
 	}
@@ -719,15 +739,15 @@ func (p *ExpressionParser) parseFunctionCall(name string) (ExpressionNode, error
 		return nil, fmt.Errorf("expected '(' after function name")
 	}
 	p.advance() // consume '('
-	
+
 	var args []ExpressionNode
-	
+
 	// Handle empty argument list
 	if p.current().Type == ExprTokenRightParen {
 		p.advance()
 		return &FunctionCallNode{Name: name, Args: args}, nil
 	}
-	
+
 	// Parse arguments
 	for {
 		arg, err := p.parseExpression()
@@ -735,20 +755,20 @@ func (p *ExpressionParser) parseFunctionCall(name string) (ExpressionNode, error
 			return nil, err
 		}
 		args = append(args, arg)
-		
+
 		if p.current().Type == ExprTokenComma {
 			p.advance()
 			continue
 		}
-		
+
 		if p.current().Type == ExprTokenRightParen {
 			p.advance()
 			break
 		}
-		
+
 		return nil, fmt.Errorf("expected ',' or ')' in function arguments")
 	}
-	
+
 	return &FunctionCallNode{Name: name, Args: args}, nil
 }
 
@@ -797,15 +817,15 @@ func evaluateAddition(left, right interface{}) (interface{}, error) {
 		leftStr := FormatValue(left)
 		return leftStr + rightStr, nil
 	}
-	
+
 	// Handle numeric addition
 	leftNum, leftOk := toFloat64(left)
 	rightNum, rightOk := toFloat64(right)
-	
+
 	if !leftOk || !rightOk {
 		return nil, fmt.Errorf("cannot add %T and %T", left, right)
 	}
-	
+
 	// Return int if both operands were integers
 	if isInteger(left) && isInteger(right) {
 		return int(leftNum + rightNum), nil
@@ -816,11 +836,11 @@ func evaluateAddition(left, right interface{}) (interface{}, error) {
 func evaluateSubtraction(left, right interface{}) (interface{}, error) {
 	leftNum, leftOk := toFloat64(left)
 	rightNum, rightOk := toFloat64(right)
-	
+
 	if !leftOk || !rightOk {
 		return nil, fmt.Errorf("cannot subtract %T and %T", left, right)
 	}
-	
+
 	if isInteger(left) && isInteger(right) {
 		return int(leftNum - rightNum), nil
 	}
@@ -830,11 +850,11 @@ func evaluateSubtraction(left, right interface{}) (interface{}, error) {
 func evaluateMultiplication(left, right interface{}) (interface{}, error) {
 	leftNum, leftOk := toFloat64(left)
 	rightNum, rightOk := toFloat64(right)
-	
+
 	if !leftOk || !rightOk {
 		return nil, fmt.Errorf("cannot multiply %T and %T", left, right)
 	}
-	
+
 	if isInteger(left) && isInteger(right) {
 		return int(leftNum * rightNum), nil
 	}
@@ -844,15 +864,15 @@ func evaluateMultiplication(left, right interface{}) (interface{}, error) {
 func evaluateDivision(left, right interface{}) (interface{}, error) {
 	leftNum, leftOk := toFloat64(left)
 	rightNum, rightOk := toFloat64(right)
-	
+
 	if !leftOk || !rightOk {
 		return nil, fmt.Errorf("cannot divide %T and %T", left, right)
 	}
-	
+
 	if rightNum == 0 {
 		return nil, fmt.Errorf("division by zero")
 	}
-	
+
 	result := leftNum / rightNum
 	// Return int if the result is a whole number and both operands were integers
 	if isInteger(left) && isInteger(right) && result == float64(int(result)) {
@@ -864,15 +884,15 @@ func evaluateDivision(left, right interface{}) (interface{}, error) {
 func evaluateModulo(left, right interface{}) (interface{}, error) {
 	leftInt, leftOk := toInt(left)
 	rightInt, rightOk := toInt(right)
-	
+
 	if !leftOk || !rightOk {
 		return nil, fmt.Errorf("modulo operation requires integers, got %T and %T", left, right)
 	}
-	
+
 	if rightInt == 0 {
 		return nil, fmt.Errorf("modulo by zero")
 	}
-	
+
 	return leftInt % rightInt, nil
 }
 
@@ -885,14 +905,14 @@ func evaluateEquals(left, right interface{}) bool {
 	if left == nil || right == nil {
 		return false
 	}
-	
+
 	// Try numeric comparison
 	if leftNum, leftOk := toFloat64(left); leftOk {
 		if rightNum, rightOk := toFloat64(right); rightOk {
 			return leftNum == rightNum
 		}
 	}
-	
+
 	// Direct comparison
 	return left == right
 }
@@ -900,44 +920,44 @@ func evaluateEquals(left, right interface{}) bool {
 func evaluateLessThan(left, right interface{}) (interface{}, error) {
 	leftNum, leftOk := toFloat64(left)
 	rightNum, rightOk := toFloat64(right)
-	
+
 	if !leftOk || !rightOk {
 		return nil, fmt.Errorf("cannot compare %T and %T", left, right)
 	}
-	
+
 	return leftNum < rightNum, nil
 }
 
 func evaluateGreaterThan(left, right interface{}) (interface{}, error) {
 	leftNum, leftOk := toFloat64(left)
 	rightNum, rightOk := toFloat64(right)
-	
+
 	if !leftOk || !rightOk {
 		return nil, fmt.Errorf("cannot compare %T and %T", left, right)
 	}
-	
+
 	return leftNum > rightNum, nil
 }
 
 func evaluateLessEqual(left, right interface{}) (interface{}, error) {
 	leftNum, leftOk := toFloat64(left)
 	rightNum, rightOk := toFloat64(right)
-	
+
 	if !leftOk || !rightOk {
 		return nil, fmt.Errorf("cannot compare %T and %T", left, right)
 	}
-	
+
 	return leftNum <= rightNum, nil
 }
 
 func evaluateGreaterEqual(left, right interface{}) (interface{}, error) {
 	leftNum, leftOk := toFloat64(left)
 	rightNum, rightOk := toFloat64(right)
-	
+
 	if !leftOk || !rightOk {
 		return nil, fmt.Errorf("cannot compare %T and %T", left, right)
 	}
-	
+
 	return leftNum >= rightNum, nil
 }
 
@@ -1029,7 +1049,7 @@ func isTruthy(val interface{}) bool {
 	if val == nil {
 		return false
 	}
-	
+
 	switch v := val.(type) {
 	case bool:
 		return v
@@ -1056,7 +1076,7 @@ func evaluateUnaryMinus(operand interface{}) (interface{}, error) {
 	if !ok {
 		return nil, fmt.Errorf("cannot apply unary minus to %T", operand)
 	}
-	
+
 	if isInteger(operand) {
 		return -int(num), nil
 	}
@@ -1068,7 +1088,7 @@ func evaluateUnaryPlus(operand interface{}) (interface{}, error) {
 	if !ok {
 		return nil, fmt.Errorf("cannot apply unary plus to %T", operand)
 	}
-	
+
 	// Unary plus just returns the numeric value unchanged
 	if isInteger(operand) {
 		return int(num), nil

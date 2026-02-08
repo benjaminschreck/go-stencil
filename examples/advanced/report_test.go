@@ -77,21 +77,21 @@ func TestReportOutput(t *testing.T) {
 
 	// Verify expected content was rendered
 	expectedStrings := []string{
-		"Quarterly Report",                    // title variable
-		"Q4",                                  // quarter variable
-		"2024",                                // year variable
-		"Analytics Team",                      // author variable
-		"Revenue increased by 25%",            // first highlight
+		"Quarterly Report",                       // title variable
+		"Q4",                                     // quarter variable
+		"2024",                                   // year variable
+		"Analytics Team",                         // author variable
+		"Revenue increased by 25%",               // first highlight
 		"Customer satisfaction at all-time high", // second highlight
-		"New product launch successful",       // third highlight
-		"John Doe",                            // personal_contact.name
+		"New product launch successful",          // third highlight
+		"John Doe",                               // personal_contact.name
 	}
-	
+
 	// These might be rendered differently or not at all if template doesn't have them
 	optionalStrings := []string{
-		"123 Main St, Anytown, USA",           // personal_contact.address
-		"john.doe@example.com",                // personal_contact.email
-		"123-456-7890",                        // personal_contact.phone
+		"123 Main St, Anytown, USA", // personal_contact.address
+		"john.doe@example.com",      // personal_contact.email
+		"123-456-7890",              // personal_contact.phone
 	}
 
 	for _, expected := range expectedStrings {
@@ -99,7 +99,7 @@ func TestReportOutput(t *testing.T) {
 			t.Errorf("Expected string '%s' not found in document.xml", expected)
 		}
 	}
-	
+
 	// Check optional strings separately - only log warnings
 	foundOptional := 0
 	for _, optional := range optionalStrings {
@@ -124,7 +124,7 @@ func TestReportOutput(t *testing.T) {
 		t.Error("Disclaimer fragment content not found in output")
 	}
 
-	// Check for copyright fragment - it dynamically uses current year
+	// Check for copyright fragment - it dynamically uses current year.
 	currentYear := fmt.Sprintf("%d", time.Now().Year())
 	expectedCopyright := "© " + currentYear + " Acme Corporation. All rights reserved."
 	if !strings.Contains(documentXML, expectedCopyright) {
@@ -153,7 +153,7 @@ func TestReportOutput(t *testing.T) {
 	pageBreakCount += strings.Count(documentXML, "<w:lastRenderedPageBreak/>")
 	pageBreakCount += strings.Count(documentXML, "<w:br w:clear=\"all\" w:type=\"page\"/>")
 	pageBreakCount += strings.Count(documentXML, "<w:pageBreakBefore/>")
-	
+
 	if pageBreakCount > 0 {
 		t.Logf("✓ Found %d page break(s) in the output", pageBreakCount)
 	} else {
@@ -165,23 +165,23 @@ func TestReportOutput(t *testing.T) {
 	t.Logf("- Total paragraphs: %d", strings.Count(documentXML, "<w:p>"))
 	t.Logf("- Total runs: %d", strings.Count(documentXML, "<w:r>"))
 	t.Logf("- Total text elements: %d", strings.Count(documentXML, "<w:t>"))
-	
+
 	// Verify timestamp() function was executed (from custom functions)
 	// The timestamp function is used in the header fragment
 	// It should produce a date/time string
 	if strings.Contains(documentXML, "Generated on:") {
 		t.Log("✓ Timestamp function appears to have been executed in header fragment")
 	}
-	
+
 	// Verify the header/footer structure from DOCX fragments
-	headerFound := strings.Contains(documentXML, "ACME CORPORATION") && 
-	              strings.Contains(documentXML, "Confidential")
+	headerFound := strings.Contains(documentXML, "ACME CORPORATION") &&
+		strings.Contains(documentXML, "Confidential")
 	if headerFound {
 		t.Log("✓ Header fragment content found")
 	} else {
 		t.Log("Header fragment may be using text format instead of DOCX")
 	}
-	
+
 	// Summary of test results
 	t.Log("\n=== Test Summary ===")
 	t.Logf("✓ Output file created successfully")
@@ -189,7 +189,7 @@ func TestReportOutput(t *testing.T) {
 	t.Logf("✓ No template markers remaining")
 	t.Logf("✓ Fragment includes working")
 	t.Logf("✓ Loop rendering working (3 highlights found)")
-	
+
 	// Count total successful substitutions
 	totalSubstitutions := len(expectedStrings) + foundOptional
 	t.Logf("✓ Total successful substitutions: %d", totalSubstitutions)

@@ -40,29 +40,29 @@ func (n *IfNode) Render(data TemplateData) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to evaluate if condition: %w", err)
 	}
-	
+
 	// Check if condition is truthy
 	if isTruthy(condValue) {
 		return renderControlBody(n.ThenBody, data)
 	}
-	
+
 	// Check elsif conditions
 	for _, elsif := range n.ElsIfs {
 		elsifValue, err := elsif.Condition.Evaluate(data)
 		if err != nil {
 			return "", fmt.Errorf("failed to evaluate elsif condition: %w", err)
 		}
-		
+
 		if isTruthy(elsifValue) {
 			return renderControlBody(elsif.Body, data)
 		}
 	}
-	
+
 	// Fall back to else body
 	if len(n.ElseBody) > 0 {
 		return renderControlBody(n.ElseBody, data)
 	}
-	
+
 	return "", nil
 }
 
@@ -93,26 +93,26 @@ func (n *UnlessNode) Render(data TemplateData) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to evaluate unless condition: %w", err)
 	}
-	
+
 	// Unless is the opposite of if - render body if condition is falsy
 	if !isTruthy(condValue) {
 		return renderControlBody(n.ThenBody, data)
 	}
-	
+
 	// Fall back to else body
 	if len(n.ElseBody) > 0 {
 		return renderControlBody(n.ElseBody, data)
 	}
-	
+
 	return "", nil
 }
 
 // ForNode represents a for loop
 type ForNode struct {
-	Variable    string
-	IndexVar    string // Optional index variable for indexed loops
-	Collection  ExpressionNode
-	Body        []ControlStructure
+	Variable   string
+	IndexVar   string // Optional index variable for indexed loops
+	Collection ExpressionNode
+	Body       []ControlStructure
 }
 
 func (n *ForNode) String() string {
@@ -128,40 +128,40 @@ func (n *ForNode) Render(data TemplateData) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to evaluate collection: %w", err)
 	}
-	
+
 	// Convert to slice
 	items, err := toSlice(collectionVal)
 	if err != nil {
 		return "", fmt.Errorf("collection is not iterable: %w", err)
 	}
-	
+
 	var result strings.Builder
-	
+
 	// Iterate over items
 	for i, item := range items {
 		// Create new data context for this iteration
 		loopData := make(TemplateData)
-		
+
 		// Copy existing data
 		for k, v := range data {
 			loopData[k] = v
 		}
-		
+
 		// Add loop variables
 		loopData[n.Variable] = item
 		if n.IndexVar != "" {
 			loopData[n.IndexVar] = i
 		}
-		
+
 		// Render the body with loop context
 		bodyResult, err := renderControlBody(n.Body, loopData)
 		if err != nil {
 			return "", err
 		}
-		
+
 		result.WriteString(bodyResult)
 	}
-	
+
 	return result.String(), nil
 }
 
@@ -253,17 +253,17 @@ func (p *ControlParser) advance() {
 
 func (p *ControlParser) parseStructures() ([]ControlStructure, error) {
 	var structures []ControlStructure
-	
+
 	for p.pos < len(p.tokens) {
 		token := p.current()
-		
+
 		switch token.Type {
 		case TokenText:
 			if token.Value != "" {
 				structures = append(structures, &TextNode{Content: token.Value})
 			}
 			p.advance()
-			
+
 		case TokenVariable:
 			// Parse as expression
 			expr, err := ParseExpression(token.Value)
@@ -272,40 +272,40 @@ func (p *ControlParser) parseStructures() ([]ControlStructure, error) {
 			}
 			structures = append(structures, &ExpressionContentNode{Expression: expr})
 			p.advance()
-			
+
 		case TokenIf:
 			ifNode, err := p.parseIf()
 			if err != nil {
 				return nil, err
 			}
 			structures = append(structures, ifNode)
-			
+
 		case TokenUnless:
 			unlessNode, err := p.parseUnless()
 			if err != nil {
 				return nil, err
 			}
 			structures = append(structures, unlessNode)
-			
+
 		case TokenFor:
 			forNode, err := p.parseFor()
 			if err != nil {
 				return nil, err
 			}
 			structures = append(structures, forNode)
-			
+
 		case TokenInclude:
 			includeNode, err := p.parseInclude()
 			if err != nil {
 				return nil, err
 			}
 			structures = append(structures, includeNode)
-			
+
 		default:
 			return nil, fmt.Errorf("unexpected token type: %v", token.Type)
 		}
 	}
-	
+
 	return structures, nil
 }
 
@@ -313,7 +313,7 @@ func (p *ControlParser) parseIf() (*IfNode, error) {
 	if p.current().Type != TokenIf {
 		return nil, fmt.Errorf("expected if token")
 	}
-	
+
 	// Parse condition
 	conditionStr := p.current().Value
 	condition, err := ParseExpression(conditionStr)
@@ -321,18 +321,18 @@ func (p *ControlParser) parseIf() (*IfNode, error) {
 		return nil, fmt.Errorf("failed to parse if condition: %w", err)
 	}
 	p.advance()
-	
+
 	ifNode := &IfNode{
 		Condition: condition,
 	}
-	
+
 	// Parse then body until we hit else, elsif, or end
 	thenBody, err := p.parseBodyUntil(TokenElse, TokenElsif, TokenEnd)
 	if err != nil {
 		return nil, err
 	}
 	ifNode.ThenBody = thenBody
-	
+
 	// Handle elsif clauses
 	for p.current().Type == TokenElsif {
 		elsif, err := p.parseElsIf()
@@ -341,7 +341,7 @@ func (p *ControlParser) parseIf() (*IfNode, error) {
 		}
 		ifNode.ElsIfs = append(ifNode.ElsIfs, elsif)
 	}
-	
+
 	// Handle else clause
 	if p.current().Type == TokenElse {
 		p.advance() // consume else token
@@ -351,13 +351,13 @@ func (p *ControlParser) parseIf() (*IfNode, error) {
 		}
 		ifNode.ElseBody = elseBody
 	}
-	
+
 	// Consume end token
 	if p.current().Type != TokenEnd {
 		return nil, fmt.Errorf("expected end token to close if statement")
 	}
 	p.advance()
-	
+
 	return ifNode, nil
 }
 
@@ -365,7 +365,7 @@ func (p *ControlParser) parseElsIf() (*ElsIfNode, error) {
 	if p.current().Type != TokenElsif {
 		return nil, fmt.Errorf("expected elsif token")
 	}
-	
+
 	// Parse condition
 	conditionStr := p.current().Value
 	condition, err := ParseExpression(conditionStr)
@@ -373,13 +373,13 @@ func (p *ControlParser) parseElsIf() (*ElsIfNode, error) {
 		return nil, fmt.Errorf("failed to parse elsif condition: %w", err)
 	}
 	p.advance()
-	
+
 	// Parse body until else, elsif, or end
 	body, err := p.parseBodyUntil(TokenElse, TokenElsif, TokenEnd)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &ElsIfNode{
 		Condition: condition,
 		Body:      body,
@@ -390,7 +390,7 @@ func (p *ControlParser) parseUnless() (*UnlessNode, error) {
 	if p.current().Type != TokenUnless {
 		return nil, fmt.Errorf("expected unless token")
 	}
-	
+
 	// Parse condition
 	conditionStr := p.current().Value
 	condition, err := ParseExpression(conditionStr)
@@ -398,18 +398,18 @@ func (p *ControlParser) parseUnless() (*UnlessNode, error) {
 		return nil, fmt.Errorf("failed to parse unless condition: %w", err)
 	}
 	p.advance()
-	
+
 	unlessNode := &UnlessNode{
 		Condition: condition,
 	}
-	
+
 	// Parse then body until we hit else or end
 	thenBody, err := p.parseBodyUntil(TokenElse, TokenEnd)
 	if err != nil {
 		return nil, err
 	}
 	unlessNode.ThenBody = thenBody
-	
+
 	// Handle else clause
 	if p.current().Type == TokenElse {
 		p.advance() // consume else token
@@ -419,13 +419,13 @@ func (p *ControlParser) parseUnless() (*UnlessNode, error) {
 		}
 		unlessNode.ElseBody = elseBody
 	}
-	
+
 	// Consume end token
 	if p.current().Type != TokenEnd {
 		return nil, fmt.Errorf("expected end token to close unless statement")
 	}
 	p.advance()
-	
+
 	return unlessNode, nil
 }
 
@@ -433,7 +433,7 @@ func (p *ControlParser) parseFor() (*ForNode, error) {
 	if p.current().Type != TokenFor {
 		return nil, fmt.Errorf("expected for token")
 	}
-	
+
 	// Parse for loop syntax: "var in collection" or "idx, var in collection"
 	forStr := p.current().Value
 	forNode, err := parseForSyntax(forStr)
@@ -441,20 +441,20 @@ func (p *ControlParser) parseFor() (*ForNode, error) {
 		return nil, err
 	}
 	p.advance()
-	
+
 	// Parse body until end
 	body, err := p.parseBodyUntil(TokenEnd)
 	if err != nil {
 		return nil, err
 	}
 	forNode.Body = body
-	
+
 	// Consume end token
 	if p.current().Type != TokenEnd {
 		return nil, fmt.Errorf("expected end token to close for loop")
 	}
 	p.advance()
-	
+
 	return forNode, nil
 }
 
@@ -462,7 +462,7 @@ func (p *ControlParser) parseInclude() (*IncludeNode, error) {
 	if p.current().Type != TokenInclude {
 		return nil, fmt.Errorf("expected include token")
 	}
-	
+
 	// Parse fragment name expression
 	fragmentNameStr := p.current().Value
 	fragmentName, err := ParseExpression(fragmentNameStr)
@@ -470,7 +470,7 @@ func (p *ControlParser) parseInclude() (*IncludeNode, error) {
 		return nil, fmt.Errorf("failed to parse include fragment name: %w", err)
 	}
 	p.advance()
-	
+
 	return &IncludeNode{
 		FragmentName: fragmentName,
 	}, nil
@@ -478,17 +478,17 @@ func (p *ControlParser) parseInclude() (*IncludeNode, error) {
 
 func (p *ControlParser) parseBodyUntil(stopTokens ...TokenType) ([]ControlStructure, error) {
 	var body []ControlStructure
-	
+
 	for p.pos < len(p.tokens) {
 		current := p.current()
-		
+
 		// Check if we hit a stop token
 		for _, stopType := range stopTokens {
 			if current.Type == stopType {
 				return body, nil
 			}
 		}
-		
+
 		// Parse the current structure
 		switch current.Type {
 		case TokenText:
@@ -496,7 +496,7 @@ func (p *ControlParser) parseBodyUntil(stopTokens ...TokenType) ([]ControlStruct
 				body = append(body, &TextNode{Content: current.Value})
 			}
 			p.advance()
-			
+
 		case TokenVariable:
 			expr, err := ParseExpression(current.Value)
 			if err != nil {
@@ -504,63 +504,70 @@ func (p *ControlParser) parseBodyUntil(stopTokens ...TokenType) ([]ControlStruct
 			}
 			body = append(body, &ExpressionContentNode{Expression: expr})
 			p.advance()
-			
+
 		case TokenIf:
 			ifNode, err := p.parseIf()
 			if err != nil {
 				return nil, err
 			}
 			body = append(body, ifNode)
-			
+
 		case TokenUnless:
 			unlessNode, err := p.parseUnless()
 			if err != nil {
 				return nil, err
 			}
 			body = append(body, unlessNode)
-			
+
 		case TokenFor:
 			forNode, err := p.parseFor()
 			if err != nil {
 				return nil, err
 			}
 			body = append(body, forNode)
-			
+
 		case TokenInclude:
 			includeNode, err := p.parseInclude()
 			if err != nil {
 				return nil, err
 			}
 			body = append(body, includeNode)
-			
+
 		default:
 			return nil, fmt.Errorf("unexpected token in body: %v", current.Type)
 		}
 	}
-	
+
 	return body, nil
 }
 
 // parseForSyntax parses the for loop syntax
 func parseForSyntax(forStr string) (*ForNode, error) {
+	return parseForSyntaxWithExpressionParser(forStr, ParseExpression)
+}
+
+func parseForSyntaxWithExpressionParser(
+	forStr string,
+	parseExpression func(string) (ExpressionNode, error),
+) (*ForNode, error) {
 	// Remove extra whitespace
 	forStr = strings.TrimSpace(forStr)
-	
+
 	// Look for " in " to split variable(s) from collection
 	inIndex := strings.Index(forStr, " in ")
 	if inIndex == -1 {
 		return nil, fmt.Errorf("invalid for loop syntax: missing 'in' keyword")
 	}
-	
+
 	varsStr := strings.TrimSpace(forStr[:inIndex])
 	collectionStr := strings.TrimSpace(forStr[inIndex+4:])
-	
+
 	// Parse collection expression
-	collection, err := ParseExpression(collectionStr)
+	collection, err := parseExpression(collectionStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse collection expression: %w", err)
 	}
-	
+
 	// Parse variables - check if there's a comma for indexed loop
 	if strings.Contains(varsStr, ",") {
 		// Indexed loop: "idx, var in collection"
@@ -568,10 +575,16 @@ func parseForSyntax(forStr string) (*ForNode, error) {
 		if len(parts) != 2 {
 			return nil, fmt.Errorf("invalid indexed for loop syntax")
 		}
-		
+
 		indexVar := strings.TrimSpace(parts[0])
 		variable := strings.TrimSpace(parts[1])
-		
+		if err := validateForVariableName(indexVar); err != nil {
+			return nil, fmt.Errorf("invalid for loop index variable: %w", err)
+		}
+		if err := validateForVariableName(variable); err != nil {
+			return nil, fmt.Errorf("invalid for loop variable: %w", err)
+		}
+
 		return &ForNode{
 			IndexVar:   indexVar,
 			Variable:   variable,
@@ -579,6 +592,9 @@ func parseForSyntax(forStr string) (*ForNode, error) {
 		}, nil
 	} else {
 		// Simple loop: "var in collection"
+		if err := validateForVariableName(varsStr); err != nil {
+			return nil, fmt.Errorf("invalid for loop variable: %w", err)
+		}
 		return &ForNode{
 			Variable:   varsStr,
 			Collection: collection,
@@ -586,12 +602,29 @@ func parseForSyntax(forStr string) (*ForNode, error) {
 	}
 }
 
+func validateForVariableName(name string) error {
+	if name == "" {
+		return fmt.Errorf("variable name cannot be empty")
+	}
+
+	if identifierRegex.FindString(name) != name {
+		return fmt.Errorf("%q must be a valid identifier", name)
+	}
+
+	switch name {
+	case "true", "false", "null", "nil":
+		return fmt.Errorf("%q is a reserved literal", name)
+	}
+
+	return nil
+}
+
 // toSlice converts various types to []interface{} for iteration
 func toSlice(val interface{}) ([]interface{}, error) {
 	if val == nil {
 		return []interface{}{}, nil
 	}
-	
+
 	switch v := val.(type) {
 	case []interface{}:
 		return v, nil

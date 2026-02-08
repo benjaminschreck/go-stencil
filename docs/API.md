@@ -54,6 +54,31 @@ type Engine struct {
 
 ## Functions
 
+### Validation APIs
+
+#### ValidateTemplateSyntax
+Validates template syntax/control structure balance from raw DOCX bytes.
+
+```go
+func ValidateTemplateSyntax(input ValidateTemplateSyntaxInput) (ValidateTemplateSyntaxResult, error)
+```
+
+Key behavior:
+- `maxIssues=0` means unbounded issue return.
+- Returned metadata includes `documentHash`, optional `templateRevisionId`, and `parserVersion`.
+- Issues are emitted with deterministic `location` data (`part`, `tokenOrdinal`, UTF-16 offsets, `anchorId`).
+
+#### ExtractReferences
+Extracts variable/function/control references from parsed template token ASTs.
+
+```go
+func ExtractReferences(input ExtractReferencesInput) (ExtractReferencesResult, error)
+```
+
+Key behavior:
+- Traverses `word/document.xml`, then headers, then footers in deterministic order.
+- Reference ordering is deterministic for identical DOCX bytes.
+
 ### Template Preparation
 
 #### PrepareFile
