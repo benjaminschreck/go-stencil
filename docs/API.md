@@ -56,19 +56,93 @@ type Engine struct {
 
 ### Validation APIs
 
-#### ValidateTemplateSyntax
-Validates template syntax/control structure balance from raw DOCX bytes.
+#### ValidateTemplate (Preferred)
+Validates template syntax + semantic schema compatibility from raw DOCX bytes in one call.
+
+```go
+func ValidateTemplate(input ValidateTemplateInput) (ValidateTemplateResult, error)
+```
+
+```go
+type ValidateTemplateInput struct {
+    DocxBytes          []byte
+    TemplateRevisionID string
+    Strict             bool
+    IncludeWarnings    bool
+    MaxIssues          int // 0 = unlimited
+    Schema             ValidationSchema
+}
+
+type ValidationSchema struct {
+    Fields    []FieldDefinition
+    Functions []FunctionDefinition
+}
+
+type FieldDefinition struct {
+    Path       string
+    Type       string
+    Nullable   bool
+    Collection bool
+}
+
+type FunctionDefinition struct {
+    Name       string
+    MinArgs    int
+    MaxArgs    int
+    ArgKinds   [][]string
+    ReturnKind string
+}
+
+type ValidateTemplateResult struct {
+    Valid           bool
+    Summary         StencilValidationSummary
+    Issues          []StencilValidationIssue
+    IssuesTruncated bool
+    Metadata        StencilMetadata
+}
+```
+
+Key behavior:
+- Performs syntax and semantic checks in one pass.
+- Supports syntax and semantic issue codes:
+  - `SYNTAX_ERROR`
+  - `CONTROL_BLOCK_MISMATCH`
+  - `UNSUPPORTED_EXPRESSION`
+  - `UNKNOWN_FIELD`
+  - `UNKNOWN_FUNCTION`
+  - `FUNCTION_ARGUMENT_ERROR`
+  - `TYPE_MISMATCH`
+- `strict=true` emits semantic issues as `error`; `strict=false` emits semantic issues as `warning`.
+- `includeWarnings=false` filters warnings from returned `issues` (summary counts remain pre-filter).
+- `maxIssues=0` means unbounded issue return.
+- `issuesTruncated=true` only when post-filter issues exceed `maxIssues`.
+- `summary.errorCount` and `summary.warningCount` are pre-filter and pre-truncation.
+- `summary.returnedIssueCount == len(issues)` is always maintained.
+- Returned metadata includes `documentHash`, optional `templateRevisionId`, and `parserVersion`.
+- Issues are emitted with deterministic `location` data (`part`, `tokenOrdinal`, UTF-16 offsets, `anchorId`).
+- Returned issues always include both `token` and `location`.
+
+Example:
+```go
+result, err := stencil.ValidateTemplate(stencil.ValidateTemplateInput{
+    DocxBytes:       docxBytes,
+    Strict:          true,
+    IncludeWarnings: true,
+    MaxIssues:       0,
+    Schema:          schema,
+})
+```
+
+#### ValidateTemplateSyntax (Low-Level)
+Validates syntax/control structure only.
 
 ```go
 func ValidateTemplateSyntax(input ValidateTemplateSyntaxInput) (ValidateTemplateSyntaxResult, error)
 ```
 
-Key behavior:
-- `maxIssues=0` means unbounded issue return.
-- Returned metadata includes `documentHash`, optional `templateRevisionId`, and `parserVersion`.
-- Issues are emitted with deterministic `location` data (`part`, `tokenOrdinal`, UTF-16 offsets, `anchorId`).
+Use this when semantic schema validation is handled elsewhere.
 
-#### ExtractReferences
+#### ExtractReferences (Low-Level)
 Extracts variable/function/control references from parsed template token ASTs.
 
 ```go

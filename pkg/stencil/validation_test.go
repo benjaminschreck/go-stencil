@@ -347,6 +347,429 @@ func TestValidateTemplateSyntax_MaxIssuesTruncationAndSummaryConsistency(t *test
 	}
 }
 
+func TestValidateTemplate_DeterministicOutput(t *testing.T) {
+	docx := buildValidationDOCX(t, map[string]string{
+		"word/document.xml": validationDocumentXML(`
+			<w:p><w:r><w:t>{{unknownField}} {{unknownFn(knownField)}}</w:t></w:r></w:p>
+		`),
+	})
+
+	input := ValidateTemplateInput{
+		DocxBytes:          docx,
+		TemplateRevisionID: "rev-001",
+		Strict:             true,
+		IncludeWarnings:    true,
+		MaxIssues:          0,
+		Schema: ValidationSchema{
+			Fields: []FieldDefinition{
+				{Path: "knownField", Type: "string"},
+			},
+			Functions: []FunctionDefinition{
+				{
+					Name:       "knownFn",
+					MinArgs:    1,
+					MaxArgs:    1,
+					ArgKinds:   [][]string{{"string"}},
+					ReturnKind: "string",
+				},
+			},
+		},
+	}
+
+	first, err := ValidateTemplate(input)
+	if err != nil {
+		t.Fatalf("first ValidateTemplate failed: %v", err)
+	}
+	second, err := ValidateTemplate(input)
+	if err != nil {
+		t.Fatalf("second ValidateTemplate failed: %v", err)
+	}
+
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("ValidateTemplate output is not deterministic\nfirst=%+v\nsecond=%+v", first, second)
+	}
+	if first.Metadata.DocumentHash == "" {
+		t.Fatalf("expected documentHash to be populated")
+	}
+	if first.Metadata.TemplateRevisionID != "rev-001" {
+		t.Fatalf("templateRevisionId=%q, want %q", first.Metadata.TemplateRevisionID, "rev-001")
+	}
+
+	prevPart := ""
+	prevOrdinal := -1
+	prevCharStart := -1
+	prevCode := StencilIssueCode("")
+	for i, issue := range first.Issues {
+		if i == 0 {
+			prevPart = issue.Location.Part
+			prevOrdinal = issue.Location.TokenOrdinal
+			prevCharStart = issue.Location.CharStartUTF16
+			prevCode = issue.Code
+			continue
+		}
+
+		if issue.Location.Part < prevPart {
+			t.Fatalf("issues are not sorted by part: %q < %q", issue.Location.Part, prevPart)
+		}
+		if issue.Location.Part == prevPart && issue.Location.TokenOrdinal < prevOrdinal {
+			t.Fatalf("issues are not sorted by tokenOrdinal within part: %d < %d", issue.Location.TokenOrdinal, prevOrdinal)
+		}
+		if issue.Location.Part == prevPart && issue.Location.TokenOrdinal == prevOrdinal && issue.Location.CharStartUTF16 < prevCharStart {
+			t.Fatalf("issues are not sorted by charStartUtf16 within token: %d < %d", issue.Location.CharStartUTF16, prevCharStart)
+		}
+		if issue.Location.Part == prevPart &&
+			issue.Location.TokenOrdinal == prevOrdinal &&
+			issue.Location.CharStartUTF16 == prevCharStart &&
+			issue.Code < prevCode {
+			t.Fatalf("issues are not sorted by code within the same token location: %s < %s", issue.Code, prevCode)
+		}
+
+		prevPart = issue.Location.Part
+		prevOrdinal = issue.Location.TokenOrdinal
+		prevCharStart = issue.Location.CharStartUTF16
+		prevCode = issue.Code
+	}
+}
+
+func TestValidateTemplate_UnknownFieldAndFunctionDetection(t *testing.T) {
+	docx := buildValidationDOCX(t, map[string]string{
+		"word/document.xml": validationDocumentXML(`
+			<w:p><w:r><w:t>{{customer.name}} {{missing.path}} {{knownFn(customer.name)}} {{unknownFn(customer.name)}}</w:t></w:r></w:p>
+		`),
+	})
+
+	result, err := ValidateTemplate(ValidateTemplateInput{
+		DocxBytes:       docx,
+		Strict:          true,
+		IncludeWarnings: true,
+		Schema: ValidationSchema{
+			Fields: []FieldDefinition{
+				{Path: "customer.name", Type: "string"},
+			},
+			Functions: []FunctionDefinition{
+				{
+					Name:       "knownFn",
+					MinArgs:    1,
+					MaxArgs:    1,
+					ArgKinds:   [][]string{{"string"}},
+					ReturnKind: "string",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ValidateTemplate failed: %v", err)
+	}
+
+	if result.Valid {
+		t.Fatalf("expected invalid template due to semantic issues")
+	}
+	if len(result.Issues) != 2 {
+		t.Fatalf("issue count=%d, want 2", len(result.Issues))
+	}
+
+	seenUnknownField := false
+	seenUnknownFunction := false
+	for _, issue := range result.Issues {
+		if issue.Token.Raw == "" {
+			t.Fatalf("expected issue token raw to be populated: %+v", issue)
+		}
+		if issue.Location.Part == "" {
+			t.Fatalf("expected issue location part to be populated: %+v", issue)
+		}
+		if issue.Token.Location.Part == "" {
+			t.Fatalf("expected issue token location part to be populated: %+v", issue)
+		}
+
+		switch issue.Code {
+		case IssueCodeUnknownField:
+			seenUnknownField = true
+		case IssueCodeUnknownFunction:
+			seenUnknownFunction = true
+		}
+	}
+
+	if !seenUnknownField {
+		t.Fatalf("expected UNKNOWN_FIELD issue, got %+v", result.Issues)
+	}
+	if !seenUnknownFunction {
+		t.Fatalf("expected UNKNOWN_FUNCTION issue, got %+v", result.Issues)
+	}
+}
+
+func TestValidateTemplate_FunctionArgumentAndTypeMismatch(t *testing.T) {
+	docx := buildValidationDOCX(t, map[string]string{
+		"word/document.xml": validationDocumentXML(`
+			<w:p><w:r><w:t>{{formatCurrency(total)}} {{formatCurrency(total, currency, "extra")}} {{formatCurrency(total, false)}}</w:t></w:r></w:p>
+		`),
+	})
+
+	result, err := ValidateTemplate(ValidateTemplateInput{
+		DocxBytes:       docx,
+		Strict:          true,
+		IncludeWarnings: true,
+		Schema: ValidationSchema{
+			Fields: []FieldDefinition{
+				{Path: "total", Type: "number"},
+				{Path: "currency", Type: "string"},
+			},
+			Functions: []FunctionDefinition{
+				{
+					Name:       "formatCurrency",
+					MinArgs:    2,
+					MaxArgs:    2,
+					ArgKinds:   [][]string{{"number"}, {"string"}},
+					ReturnKind: "string",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ValidateTemplate failed: %v", err)
+	}
+
+	countArgErrors := 0
+	countTypeMismatch := 0
+	for _, issue := range result.Issues {
+		switch issue.Code {
+		case IssueCodeFunctionArgError:
+			countArgErrors++
+		case IssueCodeTypeMismatch:
+			countTypeMismatch++
+		}
+	}
+
+	if countArgErrors != 2 {
+		t.Fatalf("FUNCTION_ARGUMENT_ERROR count=%d, want 2", countArgErrors)
+	}
+	if countTypeMismatch != 1 {
+		t.Fatalf("TYPE_MISMATCH count=%d, want 1", countTypeMismatch)
+	}
+}
+
+func TestValidateTemplate_StrictVsNonStrictSeverity(t *testing.T) {
+	docx := buildValidationDOCX(t, map[string]string{
+		"word/document.xml": validationDocumentXML(`<w:p><w:r><w:t>{{missingField}}</w:t></w:r></w:p>`),
+	})
+
+	nonStrict, err := ValidateTemplate(ValidateTemplateInput{
+		DocxBytes:       docx,
+		Strict:          false,
+		IncludeWarnings: true,
+	})
+	if err != nil {
+		t.Fatalf("non-strict ValidateTemplate failed: %v", err)
+	}
+	if len(nonStrict.Issues) != 1 {
+		t.Fatalf("non-strict issue count=%d, want 1", len(nonStrict.Issues))
+	}
+	if nonStrict.Issues[0].Severity != IssueSeverityWarning {
+		t.Fatalf("non-strict severity=%s, want %s", nonStrict.Issues[0].Severity, IssueSeverityWarning)
+	}
+	if !nonStrict.Valid {
+		t.Fatalf("non-strict result should be valid when only warnings are present")
+	}
+	if nonStrict.Summary.ErrorCount != 0 || nonStrict.Summary.WarningCount != 1 {
+		t.Fatalf("non-strict summary mismatch: %+v", nonStrict.Summary)
+	}
+
+	strictResult, err := ValidateTemplate(ValidateTemplateInput{
+		DocxBytes:       docx,
+		Strict:          true,
+		IncludeWarnings: true,
+	})
+	if err != nil {
+		t.Fatalf("strict ValidateTemplate failed: %v", err)
+	}
+	if len(strictResult.Issues) != 1 {
+		t.Fatalf("strict issue count=%d, want 1", len(strictResult.Issues))
+	}
+	if strictResult.Issues[0].Severity != IssueSeverityError {
+		t.Fatalf("strict severity=%s, want %s", strictResult.Issues[0].Severity, IssueSeverityError)
+	}
+	if strictResult.Valid {
+		t.Fatalf("strict result should be invalid when semantic errors are present")
+	}
+	if strictResult.Summary.ErrorCount != 1 || strictResult.Summary.WarningCount != 0 {
+		t.Fatalf("strict summary mismatch: %+v", strictResult.Summary)
+	}
+}
+
+func TestValidateTemplate_IncludeWarningsFiltering(t *testing.T) {
+	docx := buildValidationDOCX(t, map[string]string{
+		"word/document.xml": validationDocumentXML(`<w:p><w:r><w:t>{{missingField}}</w:t></w:r></w:p>`),
+	})
+
+	withWarnings, err := ValidateTemplate(ValidateTemplateInput{
+		DocxBytes:       docx,
+		Strict:          false,
+		IncludeWarnings: true,
+	})
+	if err != nil {
+		t.Fatalf("ValidateTemplate (include warnings) failed: %v", err)
+	}
+	if len(withWarnings.Issues) != 1 {
+		t.Fatalf("issues len=%d, want 1", len(withWarnings.Issues))
+	}
+	if withWarnings.Summary.WarningCount != 1 {
+		t.Fatalf("warningCount=%d, want 1", withWarnings.Summary.WarningCount)
+	}
+	if withWarnings.Summary.ReturnedIssueCount != len(withWarnings.Issues) {
+		t.Fatalf("returnedIssueCount=%d, len(issues)=%d", withWarnings.Summary.ReturnedIssueCount, len(withWarnings.Issues))
+	}
+
+	filtered, err := ValidateTemplate(ValidateTemplateInput{
+		DocxBytes:       docx,
+		Strict:          false,
+		IncludeWarnings: false,
+	})
+	if err != nil {
+		t.Fatalf("ValidateTemplate (exclude warnings) failed: %v", err)
+	}
+	if len(filtered.Issues) != 0 {
+		t.Fatalf("issues len=%d, want 0", len(filtered.Issues))
+	}
+	if filtered.Summary.WarningCount != 1 {
+		t.Fatalf("warningCount=%d, want 1 (pre-filter count)", filtered.Summary.WarningCount)
+	}
+	if filtered.Summary.ReturnedIssueCount != len(filtered.Issues) {
+		t.Fatalf("returnedIssueCount=%d, len(issues)=%d", filtered.Summary.ReturnedIssueCount, len(filtered.Issues))
+	}
+	if filtered.IssuesTruncated {
+		t.Fatalf("expected issuesTruncated=false when all warnings are filtered out")
+	}
+}
+
+func TestValidateTemplate_MaxIssuesTruncationAndSummaryInvariants(t *testing.T) {
+	docx := buildValidationDOCX(t, map[string]string{
+		"word/document.xml": validationDocumentXML(`<w:p><w:r><w:t>{{a}} {{b}} {{c}} {{d}}</w:t></w:r></w:p>`),
+	})
+
+	truncated, err := ValidateTemplate(ValidateTemplateInput{
+		DocxBytes:       docx,
+		Strict:          true,
+		IncludeWarnings: true,
+		MaxIssues:       2,
+	})
+	if err != nil {
+		t.Fatalf("ValidateTemplate (truncated) failed: %v", err)
+	}
+	if !truncated.IssuesTruncated {
+		t.Fatalf("expected issuesTruncated=true")
+	}
+	if len(truncated.Issues) != 2 {
+		t.Fatalf("issues len=%d, want 2", len(truncated.Issues))
+	}
+	if truncated.Summary.ErrorCount != 4 {
+		t.Fatalf("errorCount=%d, want 4", truncated.Summary.ErrorCount)
+	}
+	if truncated.Summary.ReturnedIssueCount != len(truncated.Issues) {
+		t.Fatalf("returnedIssueCount=%d, len(issues)=%d", truncated.Summary.ReturnedIssueCount, len(truncated.Issues))
+	}
+
+	unbounded, err := ValidateTemplate(ValidateTemplateInput{
+		DocxBytes:       docx,
+		Strict:          true,
+		IncludeWarnings: true,
+		MaxIssues:       0,
+	})
+	if err != nil {
+		t.Fatalf("ValidateTemplate (unbounded) failed: %v", err)
+	}
+	if unbounded.IssuesTruncated {
+		t.Fatalf("expected issuesTruncated=false when maxIssues=0")
+	}
+	if len(unbounded.Issues) != 4 {
+		t.Fatalf("issues len=%d, want 4", len(unbounded.Issues))
+	}
+	if unbounded.Summary.ReturnedIssueCount != len(unbounded.Issues) {
+		t.Fatalf("returnedIssueCount=%d, len(issues)=%d", unbounded.Summary.ReturnedIssueCount, len(unbounded.Issues))
+	}
+
+	filtered, err := ValidateTemplate(ValidateTemplateInput{
+		DocxBytes:       docx,
+		Strict:          false,
+		IncludeWarnings: false,
+		MaxIssues:       1,
+	})
+	if err != nil {
+		t.Fatalf("ValidateTemplate (filtered) failed: %v", err)
+	}
+	if filtered.IssuesTruncated {
+		t.Fatalf("expected issuesTruncated=false when post-filter issue set does not exceed maxIssues")
+	}
+	if filtered.Summary.WarningCount != 4 {
+		t.Fatalf("warningCount=%d, want 4", filtered.Summary.WarningCount)
+	}
+	if filtered.Summary.ReturnedIssueCount != len(filtered.Issues) {
+		t.Fatalf("returnedIssueCount=%d, len(issues)=%d", filtered.Summary.ReturnedIssueCount, len(filtered.Issues))
+	}
+}
+
+func TestValidateTemplate_SplitRunsAndHeaderFooterLocationCoverage(t *testing.T) {
+	docx := buildValidationDOCX(t, map[string]string{
+		"word/document.xml": validationDocumentXML(`
+			<w:p>
+				<w:r><w:t>{{na</w:t></w:r>
+				<w:hyperlink r:id="rId9"><w:r><w:t>me}}</w:t></w:r></w:hyperlink>
+			</w:p>
+		`),
+		"word/header1.xml": validationHeaderXML(`<w:p><w:r><w:t>{{headerMissing}}</w:t></w:r></w:p>`),
+		"word/footer1.xml": validationFooterXML(`<w:p><w:r><w:t>{{unknownFn()}}</w:t></w:r></w:p>`),
+	})
+
+	result, err := ValidateTemplate(ValidateTemplateInput{
+		DocxBytes:       docx,
+		Strict:          true,
+		IncludeWarnings: true,
+	})
+	if err != nil {
+		t.Fatalf("ValidateTemplate failed: %v", err)
+	}
+	if len(result.Issues) != 3 {
+		t.Fatalf("issue count=%d, want 3", len(result.Issues))
+	}
+
+	parts := make(map[string]bool)
+	var foundSplitRunIssue bool
+	for _, issue := range result.Issues {
+		if issue.Token.Raw == "" {
+			t.Fatalf("issue token raw is empty: %+v", issue)
+		}
+		if issue.Location.Part == "" {
+			t.Fatalf("issue location part is empty: %+v", issue)
+		}
+		if issue.Token.Location.Part == "" {
+			t.Fatalf("issue token location part is empty: %+v", issue)
+		}
+		if issue.Location.CharEndUTF16 <= issue.Location.CharStartUTF16 {
+			t.Fatalf("invalid UTF-16 range [%d,%d) for issue %+v", issue.Location.CharStartUTF16, issue.Location.CharEndUTF16, issue)
+		}
+
+		parts[issue.Location.Part] = true
+
+		if issue.Token.Raw == "{{name}}" {
+			foundSplitRunIssue = true
+			if issue.Location.Part != "word/document.xml" {
+				t.Fatalf("split-run issue part=%q, want word/document.xml", issue.Location.Part)
+			}
+			if issue.Location.RunIndex != 0 {
+				t.Fatalf("split-run runIndex=%d, want 0", issue.Location.RunIndex)
+			}
+			if issue.Location.CharStartUTF16 != 0 || issue.Location.CharEndUTF16 != 8 {
+				t.Fatalf("split-run UTF-16 range=[%d,%d), want [0,8)", issue.Location.CharStartUTF16, issue.Location.CharEndUTF16)
+			}
+		}
+	}
+
+	if !parts["word/document.xml"] || !parts["word/header1.xml"] || !parts["word/footer1.xml"] {
+		t.Fatalf("expected issues across document/header/footer, got parts=%v", parts)
+	}
+	if !foundSplitRunIssue {
+		t.Fatalf("expected split-run token issue for {{name}}, got %+v", result.Issues)
+	}
+}
+
 func buildValidationDOCX(t *testing.T, partXML map[string]string) []byte {
 	t.Helper()
 

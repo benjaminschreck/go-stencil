@@ -14,7 +14,7 @@ Welcome to the go-stencil documentation! This directory contains comprehensive d
 3. **[API Reference](API.md)** - Complete API documentation for all types and functions.
 4. **[Functions Reference](FUNCTIONS.md)** - Detailed documentation of all built-in template functions.
 5. **[Best Practices](BEST_PRACTICES.md)** - Guidelines for creating efficient and maintainable templates.
-6. **[Validation Migration Notes](VALIDATION_MIGRATION.md)** - Integration guidance for `ValidateTemplateSyntax` and `ExtractReferences`.
+6. **[Validation Migration Notes](VALIDATION_MIGRATION.md)** - Integration guidance for `ValidateTemplate` (preferred), plus low-level `ValidateTemplateSyntax` and `ExtractReferences`.
 
 ## Quick Links
 

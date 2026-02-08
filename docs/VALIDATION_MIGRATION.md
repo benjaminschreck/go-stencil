@@ -6,10 +6,24 @@ This document describes how backend and frontend consumers should migrate to the
 
 Use these package-level functions:
 
+- `ValidateTemplate(input ValidateTemplateInput) (ValidateTemplateResult, error)` (preferred integration path)
 - `ValidateTemplateSyntax(input ValidateTemplateSyntaxInput) (ValidateTemplateSyntaxResult, error)`
 - `ExtractReferences(input ExtractReferencesInput) (ExtractReferencesResult, error)`
 
-Both APIs operate on raw DOCX bytes and return deterministic metadata.
+All APIs operate on raw DOCX bytes and return deterministic metadata.
+
+## Preferred Integration Path
+
+Backend integrations should call `ValidateTemplate` for end-to-end validation:
+
+- syntax validation
+- reference extraction
+- semantic schema validation
+- strict/warning severity behavior
+- warning filtering (`includeWarnings`)
+- issue truncation (`maxIssues`)
+
+`ValidateTemplateSyntax` and `ExtractReferences` remain available as low-level building blocks.
 
 ## Metadata Contract
 
@@ -34,23 +48,37 @@ Consumers should treat `tokenOrdinal` as the primary stable ordering key.
 ## Validation Behavior
 
 - `maxIssues=0` means unbounded issue return.
-- `issuesTruncated=true` only when discovered issues exceed returned issues due to `maxIssues`.
+- `issuesTruncated=true` only when post-filter issues exceed returned issues due to `maxIssues`.
 - `summary.returnedIssueCount == len(issues)` is always maintained.
+- `summary.errorCount` and `summary.warningCount` are pre-filter and pre-truncation counts.
 - Unmatched opening control blocks are reported with location anchored to the opening token.
+- Every returned issue includes both `token` and `location`.
 
-go-stencil only emits syntax-layer codes:
+go-stencil emits these issue codes:
 
 - `SYNTAX_ERROR`
 - `CONTROL_BLOCK_MISMATCH`
 - `UNSUPPORTED_EXPRESSION`
+- `UNKNOWN_FIELD`
+- `UNKNOWN_FUNCTION`
+- `FUNCTION_ARGUMENT_ERROR`
+- `TYPE_MISMATCH`
+
+Semantic validation details:
+
+- Unknown field detection is schema/reference based (not render-time nil behavior).
+- `strict=true` classifies semantic issues as `error`.
+- `strict=false` classifies semantic issues as `warning`.
+- `includeWarnings=false` filters warnings from returned `issues` without changing summary pre-counts.
 
 ## Backend Mapping Guidance
 
-Backend semantic validation should remain separate from go-stencil syntax validation.
+Backend should keep only:
 
-- Keep schema/context checks in backend (`UNKNOWN_FIELD`, `TYPE_MISMATCH`, `UNKNOWN_FUNCTION`, etc.).
-- Use `ExtractReferences` outputs for deterministic field/function discovery inputs.
-- Preserve stencil `location` and `token` payloads when mapping syntax issues to API DTOs.
+- request validation and HTTP status mapping
+- context existence/schemaVersion checks
+- one call to `ValidateTemplate`
+- direct DTO mapping from stencil output to API response
 
 ## Frontend Highlight Guidance
 

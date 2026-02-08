@@ -19,8 +19,9 @@ const (
 )
 
 var (
-	headerPartPattern = regexp.MustCompile(`^word/header(\d+)\.xml$`)
-	footerPartPattern = regexp.MustCompile(`^word/footer(\d+)\.xml$`)
+	headerPartPattern   = regexp.MustCompile(`^word/header(\d+)\.xml$`)
+	footerPartPattern   = regexp.MustCompile(`^word/footer(\d+)\.xml$`)
+	literalIndexPattern = regexp.MustCompile(`\[[^\]]+\]`)
 )
 
 // IssueSeverity indicates parser issue severity.
@@ -31,13 +32,17 @@ const (
 	IssueSeverityWarning IssueSeverity = "warning"
 )
 
-// StencilIssueCode contains syntax-level issue codes emitted by go-stencil.
+// StencilIssueCode contains validation issue codes emitted by go-stencil.
 type StencilIssueCode string
 
 const (
 	IssueCodeSyntaxError          StencilIssueCode = "SYNTAX_ERROR"
 	IssueCodeControlBlockMismatch StencilIssueCode = "CONTROL_BLOCK_MISMATCH"
 	IssueCodeUnsupportedExpr      StencilIssueCode = "UNSUPPORTED_EXPRESSION"
+	IssueCodeUnknownField         StencilIssueCode = "UNKNOWN_FIELD"
+	IssueCodeUnknownFunction      StencilIssueCode = "UNKNOWN_FUNCTION"
+	IssueCodeFunctionArgError     StencilIssueCode = "FUNCTION_ARGUMENT_ERROR"
+	IssueCodeTypeMismatch         StencilIssueCode = "TYPE_MISMATCH"
 )
 
 // TokenKind identifies extracted token/reference categories.
@@ -48,6 +53,39 @@ const (
 	TokenKindControl  TokenKind = "control"
 	TokenKindFunction TokenKind = "function"
 )
+
+// ValidateTemplateInput controls full template validation behavior.
+type ValidateTemplateInput struct {
+	DocxBytes          []byte           `json:"-"`
+	TemplateRevisionID string           `json:"templateRevisionId,omitempty"`
+	Strict             bool             `json:"strict,omitempty"`
+	IncludeWarnings    bool             `json:"includeWarnings,omitempty"`
+	MaxIssues          int              `json:"maxIssues,omitempty"` // 0 = unlimited
+	Schema             ValidationSchema `json:"schema"`
+}
+
+// ValidationSchema contains field/function schema definitions used for semantic validation.
+type ValidationSchema struct {
+	Fields    []FieldDefinition    `json:"fields"`
+	Functions []FunctionDefinition `json:"functions"`
+}
+
+// FieldDefinition defines one field path and type.
+type FieldDefinition struct {
+	Path       string `json:"path"`
+	Type       string `json:"type"`
+	Nullable   bool   `json:"nullable,omitempty"`
+	Collection bool   `json:"collection,omitempty"`
+}
+
+// FunctionDefinition defines one function signature.
+type FunctionDefinition struct {
+	Name       string     `json:"name"`
+	MinArgs    int        `json:"minArgs,omitempty"`
+	MaxArgs    int        `json:"maxArgs,omitempty"`
+	ArgKinds   [][]string `json:"argKinds,omitempty"`
+	ReturnKind string     `json:"returnKind,omitempty"`
+}
 
 // ValidateTemplateSyntaxInput controls syntax validation behavior.
 type ValidateTemplateSyntaxInput struct {
@@ -81,7 +119,7 @@ type TemplateTokenRef struct {
 	Location   TemplateLocation `json:"location"`
 }
 
-// StencilValidationIssue is a syntax issue emitted by go-stencil.
+// StencilValidationIssue is a validation issue emitted by go-stencil.
 type StencilValidationIssue struct {
 	ID          string           `json:"id"`
 	Severity    IssueSeverity    `json:"severity"`
@@ -116,10 +154,62 @@ type ValidateTemplateSyntaxResult struct {
 	Metadata        StencilMetadata          `json:"metadata"`
 }
 
+// ValidateTemplateResult contains full validation output.
+type ValidateTemplateResult struct {
+	Valid           bool                     `json:"valid"`
+	Summary         StencilValidationSummary `json:"summary"`
+	Issues          []StencilValidationIssue `json:"issues"`
+	IssuesTruncated bool                     `json:"issuesTruncated"`
+	Metadata        StencilMetadata          `json:"metadata"`
+}
+
 // ExtractReferencesResult contains parsed references extracted from template tokens.
 type ExtractReferencesResult struct {
 	References []TemplateTokenRef `json:"references"`
 	Metadata   StencilMetadata    `json:"metadata"`
+}
+
+// ValidateTemplate validates DOCX template syntax and semantics in a single call.
+func ValidateTemplate(input ValidateTemplateInput) (ValidateTemplateResult, error) {
+	if len(input.DocxBytes) == 0 {
+		return ValidateTemplateResult{}, fmt.Errorf("docx bytes are required")
+	}
+	if input.MaxIssues < 0 {
+		return ValidateTemplateResult{}, fmt.Errorf("maxIssues must be >= 0")
+	}
+
+	spans, err := scanDOCXTokenSpans(input.DocxBytes)
+	if err != nil {
+		return ValidateTemplateResult{}, err
+	}
+
+	syntaxIssues := validateTokenSpans(spans)
+	semanticIssues := validateSemanticTokenSpans(spans, input.Schema, input.Strict)
+	allIssues := make([]StencilValidationIssue, 0, len(syntaxIssues)+len(semanticIssues))
+	allIssues = append(allIssues, syntaxIssues...)
+	allIssues = append(allIssues, semanticIssues...)
+
+	sortValidationIssues(allIssues)
+	for i := range allIssues {
+		allIssues[i].ID = fmt.Sprintf("iss_%03d", i+1)
+	}
+
+	errorCount, warningCount := summarizeIssueSeverities(allIssues)
+	filteredIssues := filterIssues(allIssues, input.IncludeWarnings)
+	returnedIssues, issuesTruncated := truncateIssues(filteredIssues, input.MaxIssues)
+
+	return ValidateTemplateResult{
+		Valid: errorCount == 0,
+		Summary: StencilValidationSummary{
+			CheckedTokens:      len(spans),
+			ErrorCount:         errorCount,
+			WarningCount:       warningCount,
+			ReturnedIssueCount: len(returnedIssues),
+		},
+		Issues:          returnedIssues,
+		IssuesTruncated: issuesTruncated,
+		Metadata:        newValidationMetadata(input.DocxBytes, input.TemplateRevisionID),
+	}, nil
 }
 
 // ValidateTemplateSyntax validates DOCX template syntax and control balance.
@@ -219,6 +309,34 @@ type validationControlFrame struct {
 type orderedPart struct {
 	Name  string
 	Index int
+}
+
+const (
+	semanticKindAny     = "any"
+	semanticKindUnknown = "unknown"
+	semanticKindNull    = "null"
+	semanticKindString  = "string"
+	semanticKindNumber  = "number"
+	semanticKindBool    = "bool"
+	semanticKindObject  = "object"
+	semanticKindArray   = "array"
+)
+
+type semanticTypeInfo struct {
+	Kind        string
+	Known       bool
+	Nullable    bool
+	ElementKind string
+}
+
+type semanticScopedVar struct {
+	TypeInfo     semanticTypeInfo
+	SchemaPrefix string
+}
+
+type semanticControlFrame struct {
+	TokenType TokenType
+	HasScope  bool
 }
 
 func scanDOCXTokenSpans(docxBytes []byte) ([]tokenSpan, error) {
@@ -618,6 +736,596 @@ func validateTokenSpans(spans []tokenSpan) []StencilValidationIssue {
 	return issues
 }
 
+func validateSemanticTokenSpans(
+	spans []tokenSpan,
+	schema ValidationSchema,
+	strict bool,
+) []StencilValidationIssue {
+	issues := make([]StencilValidationIssue, 0)
+	fieldIndex := indexFieldDefinitions(schema.Fields)
+	functionIndex := indexFunctionDefinitions(schema.Functions)
+	severity := semanticSeverity(strict)
+
+	scopeStack := []map[string]semanticScopedVar{{}}
+	controlStack := make([]semanticControlFrame, 0)
+
+	for _, span := range spans {
+		if span.Malformed {
+			continue
+		}
+
+		switch span.Token.Type {
+		case TokenVariable:
+			node, err := ParseExpressionStrict(span.Token.Value)
+			if err != nil {
+				continue
+			}
+			_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, &issues)
+		case TokenIf:
+			node, err := ParseExpressionStrict(span.Token.Value)
+			if err == nil {
+				_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, &issues)
+			}
+			controlStack = append(controlStack, semanticControlFrame{TokenType: TokenIf})
+		case TokenUnless:
+			node, err := ParseExpressionStrict(span.Token.Value)
+			if err == nil {
+				_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, &issues)
+			}
+			controlStack = append(controlStack, semanticControlFrame{TokenType: TokenUnless})
+		case TokenElsif:
+			node, err := ParseExpressionStrict(span.Token.Value)
+			if err != nil {
+				continue
+			}
+			_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, &issues)
+		case TokenFor:
+			pushedScope := false
+			forNode, err := parseForSyntaxWithExpressionParser(span.Token.Value, ParseExpressionStrict)
+			if err == nil {
+				collectionType := inferExpressionType(
+					forNode.Collection,
+					span,
+					scopeStack,
+					fieldIndex,
+					functionIndex,
+					severity,
+					&issues,
+				)
+
+				localScope := make(map[string]semanticScopedVar)
+				localScope[forNode.Variable] = semanticScopedVar{
+					TypeInfo:     forLoopVariableType(collectionType),
+					SchemaPrefix: forLoopSchemaPrefix(forNode.Collection, scopeStack, fieldIndex),
+				}
+				if forNode.IndexVar != "" {
+					localScope[forNode.IndexVar] = semanticScopedVar{
+						TypeInfo: semanticKnownType(semanticKindNumber),
+					}
+				}
+				scopeStack = append(scopeStack, localScope)
+				pushedScope = true
+			}
+
+			controlStack = append(controlStack, semanticControlFrame{
+				TokenType: TokenFor,
+				HasScope:  pushedScope,
+			})
+		case TokenInclude:
+			node, err := ParseExpressionStrict(span.Token.Value)
+			if err != nil {
+				continue
+			}
+			_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, &issues)
+		case TokenEnd:
+			if len(controlStack) == 0 {
+				continue
+			}
+
+			top := controlStack[len(controlStack)-1]
+			controlStack = controlStack[:len(controlStack)-1]
+
+			if top.HasScope && len(scopeStack) > 1 {
+				scopeStack = scopeStack[:len(scopeStack)-1]
+			}
+		}
+	}
+
+	return issues
+}
+
+func inferExpressionType(
+	node ExpressionNode,
+	span tokenSpan,
+	scopeStack []map[string]semanticScopedVar,
+	fieldIndex map[string]FieldDefinition,
+	functionIndex map[string]FunctionDefinition,
+	severity IssueSeverity,
+	issues *[]StencilValidationIssue,
+) semanticTypeInfo {
+	if node == nil {
+		return semanticUnknownType()
+	}
+
+	if path, ok := referencePathFromNode(node); ok {
+		fieldType, _, found := resolveFieldReference(path, scopeStack, fieldIndex)
+		if !found {
+			appendValidationIssue(
+				issues,
+				severity,
+				IssueCodeUnknownField,
+				fmt.Sprintf("unknown field: %s", path),
+				span,
+				TokenKindVariable,
+				path,
+			)
+			return semanticUnknownType()
+		}
+		return fieldType
+	}
+
+	switch n := node.(type) {
+	case *LiteralNode:
+		return semanticTypeFromLiteral(n.Value)
+	case *FunctionCallNode:
+		argTypes := make([]semanticTypeInfo, 0, len(n.Args))
+		for _, arg := range n.Args {
+			argTypes = append(argTypes, inferExpressionType(
+				arg,
+				span,
+				scopeStack,
+				fieldIndex,
+				functionIndex,
+				severity,
+				issues,
+			))
+		}
+
+		functionName := normalizeFunctionName(n.Name)
+		functionDef, exists := functionIndex[functionName]
+		if !exists {
+			appendValidationIssue(
+				issues,
+				severity,
+				IssueCodeUnknownFunction,
+				fmt.Sprintf("unknown function: %s", n.Name),
+				span,
+				TokenKindFunction,
+				n.Name,
+			)
+			return semanticUnknownType()
+		}
+
+		if len(n.Args) < functionDef.MinArgs || (functionDef.MaxArgs >= 0 && len(n.Args) > functionDef.MaxArgs) {
+			appendValidationIssue(
+				issues,
+				severity,
+				IssueCodeFunctionArgError,
+				fmt.Sprintf(
+					"function %s expects %s arguments, got %d",
+					n.Name,
+					formatArgumentRange(functionDef.MinArgs, functionDef.MaxArgs),
+					len(n.Args),
+				),
+				span,
+				TokenKindFunction,
+				n.Name,
+			)
+		}
+
+		for i, argType := range argTypes {
+			if i >= len(functionDef.ArgKinds) {
+				continue
+			}
+			allowedKinds := normalizeAllowedKinds(functionDef.ArgKinds[i])
+			if len(allowedKinds) == 0 {
+				continue
+			}
+			if isAllowedArgumentType(argType, allowedKinds) {
+				continue
+			}
+
+			appendValidationIssue(
+				issues,
+				severity,
+				IssueCodeTypeMismatch,
+				fmt.Sprintf(
+					"function %s argument %d expects %s, got %s",
+					n.Name,
+					i+1,
+					strings.Join(allowedKinds, "/"),
+					semanticTypeName(argType),
+				),
+				span,
+				TokenKindFunction,
+				n.Name,
+			)
+		}
+
+		return semanticTypeFromKind(functionDef.ReturnKind)
+	case *BinaryOpNode:
+		left := inferExpressionType(n.Left, span, scopeStack, fieldIndex, functionIndex, severity, issues)
+		right := inferExpressionType(n.Right, span, scopeStack, fieldIndex, functionIndex, severity, issues)
+		return inferBinaryResultType(n.Operator, left, right)
+	case *UnaryOpNode:
+		_ = inferExpressionType(n.Operand, span, scopeStack, fieldIndex, functionIndex, severity, issues)
+		switch n.Operator {
+		case "!":
+			return semanticKnownType(semanticKindBool)
+		case "+", "-":
+			return semanticKnownType(semanticKindNumber)
+		default:
+			return semanticUnknownType()
+		}
+	case *FieldAccessNode:
+		return inferExpressionType(n.Object, span, scopeStack, fieldIndex, functionIndex, severity, issues)
+	case *IndexAccessNode:
+		objectType := inferExpressionType(n.Object, span, scopeStack, fieldIndex, functionIndex, severity, issues)
+		_ = inferExpressionType(n.Index, span, scopeStack, fieldIndex, functionIndex, severity, issues)
+		if objectType.Kind == semanticKindArray && objectType.ElementKind != "" {
+			return semanticKnownType(objectType.ElementKind)
+		}
+		if objectType.Kind == semanticKindString {
+			return semanticKnownType(semanticKindString)
+		}
+		return semanticUnknownType()
+	default:
+		return semanticUnknownType()
+	}
+}
+
+func appendValidationIssue(
+	issues *[]StencilValidationIssue,
+	severity IssueSeverity,
+	code StencilIssueCode,
+	message string,
+	span tokenSpan,
+	kind TokenKind,
+	expression string,
+) {
+	location := locationFromSpan(span)
+	*issues = append(*issues, StencilValidationIssue{
+		Severity: severity,
+		Code:     code,
+		Message:  message,
+		Token: TemplateTokenRef{
+			Raw:        span.Raw,
+			Kind:       kind,
+			Expression: expression,
+			Location:   location,
+		},
+		Location: location,
+	})
+}
+
+func semanticSeverity(strict bool) IssueSeverity {
+	if strict {
+		return IssueSeverityError
+	}
+	return IssueSeverityWarning
+}
+
+func indexFieldDefinitions(fields []FieldDefinition) map[string]FieldDefinition {
+	index := make(map[string]FieldDefinition, len(fields))
+	for _, field := range fields {
+		path := normalizeFieldPath(field.Path)
+		if path == "" {
+			continue
+		}
+		index[path] = field
+	}
+	return index
+}
+
+func indexFunctionDefinitions(functions []FunctionDefinition) map[string]FunctionDefinition {
+	index := make(map[string]FunctionDefinition, len(functions))
+	for _, function := range functions {
+		name := normalizeFunctionName(function.Name)
+		if name == "" {
+			continue
+		}
+		index[name] = function
+	}
+	return index
+}
+
+func resolveFieldReference(
+	path string,
+	scopeStack []map[string]semanticScopedVar,
+	fieldIndex map[string]FieldDefinition,
+) (semanticTypeInfo, string, bool) {
+	normalizedPath := normalizeFieldPath(path)
+	if normalizedPath == "" {
+		return semanticUnknownType(), "", false
+	}
+
+	root, remainder := splitReferencePath(normalizedPath)
+	if scopedVar, ok := resolveScopedVariable(root, scopeStack); ok {
+		if remainder == "" {
+			return scopedVar.TypeInfo, scopedVar.SchemaPrefix, true
+		}
+		if scopedVar.SchemaPrefix == "" {
+			return semanticUnknownType(), "", false
+		}
+
+		scopedPath := joinReferencePath(scopedVar.SchemaPrefix, remainder)
+		fieldType, resolvedPath, found := lookupFieldType(scopedPath, fieldIndex)
+		return fieldType, resolvedPath, found
+	}
+
+	return lookupFieldType(normalizedPath, fieldIndex)
+}
+
+func lookupFieldType(path string, fieldIndex map[string]FieldDefinition) (semanticTypeInfo, string, bool) {
+	candidates := fieldPathCandidates(path)
+	for _, candidate := range candidates {
+		fieldDef, exists := fieldIndex[candidate]
+		if !exists {
+			continue
+		}
+		return semanticTypeFromField(fieldDef), candidate, true
+	}
+	return semanticUnknownType(), "", false
+}
+
+func fieldPathCandidates(path string) []string {
+	normalizedPath := normalizeFieldPath(path)
+	if normalizedPath == "" {
+		return nil
+	}
+
+	strippedPath := stripLiteralIndices(normalizedPath)
+	if strippedPath == normalizedPath || strippedPath == "" {
+		return []string{normalizedPath}
+	}
+
+	return []string{normalizedPath, strippedPath}
+}
+
+func normalizeFieldPath(path string) string {
+	return strings.TrimSpace(path)
+}
+
+func normalizeFunctionName(name string) string {
+	return strings.TrimSpace(name)
+}
+
+func stripLiteralIndices(path string) string {
+	cleaned := literalIndexPattern.ReplaceAllString(path, "")
+	cleaned = strings.TrimSpace(cleaned)
+	for strings.Contains(cleaned, "..") {
+		cleaned = strings.ReplaceAll(cleaned, "..", ".")
+	}
+	cleaned = strings.Trim(cleaned, ".")
+	return cleaned
+}
+
+func splitReferencePath(path string) (string, string) {
+	if path == "" {
+		return "", ""
+	}
+
+	splitAt := strings.IndexAny(path, ".[")
+	if splitAt == -1 {
+		return path, ""
+	}
+
+	root := path[:splitAt]
+	remainder := path[splitAt:]
+	remainder = strings.TrimPrefix(remainder, ".")
+	return root, remainder
+}
+
+func resolveScopedVariable(name string, scopeStack []map[string]semanticScopedVar) (semanticScopedVar, bool) {
+	for i := len(scopeStack) - 1; i >= 0; i-- {
+		if scopedVar, ok := scopeStack[i][name]; ok {
+			return scopedVar, true
+		}
+	}
+	return semanticScopedVar{}, false
+}
+
+func joinReferencePath(prefix, remainder string) string {
+	normalizedPrefix := normalizeFieldPath(prefix)
+	normalizedRemainder := strings.TrimSpace(strings.TrimPrefix(remainder, "."))
+
+	if normalizedPrefix == "" {
+		return normalizedRemainder
+	}
+	if normalizedRemainder == "" {
+		return normalizedPrefix
+	}
+	if strings.HasPrefix(normalizedRemainder, "[") {
+		return normalizedPrefix + normalizedRemainder
+	}
+	return normalizedPrefix + "." + normalizedRemainder
+}
+
+func forLoopSchemaPrefix(
+	collection ExpressionNode,
+	scopeStack []map[string]semanticScopedVar,
+	fieldIndex map[string]FieldDefinition,
+) string {
+	collectionPath, ok := referencePathFromNode(collection)
+	if !ok {
+		return ""
+	}
+
+	_, resolvedPath, found := resolveFieldReference(collectionPath, scopeStack, fieldIndex)
+	if !found {
+		return stripLiteralIndices(collectionPath)
+	}
+	return stripLiteralIndices(resolvedPath)
+}
+
+func forLoopVariableType(collectionType semanticTypeInfo) semanticTypeInfo {
+	switch collectionType.Kind {
+	case semanticKindArray:
+		if collectionType.ElementKind != "" {
+			return semanticKnownType(collectionType.ElementKind)
+		}
+		return semanticUnknownType()
+	case semanticKindString:
+		return semanticKnownType(semanticKindString)
+	case semanticKindObject:
+		return semanticKnownType(semanticKindObject)
+	default:
+		return semanticUnknownType()
+	}
+}
+
+func semanticTypeFromField(field FieldDefinition) semanticTypeInfo {
+	kind := normalizeSchemaKind(field.Type)
+	if kind == "" {
+		kind = semanticKindAny
+	}
+
+	if field.Collection {
+		elementKind := kind
+		if elementKind == "" {
+			elementKind = semanticKindAny
+		}
+		return semanticTypeInfo{
+			Kind:        semanticKindArray,
+			Known:       true,
+			Nullable:    field.Nullable,
+			ElementKind: elementKind,
+		}
+	}
+
+	return semanticTypeInfo{
+		Kind:     kind,
+		Known:    true,
+		Nullable: field.Nullable,
+	}
+}
+
+func semanticTypeFromKind(kind string) semanticTypeInfo {
+	normalized := normalizeSchemaKind(kind)
+	if normalized == "" {
+		normalized = semanticKindAny
+	}
+	return semanticKnownType(normalized)
+}
+
+func semanticTypeFromLiteral(value interface{}) semanticTypeInfo {
+	switch value.(type) {
+	case nil:
+		return semanticKnownType(semanticKindNull)
+	case string:
+		return semanticKnownType(semanticKindString)
+	case bool:
+		return semanticKnownType(semanticKindBool)
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return semanticKnownType(semanticKindNumber)
+	default:
+		return semanticUnknownType()
+	}
+}
+
+func semanticKnownType(kind string) semanticTypeInfo {
+	return semanticTypeInfo{
+		Kind:  normalizeSchemaKind(kind),
+		Known: true,
+	}
+}
+
+func semanticUnknownType() semanticTypeInfo {
+	return semanticTypeInfo{
+		Kind:  semanticKindUnknown,
+		Known: false,
+	}
+}
+
+func inferBinaryResultType(operator string, left semanticTypeInfo, right semanticTypeInfo) semanticTypeInfo {
+	switch operator {
+	case "==", "!=", "<", ">", "<=", ">=", "&", "|":
+		return semanticKnownType(semanticKindBool)
+	case "+", "-", "*", "/", "%":
+		if operator == "+" && (left.Kind == semanticKindString || right.Kind == semanticKindString) {
+			return semanticKnownType(semanticKindString)
+		}
+		return semanticKnownType(semanticKindNumber)
+	default:
+		return semanticUnknownType()
+	}
+}
+
+func normalizeSchemaKind(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "", semanticKindAny:
+		return semanticKindAny
+	case "string", "str", "text":
+		return semanticKindString
+	case "number", "int", "integer", "float", "decimal":
+		return semanticKindNumber
+	case "bool", "boolean":
+		return semanticKindBool
+	case "object", "map":
+		return semanticKindObject
+	case "array", "list", "slice":
+		return semanticKindArray
+	case "null", "nil":
+		return semanticKindNull
+	default:
+		return strings.ToLower(strings.TrimSpace(kind))
+	}
+}
+
+func normalizeAllowedKinds(kinds []string) []string {
+	normalized := make([]string, 0, len(kinds))
+	seen := make(map[string]struct{}, len(kinds))
+
+	for _, kind := range kinds {
+		normalizedKind := normalizeSchemaKind(kind)
+		if normalizedKind == "" {
+			continue
+		}
+		if _, exists := seen[normalizedKind]; exists {
+			continue
+		}
+		seen[normalizedKind] = struct{}{}
+		normalized = append(normalized, normalizedKind)
+	}
+
+	return normalized
+}
+
+func isAllowedArgumentType(argType semanticTypeInfo, allowedKinds []string) bool {
+	if len(allowedKinds) == 0 {
+		return true
+	}
+	if !argType.Known || argType.Kind == semanticKindUnknown || argType.Kind == semanticKindAny {
+		return true
+	}
+
+	for _, allowedKind := range allowedKinds {
+		if allowedKind == semanticKindAny || allowedKind == argType.Kind {
+			return true
+		}
+	}
+
+	return false
+}
+
+func semanticTypeName(argType semanticTypeInfo) string {
+	if !argType.Known || argType.Kind == "" {
+		return semanticKindUnknown
+	}
+	return argType.Kind
+}
+
+func formatArgumentRange(minArgs, maxArgs int) string {
+	switch {
+	case maxArgs < 0:
+		return fmt.Sprintf("at least %d", minArgs)
+	case minArgs == maxArgs:
+		return fmt.Sprintf("%d", minArgs)
+	default:
+		return fmt.Sprintf("%d to %d", minArgs, maxArgs)
+	}
+}
+
 func extractReferencesFromSpans(spans []tokenSpan) []TemplateTokenRef {
 	references := make([]TemplateTokenRef, 0)
 
@@ -774,22 +1482,67 @@ func newValidationMetadata(docxBytes []byte, templateRevisionID string) StencilM
 	}
 }
 
+func summarizeIssueSeverities(issues []StencilValidationIssue) (int, int) {
+	errorCount := 0
+	warningCount := 0
+
+	for _, issue := range issues {
+		switch issue.Severity {
+		case IssueSeverityWarning:
+			warningCount++
+		default:
+			errorCount++
+		}
+	}
+
+	return errorCount, warningCount
+}
+
+func filterIssues(issues []StencilValidationIssue, includeWarnings bool) []StencilValidationIssue {
+	if includeWarnings {
+		return issues
+	}
+
+	filtered := make([]StencilValidationIssue, 0, len(issues))
+	for _, issue := range issues {
+		if issue.Severity == IssueSeverityWarning {
+			continue
+		}
+		filtered = append(filtered, issue)
+	}
+
+	return filtered
+}
+
+func truncateIssues(issues []StencilValidationIssue, maxIssues int) ([]StencilValidationIssue, bool) {
+	if maxIssues == 0 || len(issues) <= maxIssues {
+		return issues, false
+	}
+	return issues[:maxIssues], true
+}
+
 func sortValidationIssues(issues []StencilValidationIssue) {
 	sort.SliceStable(issues, func(i, j int) bool {
 		left := issues[i]
 		right := issues[j]
 
-		if left.Location.TokenOrdinal != right.Location.TokenOrdinal {
-			return left.Location.TokenOrdinal < right.Location.TokenOrdinal
-		}
 		if left.Location.Part != right.Location.Part {
 			return left.Location.Part < right.Location.Part
+		}
+		if left.Location.TokenOrdinal != right.Location.TokenOrdinal {
+			return left.Location.TokenOrdinal < right.Location.TokenOrdinal
 		}
 		if left.Location.CharStartUTF16 != right.Location.CharStartUTF16 {
 			return left.Location.CharStartUTF16 < right.Location.CharStartUTF16
 		}
 		if left.Code != right.Code {
 			return left.Code < right.Code
+		}
+		if left.Severity != right.Severity {
+			return left.Severity < right.Severity
+		}
+		if left.Token.Expression != right.Token.Expression {
+			return left.Token.Expression < right.Token.Expression
 		}
 		return left.Message < right.Message
 	})
