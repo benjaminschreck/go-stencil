@@ -50,6 +50,42 @@ func RenderParagraph(para *Paragraph, data TemplateData) (*Paragraph, error) {
 
 // RenderParagraphWithContext renders a paragraph with context
 func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderContext) (*Paragraph, error) {
+	// Proofing markers (w:proofErr) can split template tokens across runs.
+	// Keep a legacy run-only view for rendering in those paragraphs so
+	// split variables like "{{" + "name" + "}}" still evaluate.
+	useLegacyRunRendering := false
+	var legacyRuns []Run
+	if len(para.Content) > 0 {
+		hasProofErr := false
+		hasHyperlink := false
+		for _, content := range para.Content {
+			switch content.(type) {
+			case *ProofErr:
+				hasProofErr = true
+			case *Hyperlink:
+				hasHyperlink = true
+			}
+		}
+
+		useLegacyRunRendering = hasProofErr && !hasHyperlink
+		if useLegacyRunRendering {
+			baseRuns := para.Runs
+			if len(baseRuns) == 0 {
+				baseRuns = make([]Run, 0, len(para.Content))
+				for _, content := range para.Content {
+					if run, ok := content.(*Run); ok {
+						baseRuns = append(baseRuns, *run)
+					}
+				}
+			}
+
+			legacyRuns = cloneRunsForLegacyRendering(baseRuns)
+			legacyPara := &Paragraph{Runs: legacyRuns}
+			render.MergeConsecutiveRuns(legacyPara)
+			legacyRuns = legacyPara.Runs
+		}
+	}
+
 	// CRITICAL: Merge consecutive runs FIRST to handle split template markers
 	// This must happen before we check for control structures, especially for
 	// paragraphs generated during for loop iterations in fragments
@@ -198,8 +234,10 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 		Attrs:      para.Attrs,
 	}
 
-	// Use Content if available to preserve order of runs and hyperlinks
-	if len(para.Content) > 0 {
+	// Use Content if available to preserve order of runs and hyperlinks.
+	// For proofErr-only mixed content, fall back to run rendering so split
+	// template tokens can still be evaluated.
+	if len(para.Content) > 0 && !useLegacyRunRendering {
 		for _, content := range para.Content {
 			switch c := content.(type) {
 			case *Run:
@@ -237,7 +275,11 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 	} else {
 		// Fall back to legacy fields
 		// Render runs
-		for _, run := range para.Runs {
+		runsToRender := para.Runs
+		if useLegacyRunRendering {
+			runsToRender = legacyRuns
+		}
+		for _, run := range runsToRender {
 			renderedRun, err := RenderRunWithContext(&run, data, ctx)
 			if err != nil {
 				return nil, err
@@ -267,6 +309,22 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 	}
 
 	return rendered, nil
+}
+
+func cloneRunsForLegacyRendering(runs []Run) []Run {
+	if len(runs) == 0 {
+		return nil
+	}
+
+	cloned := make([]Run, len(runs))
+	for i, run := range runs {
+		cloned[i] = run
+		if run.Text != nil {
+			textCopy := *run.Text
+			cloned[i].Text = &textCopy
+		}
+	}
+	return cloned
 }
 
 // ooxmlFragmentRegex matches OOXML fragment placeholders
