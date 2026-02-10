@@ -101,7 +101,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 			}
 		}
 	}
-	
+
 	// Check if we have control structures
 	// Note: We only check for actual control structure tokens, not variable tokens
 	tokens := Tokenize(fullText)
@@ -112,7 +112,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 			hasControlStructures = true
 		}
 	}
-	
+
 	// If we have control structures, parse and render them
 	// Only use control structure processing when actual control structures are present
 	if hasControlStructures {
@@ -130,7 +130,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 					hasActualControlStructures = true
 				}
 			}
-			
+
 			// Only use control structure rendering if we have actual control structures
 			if hasActualControlStructures {
 				// This should not be reached for simple variable substitution
@@ -139,27 +139,29 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 				if err != nil {
 					return nil, fmt.Errorf("failed to render control structures in paragraph: %w", err)
 				}
-			
+
 				// Create a new paragraph with the rendered text
 				rendered := &Paragraph{
 					Properties: para.Properties,
+					Attrs:      para.Attrs,
 				}
-				
+
 				// Convert the rendered text into runs, preserving line breaks
 				if len(para.Runs) > 0 {
 					// Split the rendered text by newlines to preserve line breaks
 					lines := strings.Split(renderedText, "\n")
-					
+
 					for i, line := range lines {
 						if line != "" {
 							// Create a text run for this line
 							textRun := Run{
 								Properties: para.Runs[0].Properties,
+								Attrs:      para.Runs[0].Attrs,
 								Text: &Text{
 									Content: line,
 								},
 							}
-							
+
 							// Check if the run contains OOXML fragments that need to be expanded
 							if ooxmlFragmentRegex.MatchString(line) {
 								// Process the run to handle OOXML fragments
@@ -172,28 +174,30 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 								rendered.Runs = append(rendered.Runs, textRun)
 							}
 						}
-						
+
 						// Add a line break run between lines (but not after the last line)
 						if i < len(lines)-1 {
 							breakRun := Run{
 								Properties: para.Runs[0].Properties,
+								Attrs:      para.Runs[0].Attrs,
 								Break:      &Break{},
 							}
 							rendered.Runs = append(rendered.Runs, breakRun)
 						}
 					}
 				}
-				
+
 				return rendered, nil
 			}
 		}
 	}
-	
+
 	// Otherwise, render normally
 	rendered := &Paragraph{
 		Properties: para.Properties,
+		Attrs:      para.Attrs,
 	}
-	
+
 	// Use Content if available to preserve order of runs and hyperlinks
 	if len(para.Content) > 0 {
 		for _, content := range para.Content {
@@ -203,7 +207,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 				if err != nil {
 					return nil, err
 				}
-				
+
 				// Check if the run contains OOXML fragments that need to be expanded
 				if renderedRun.Text != nil && ooxmlFragmentRegex.MatchString(renderedRun.Text.Content) {
 					// Process the run to handle OOXML fragments
@@ -226,6 +230,8 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 				}
 				rendered.Content = append(rendered.Content, renderedHyperlink)
 				rendered.Hyperlinks = append(rendered.Hyperlinks, *renderedHyperlink)
+			case *ProofErr:
+				rendered.Content = append(rendered.Content, c)
 			}
 		}
 	} else {
@@ -236,7 +242,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 			if err != nil {
 				return nil, err
 			}
-			
+
 			// Check if the run contains OOXML fragments that need to be expanded
 			if renderedRun.Text != nil && ooxmlFragmentRegex.MatchString(renderedRun.Text.Content) {
 				// Process the run to handle OOXML fragments
@@ -249,7 +255,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 				rendered.Runs = append(rendered.Runs, *renderedRun)
 			}
 		}
-		
+
 		// Render hyperlinks
 		for _, hyperlink := range para.Hyperlinks {
 			renderedHyperlink, err := RenderHyperlinkWithContext(&hyperlink, data, ctx)
@@ -259,7 +265,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 			rendered.Hyperlinks = append(rendered.Hyperlinks, *renderedHyperlink)
 		}
 	}
-	
+
 	return rendered, nil
 }
 
@@ -275,6 +281,7 @@ func RenderRun(run *Run, data TemplateData) (*Run, error) {
 func RenderRunWithContext(run *Run, data TemplateData, ctx *renderContext) (*Run, error) {
 	rendered := &Run{
 		Properties: run.Properties,
+		Attrs:      run.Attrs,
 		Break:      run.Break,
 		RawXML:     run.RawXML, // Preserve raw XML elements like drawings
 	}
@@ -296,7 +303,7 @@ func RenderHyperlinkWithContext(hyperlink *Hyperlink, data TemplateData, ctx *re
 		ID:      hyperlink.ID,
 		History: hyperlink.History,
 	}
-	
+
 	// Render runs within the hyperlink
 	for _, run := range hyperlink.Runs {
 		renderedRun, err := RenderRunWithContext(&run, data, ctx)
@@ -305,20 +312,21 @@ func RenderHyperlinkWithContext(hyperlink *Hyperlink, data TemplateData, ctx *re
 		}
 		rendered.Runs = append(rendered.Runs, *renderedRun)
 	}
-	
+
 	return rendered, nil
 }
 
 // convertXMLElementToRuns converts an XML element to DOCX runs
 func convertXMLElementToRuns(elem XMLElement, templateRun *Run) []Run {
 	var runs []Run
-	
+
 	switch elem.Type {
 	case "text":
 		// Simple text element
 		if elem.Text != "" {
 			textRun := Run{
 				Properties: templateRun.Properties,
+				Attrs:      templateRun.Attrs,
 				Text: &Text{
 					XMLName: templateRun.Text.XMLName,
 					Space:   templateRun.Text.Space,
@@ -327,7 +335,7 @@ func convertXMLElementToRuns(elem XMLElement, templateRun *Run) []Run {
 			}
 			runs = append(runs, textRun)
 		}
-		
+
 	case "element":
 		// Check if it's a known OOXML element
 		switch elem.Name.Local {
@@ -341,16 +349,18 @@ func convertXMLElementToRuns(elem XMLElement, templateRun *Run) []Run {
 			}
 			breakRun := Run{
 				Properties: templateRun.Properties,
+				Attrs:      templateRun.Attrs,
 				Break:      &Break{Type: breakType},
 			}
 			runs = append(runs, breakRun)
-			
+
 		case "t":
 			// Text element - extract text content
 			textContent := extractTextFromXMLElement(elem)
 			if textContent != "" {
 				textRun := Run{
 					Properties: templateRun.Properties,
+					Attrs:      templateRun.Attrs,
 					Text: &Text{
 						XMLName: templateRun.Text.XMLName,
 						Space:   templateRun.Text.Space,
@@ -359,14 +369,14 @@ func convertXMLElementToRuns(elem XMLElement, templateRun *Run) []Run {
 				}
 				runs = append(runs, textRun)
 			}
-			
+
 		case "r":
 			// Run element - process its children
 			for _, child := range elem.Content {
 				childRuns := convertXMLElementToRuns(child, templateRun)
 				runs = append(runs, childRuns...)
 			}
-			
+
 		default:
 			// For other elements, process children
 			for _, child := range elem.Content {
@@ -375,51 +385,52 @@ func convertXMLElementToRuns(elem XMLElement, templateRun *Run) []Run {
 			}
 		}
 	}
-	
+
 	return runs
 }
 
 // extractTextFromXMLElement extracts all text content from an XML element and its children
 func extractTextFromXMLElement(elem XMLElement) string {
 	var text string
-	
+
 	if elem.Type == "text" {
 		return elem.Text
 	}
-	
+
 	for _, child := range elem.Content {
 		text += extractTextFromXMLElement(child)
 	}
-	
+
 	return text
 }
 
 // expandOOXMLFragments processes OOXML fragments in a run and returns multiple runs if needed
 func expandOOXMLFragments(run *Run, _ TemplateData, ctx *renderContext) ([]Run, error) {
 	content := run.Text.Content
-	
+
 	// Find all OOXML fragment placeholders
 	matches := ooxmlFragmentRegex.FindAllStringSubmatchIndex(content, -1)
 	if len(matches) == 0 {
 		return []Run{*run}, nil
 	}
-	
+
 	var runs []Run
 	lastEnd := 0
-	
+
 	for _, match := range matches {
 		// match[0] and match[1] are the start and end of the full match
 		// match[2] and match[3] are the start and end of the submatch (fragment type)
 		fragmentStart := match[0]
 		fragmentEnd := match[1]
 		fragmentType := content[match[2]:match[3]]
-		
+
 		// Add any text before the fragment as a regular run
 		if fragmentStart > lastEnd {
 			beforeText := content[lastEnd:fragmentStart]
 			if strings.TrimSpace(beforeText) != "" {
 				textRun := Run{
 					Properties: run.Properties,
+					Attrs:      run.Attrs,
 					Text: &Text{
 						XMLName: run.Text.XMLName,
 						Space:   run.Text.Space,
@@ -429,31 +440,33 @@ func expandOOXMLFragments(run *Run, _ TemplateData, ctx *renderContext) ([]Run, 
 				runs = append(runs, textRun)
 			}
 		}
-		
+
 		// Handle the fragment based on its key
 		// Try to retrieve the actual fragment from context
 		var fragmentContent interface{}
 		if ctx != nil && ctx.ooxmlFragments != nil {
 			fragmentContent = ctx.ooxmlFragments[fragmentType]
 		}
-		
+
 		if fragmentContent != nil {
 			switch content := fragmentContent.(type) {
 			case *Break:
 				// Page break
 				breakRun := Run{
 					Properties: run.Properties,
+					Attrs:      run.Attrs,
 					Break:      content,
 				}
 				runs = append(runs, breakRun)
-				
+
 			case *HTMLRuns:
 				// HTML runs - expand into multiple runs
 				for _, htmlRun := range content.Runs {
 					newRun := Run{
 						Properties: htmlRun.Properties,
+						Attrs:      run.Attrs,
 					}
-					
+
 					// Convert HTML run elements to text/breaks
 					for _, elem := range htmlRun.Content {
 						switch elem.Type {
@@ -473,6 +486,7 @@ func expandOOXMLFragments(run *Run, _ TemplateData, ctx *renderContext) ([]Run, 
 								runs = append(runs, newRun)
 								newRun = Run{
 									Properties: htmlRun.Properties,
+									Attrs:      run.Attrs,
 									Break:      &Break{}, // Empty break for line break
 								}
 							} else {
@@ -480,24 +494,25 @@ func expandOOXMLFragments(run *Run, _ TemplateData, ctx *renderContext) ([]Run, 
 							}
 						}
 					}
-					
+
 					// Add the final run if it has content
 					if newRun.Text != nil || newRun.Break != nil {
 						runs = append(runs, newRun)
 					}
 				}
-				
+
 			case *XMLFragment:
 				// XML fragment - convert XML elements to runs
 				for _, elem := range content.Elements {
 					expandedRuns := convertXMLElementToRuns(elem, run)
 					runs = append(runs, expandedRuns...)
 				}
-				
+
 			default:
 				// Unknown fragment type, preserve as text
 				fragmentRun := Run{
 					Properties: run.Properties,
+					Attrs:      run.Attrs,
 					Text: &Text{
 						XMLName: run.Text.XMLName,
 						Space:   run.Text.Space,
@@ -513,6 +528,7 @@ func expandOOXMLFragments(run *Run, _ TemplateData, ctx *renderContext) ([]Run, 
 				// Legacy page break placeholder (supports both old and new package structure)
 				breakRun := Run{
 					Properties: run.Properties,
+					Attrs:      run.Attrs,
 					Break:      &Break{Type: "page"},
 				}
 				runs = append(runs, breakRun)
@@ -520,6 +536,7 @@ func expandOOXMLFragments(run *Run, _ TemplateData, ctx *renderContext) ([]Run, 
 				// Unknown fragment, preserve as text
 				fragmentRun := Run{
 					Properties: run.Properties,
+					Attrs:      run.Attrs,
 					Text: &Text{
 						XMLName: run.Text.XMLName,
 						Space:   run.Text.Space,
@@ -529,16 +546,17 @@ func expandOOXMLFragments(run *Run, _ TemplateData, ctx *renderContext) ([]Run, 
 				runs = append(runs, fragmentRun)
 			}
 		}
-		
+
 		lastEnd = fragmentEnd
 	}
-	
+
 	// Add any remaining text after the last fragment
 	if lastEnd < len(content) {
 		afterText := content[lastEnd:]
 		if strings.TrimSpace(afterText) != "" {
 			textRun := Run{
 				Properties: run.Properties,
+				Attrs:      run.Attrs,
 				Text: &Text{
 					XMLName: run.Text.XMLName,
 					Space:   run.Text.Space,
@@ -548,12 +566,12 @@ func expandOOXMLFragments(run *Run, _ TemplateData, ctx *renderContext) ([]Run, 
 			runs = append(runs, textRun)
 		}
 	}
-	
+
 	// If no runs were created, return the original run
 	if len(runs) == 0 {
 		return []Run{*run}, nil
 	}
-	
+
 	return runs, nil
 }
 
@@ -565,11 +583,11 @@ func RenderText(text *Text, data TemplateData) (*Text, error) {
 // RenderTextWithContext renders text content with variable substitution and context
 func RenderTextWithContext(text *Text, data TemplateData, ctx *renderContext) (*Text, error) {
 	content := text.Content
-	
+
 	// Find and replace all template variables
 	tokens := Tokenize(content)
 	var result strings.Builder
-	
+
 	for _, token := range tokens {
 		switch token.Type {
 		case TokenText:
@@ -696,7 +714,7 @@ func RenderTextWithContext(text *Text, data TemplateData, ctx *renderContext) (*
 			result.WriteString("}}")
 		}
 	}
-	
+
 	return &Text{
 		XMLName: text.XMLName,
 		Space:   text.Space,

@@ -17,45 +17,45 @@ func min(a, b int) int {
 // namespaceURIToPrefix converts a full namespace URI to its prefix
 func namespaceURIToPrefix(uri string) string {
 	prefixMap := map[string]string{
-		"http://schemas.openxmlformats.org/wordprocessingml/2006/main":                    "w",
-		"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing":          "wp",
-		"http://schemas.openxmlformats.org/drawingml/2006/main":                           "a",
-		"http://schemas.openxmlformats.org/drawingml/2006/picture":                        "pic",
-		"http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing":             "wp14",
-		"http://schemas.microsoft.com/office/drawing/2010/main":                           "a14",
-		"http://schemas.openxmlformats.org/officeDocument/2006/relationships":             "r",
-		"http://www.w3.org/XML/1998/namespace":                                            "xml",
-		"http://schemas.openxmlformats.org/markup-compatibility/2006":                     "mc",
-		"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas":              "wpc",
-		"http://schemas.microsoft.com/office/drawing/2014/chartex":                        "cx",
-		"http://schemas.microsoft.com/office/drawing/2015/9/8/chartex":                    "cx1",
-		"http://schemas.microsoft.com/office/drawing/2015/10/21/chartex":                  "cx2",
-		"http://schemas.microsoft.com/office/drawing/2016/5/9/chartex":                    "cx3",
-		"http://schemas.microsoft.com/office/drawing/2016/5/10/chartex":                   "cx4",
-		"http://schemas.microsoft.com/office/drawing/2016/5/11/chartex":                   "cx5",
-		"http://schemas.microsoft.com/office/drawing/2016/5/12/chartex":                   "cx6",
-		"http://schemas.microsoft.com/office/drawing/2016/5/13/chartex":                   "cx7",
-		"http://schemas.microsoft.com/office/drawing/2016/5/14/chartex":                   "cx8",
-		"http://schemas.microsoft.com/office/drawing/2016/ink":                            "aink",
-		"http://schemas.microsoft.com/office/drawing/2017/model3d":                        "am3d",
-		"urn:schemas-microsoft-com:office:office":                                         "o",
-		"http://schemas.microsoft.com/office/2019/extlst":                                 "oel",
-		"http://schemas.openxmlformats.org/officeDocument/2006/math":                      "m",
-		"urn:schemas-microsoft-com:vml":                                                   "v",
-		"urn:schemas-microsoft-com:office:word":                                           "w10",
-		"http://schemas.microsoft.com/office/word/2010/wordml":                            "w14",
-		"http://schemas.microsoft.com/office/word/2012/wordml":                            "w15",
-		"http://schemas.microsoft.com/office/word/2018/wordml/cex":                        "w16cex",
-		"http://schemas.microsoft.com/office/word/2016/wordml/cid":                        "w16cid",
-		"http://schemas.microsoft.com/office/word/2018/wordml":                            "w16",
-		"http://schemas.microsoft.com/office/word/2023/wordml/word16du":                   "w16du",
-		"http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash":                "w16sdtdh",
-		"http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock":              "w16sdtfl",
-		"http://schemas.microsoft.com/office/word/2015/wordml/symex":                      "w16se",
-		"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup":               "wpg",
-		"http://schemas.microsoft.com/office/word/2010/wordprocessingInk":                 "wpi",
-		"http://schemas.microsoft.com/office/word/2006/wordml":                            "wne",
-		"http://schemas.microsoft.com/office/word/2010/wordprocessingShape":               "wps",
+		"http://schemas.openxmlformats.org/wordprocessingml/2006/main":           "w",
+		"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing": "wp",
+		"http://schemas.openxmlformats.org/drawingml/2006/main":                  "a",
+		"http://schemas.openxmlformats.org/drawingml/2006/picture":               "pic",
+		"http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing":    "wp14",
+		"http://schemas.microsoft.com/office/drawing/2010/main":                  "a14",
+		"http://schemas.openxmlformats.org/officeDocument/2006/relationships":    "r",
+		"http://www.w3.org/XML/1998/namespace":                                   "xml",
+		"http://schemas.openxmlformats.org/markup-compatibility/2006":            "mc",
+		"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas":     "wpc",
+		"http://schemas.microsoft.com/office/drawing/2014/chartex":               "cx",
+		"http://schemas.microsoft.com/office/drawing/2015/9/8/chartex":           "cx1",
+		"http://schemas.microsoft.com/office/drawing/2015/10/21/chartex":         "cx2",
+		"http://schemas.microsoft.com/office/drawing/2016/5/9/chartex":           "cx3",
+		"http://schemas.microsoft.com/office/drawing/2016/5/10/chartex":          "cx4",
+		"http://schemas.microsoft.com/office/drawing/2016/5/11/chartex":          "cx5",
+		"http://schemas.microsoft.com/office/drawing/2016/5/12/chartex":          "cx6",
+		"http://schemas.microsoft.com/office/drawing/2016/5/13/chartex":          "cx7",
+		"http://schemas.microsoft.com/office/drawing/2016/5/14/chartex":          "cx8",
+		"http://schemas.microsoft.com/office/drawing/2016/ink":                   "aink",
+		"http://schemas.microsoft.com/office/drawing/2017/model3d":               "am3d",
+		"urn:schemas-microsoft-com:office:office":                                "o",
+		"http://schemas.microsoft.com/office/2019/extlst":                        "oel",
+		"http://schemas.openxmlformats.org/officeDocument/2006/math":             "m",
+		"urn:schemas-microsoft-com:vml":                                          "v",
+		"urn:schemas-microsoft-com:office:word":                                  "w10",
+		"http://schemas.microsoft.com/office/word/2010/wordml":                   "w14",
+		"http://schemas.microsoft.com/office/word/2012/wordml":                   "w15",
+		"http://schemas.microsoft.com/office/word/2018/wordml/cex":               "w16cex",
+		"http://schemas.microsoft.com/office/word/2016/wordml/cid":               "w16cid",
+		"http://schemas.microsoft.com/office/word/2018/wordml":                   "w16",
+		"http://schemas.microsoft.com/office/word/2023/wordml/word16du":          "w16du",
+		"http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash":       "w16sdtdh",
+		"http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock":     "w16sdtfl",
+		"http://schemas.microsoft.com/office/word/2015/wordml/symex":             "w16se",
+		"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup":      "wpg",
+		"http://schemas.microsoft.com/office/word/2010/wordprocessingInk":        "wpi",
+		"http://schemas.microsoft.com/office/word/2006/wordml":                   "wne",
+		"http://schemas.microsoft.com/office/word/2010/wordprocessingShape":      "wps",
 	}
 
 	if prefix, ok := prefixMap[uri]; ok {
@@ -213,15 +213,17 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 
 	// Convert to string for processing
 	xmlStr := string(data)
-	
+
 	// Add w: prefix to all elements
 	xmlStr = strings.ReplaceAll(xmlStr, "<document>", `<w:document>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "</document>", `</w:document>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<body>", `<w:body>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "</body>", `</w:body>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<p>", `<w:p>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<p ", `<w:p `)
 	xmlStr = strings.ReplaceAll(xmlStr, "</p>", `</w:p>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<r>", `<w:r>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<r ", `<w:r `)
 	xmlStr = strings.ReplaceAll(xmlStr, "</r>", `</w:r>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<t ", `<w:t `)
 	xmlStr = strings.ReplaceAll(xmlStr, "<t>", `<w:t>`)
@@ -229,7 +231,7 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	xmlStr = strings.ReplaceAll(xmlStr, "<br>", `<w:br/>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "</br>", ``)
 	xmlStr = strings.ReplaceAll(xmlStr, "<br/>", `<w:br/>`)
-	
+
 	// Handle table elements
 	xmlStr = strings.ReplaceAll(xmlStr, "<tbl>", `<w:tbl>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "</tbl>", `</w:tbl>`)
@@ -247,18 +249,22 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	xmlStr = strings.ReplaceAll(xmlStr, "</tcPr>", `</w:tcPr>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<trPr>", `<w:trPr>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "</trPr>", `</w:trPr>`)
-	
+
 	// Handle properties
 	xmlStr = strings.ReplaceAll(xmlStr, "<pPr>", `<w:pPr>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "</pPr>", `</w:pPr>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<rPr>", `<w:rPr>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "</rPr>", `</w:rPr>`)
-	
+
 	// Handle formatting elements in run properties
 	xmlStr = strings.ReplaceAll(xmlStr, "<b></b>", `<w:b/>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<b/>", `<w:b/>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<bCs></bCs>", `<w:bCs/>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<bCs/>", `<w:bCs/>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<i></i>", `<w:i/>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<i/>", `<w:i/>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<iCs></iCs>", `<w:iCs/>`)
+	xmlStr = strings.ReplaceAll(xmlStr, "<iCs/>", `<w:iCs/>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<u ", `<w:u `)
 	xmlStr = strings.ReplaceAll(xmlStr, "</u>", `</w:u>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<strike></strike>", `<w:strike/>`)
@@ -271,7 +277,7 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	xmlStr = strings.ReplaceAll(xmlStr, "</sz>", `</w:sz>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<lang ", `<w:lang `)
 	xmlStr = strings.ReplaceAll(xmlStr, "</lang>", `</w:lang>`)
-	
+
 	// Handle style elements
 	xmlStr = strings.ReplaceAll(xmlStr, "<pStyle ", `<w:pStyle `)
 	xmlStr = strings.ReplaceAll(xmlStr, "</pStyle>", `</w:pStyle>`)
@@ -287,12 +293,12 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	xmlStr = strings.ReplaceAll(xmlStr, "</shd>", `</w:shd>`)
 	xmlStr = strings.ReplaceAll(xmlStr, "<gridCol ", `<w:gridCol `)
 	xmlStr = strings.ReplaceAll(xmlStr, "</gridCol>", `</w:gridCol>`)
-	
+
 	// Handle attributes
 	// Don't add xml: prefix here since MarshalXML already handles it properly
 	// xmlStr = strings.ReplaceAll(xmlStr, `space="preserve"`, `xml:space="preserve"`)
 	xmlStr = strings.ReplaceAll(xmlStr, `space=""`, ``)
-	
+
 	// Remove empty property elements that might cause issues
 	xmlStr = strings.ReplaceAll(xmlStr, `<w:pPr></w:pPr>`, ``)
 	xmlStr = strings.ReplaceAll(xmlStr, `<w:rPr></w:rPr>`, ``)
@@ -340,6 +346,13 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 		}
 	}
 
+	// Normalize ad-hoc namespace prefixes produced by encoding/xml for preserved attributes.
+	// We keep the original document-level declarations and rewrite element-local prefixes.
+	xmlStr = strings.ReplaceAll(xmlStr, ` xmlns:main="http://schemas.openxmlformats.org/wordprocessingml/2006/main"`, ``)
+	xmlStr = strings.ReplaceAll(xmlStr, ` xmlns:wordml="http://schemas.microsoft.com/office/word/2010/wordml"`, ``)
+	xmlStr = strings.ReplaceAll(xmlStr, "main:", "w:")
+	xmlStr = strings.ReplaceAll(xmlStr, "wordml:", "w14:")
+
 	// Add proper document declaration and root element with namespaces
 	var buf bytes.Buffer
 	buf.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
@@ -384,7 +397,7 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	start := strings.Index(xmlStr, "<w:document>")
 	end := strings.LastIndex(xmlStr, "</w:document>")
 	if start >= 0 && end > start {
-		bodyContent := xmlStr[start+len("<w:document>"):end]
+		bodyContent := xmlStr[start+len("<w:document>") : end]
 		// Trim any whitespace/newlines that might cause issues
 		bodyContent = strings.TrimSpace(bodyContent)
 		// Ensure body content starts with an element tag

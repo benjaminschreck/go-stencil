@@ -494,6 +494,31 @@ func TestParseForSyntax(t *testing.T) {
 			forStr:  "a, b, c in items",
 			wantErr: true,
 		},
+		{
+			name:    "invalid syntax - non-identifier loop variable",
+			forStr:  "1 in items",
+			wantErr: true,
+		},
+		{
+			name:    "invalid syntax - non-identifier index variable",
+			forStr:  "1, item in items",
+			wantErr: true,
+		},
+		{
+			name:    "invalid syntax - empty index variable",
+			forStr:  ", item in items",
+			wantErr: true,
+		},
+		{
+			name:    "invalid syntax - empty loop variable in indexed loop",
+			forStr:  "idx, in items",
+			wantErr: true,
+		},
+		{
+			name:    "invalid syntax - reserved literal loop variable",
+			forStr:  "true in items",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

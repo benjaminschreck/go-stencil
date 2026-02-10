@@ -10,6 +10,8 @@ import (
 // Paragraph represents a paragraph in the document
 type Paragraph struct {
 	Properties *ParagraphProperties `xml:"pPr"`
+	// Attrs preserves paragraph-level attributes (e.g. w14:paraId, w:rsidR).
+	Attrs []xml.Attr `xml:"-"`
 	// Content maintains the order of runs and hyperlinks
 	Content []ParagraphContent `xml:"-"`
 	// Legacy fields for backward compatibility during transition
@@ -22,11 +24,18 @@ func (p Paragraph) isBodyElement() {}
 
 // UnmarshalXML implements custom XML unmarshaling to preserve element order
 func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	// Preserve paragraph-level attributes.
+	if len(start.Attr) > 0 {
+		p.Attrs = append([]xml.Attr(nil), start.Attr...)
+	} else {
+		p.Attrs = nil
+	}
+
 	// Temporary storage to check if we have hyperlinks
 	var tempContent []ParagraphContent
 	var tempRuns []Run
 	var tempHyperlinks []Hyperlink
-	hasHyperlinks := false
+	useContent := false
 
 	// Process elements in order
 	for {
@@ -61,13 +70,25 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 				}
 				tempContent = append(tempContent, &hyperlink)
 				tempHyperlinks = append(tempHyperlinks, hyperlink)
-				hasHyperlinks = true
+				useContent = true
+			case "proofErr":
+				var proofErr ProofErr
+				if err := d.DecodeElement(&proofErr, &t); err != nil {
+					return err
+				}
+				tempContent = append(tempContent, &proofErr)
+				useContent = true
+			default:
+				// Skip unsupported paragraph-level elements we don't currently model.
+				if err := d.Skip(); err != nil {
+					return err
+				}
 			}
 		case xml.EndElement:
 			if t.Name.Local == "p" {
-				// Only populate Content if we have hyperlinks
-				// This allows mergeConsecutiveRuns to work on paragraphs without hyperlinks
-				if hasHyperlinks {
+				// Populate Content only when needed (e.g. hyperlinks/proofErr),
+				// allowing legacy run-only paragraphs to keep existing behavior.
+				if useContent {
 					p.Content = tempContent
 				}
 				p.Runs = tempRuns
@@ -84,6 +105,11 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 func (p Paragraph) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	// Start the paragraph element
 	start.Name = xml.Name{Local: "w:p"}
+	if len(p.Attrs) > 0 {
+		start.Attr = append([]xml.Attr(nil), p.Attrs...)
+	} else {
+		start.Attr = nil
+	}
 	if err := e.EncodeToken(start); err != nil {
 		return err
 	}
@@ -105,6 +131,10 @@ func (p Paragraph) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 				}
 			case *Hyperlink:
 				if err := e.EncodeElement(c, xml.StartElement{Name: xml.Name{Local: "w:hyperlink"}}); err != nil {
+					return err
+				}
+			case *ProofErr:
+				if err := e.EncodeElement(c, xml.StartElement{Name: xml.Name{Local: "w:proofErr"}}); err != nil {
 					return err
 				}
 			}
@@ -167,21 +197,21 @@ func (p *Paragraph) GetText() string {
 
 // ParagraphProperties represents paragraph formatting properties
 type ParagraphProperties struct {
-	Style            *Style          `xml:"pStyle"`
-	Tabs             *Tabs           `xml:"tabs"`
-	OverflowPunct    bool            `xml:"-"` // Stored as flag
-	AutoSpaceDE      bool            `xml:"-"` // Stored as flag
-	AutoSpaceDN      bool            `xml:"-"` // Stored as flag
-	AdjustRightInd   bool            `xml:"-"` // Stored as flag
-	Alignment        *Alignment      `xml:"jc"`
-	Indentation      *Indentation    `xml:"ind"`
-	Spacing          *Spacing        `xml:"spacing"`
-	TextAlignment    *TextAlignment  `xml:"-"` // Stored as string
-	RunProperties    *RunProperties  `xml:"rPr"` // Default run properties for paragraph
+	Style          *Style         `xml:"pStyle"`
+	Tabs           *Tabs          `xml:"tabs"`
+	OverflowPunct  bool           `xml:"-"` // Stored as flag
+	AutoSpaceDE    bool           `xml:"-"` // Stored as flag
+	AutoSpaceDN    bool           `xml:"-"` // Stored as flag
+	AdjustRightInd bool           `xml:"-"` // Stored as flag
+	Alignment      *Alignment     `xml:"jc"`
+	Indentation    *Indentation   `xml:"ind"`
+	Spacing        *Spacing       `xml:"spacing"`
+	TextAlignment  *TextAlignment `xml:"-"`   // Stored as string
+	RunProperties  *RunProperties `xml:"rPr"` // Default run properties for paragraph
 	// RawXML stores unparsed XML elements to preserve all paragraph properties
-	RawXML      []RawXMLElement `xml:"-"`
+	RawXML []RawXMLElement `xml:"-"`
 	// RawXMLMarkers stores marker strings for RawXML elements (used during marshaling)
-	RawXMLMarkers []string      `xml:"-"`
+	RawXMLMarkers []string `xml:"-"`
 }
 
 // UnmarshalXML implements custom XML unmarshaling to preserve unknown elements
@@ -511,26 +541,45 @@ func (a Alignment) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 
 // Indentation represents paragraph indentation
 type Indentation struct {
-	Left  int `xml:"left,attr"`
-	Right int `xml:"right,attr"`
+	Left      string `xml:"left,attr,omitempty"`
+	Right     string `xml:"right,attr,omitempty"`
+	Start     string `xml:"start,attr,omitempty"`
+	End       string `xml:"end,attr,omitempty"`
+	FirstLine string `xml:"firstLine,attr,omitempty"`
+	Hanging   string `xml:"hanging,attr,omitempty"`
 }
 
 // MarshalXML implements custom XML marshaling for Indentation
 func (i Indentation) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	start.Name = xml.Name{Local: "w:ind"}
-	start.Attr = []xml.Attr{
-		{Name: xml.Name{Local: "w:left"}, Value: fmt.Sprintf("%d", i.Left)},
-		{Name: xml.Name{Local: "w:right"}, Value: fmt.Sprintf("%d", i.Right)},
+	start.Attr = []xml.Attr{}
+	if i.Left != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:left"}, Value: i.Left})
+	}
+	if i.Right != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:right"}, Value: i.Right})
+	}
+	if i.Start != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:start"}, Value: i.Start})
+	}
+	if i.End != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:end"}, Value: i.End})
+	}
+	if i.FirstLine != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:firstLine"}, Value: i.FirstLine})
+	}
+	if i.Hanging != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:hanging"}, Value: i.Hanging})
 	}
 	return e.EncodeElement(struct{}{}, start)
 }
 
 // Spacing represents paragraph spacing
 type Spacing struct {
-	Before     int    `xml:"before,attr,omitempty"`
-	After      int    `xml:"after,attr,omitempty"`
-	Line       int    `xml:"line,attr,omitempty"`
-	LineRule   string `xml:"lineRule,attr,omitempty"`
+	Before   int    `xml:"before,attr,omitempty"`
+	After    int    `xml:"after,attr,omitempty"`
+	Line     int    `xml:"line,attr,omitempty"`
+	LineRule string `xml:"lineRule,attr,omitempty"`
 }
 
 // MarshalXML implements custom XML marshaling for Spacing
@@ -552,6 +601,44 @@ func (s Spacing) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	}
 
 	// Self-closing element
+	return e.EncodeElement(struct{}{}, start)
+}
+
+// ProofErr represents a spell/grammar proofing marker within a paragraph.
+type ProofErr struct {
+	Type  string     `xml:"type,attr,omitempty"`
+	Attrs []xml.Attr `xml:"-"`
+}
+
+// isParagraphContent implements the ParagraphContent interface.
+func (p ProofErr) isParagraphContent() {}
+
+// UnmarshalXML preserves proofErr attributes such as w:type.
+func (p *ProofErr) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	if len(start.Attr) > 0 {
+		p.Attrs = append([]xml.Attr(nil), start.Attr...)
+	} else {
+		p.Attrs = nil
+	}
+	for _, attr := range start.Attr {
+		if attr.Name.Local == "type" {
+			p.Type = attr.Value
+			break
+		}
+	}
+	return d.Skip()
+}
+
+// MarshalXML writes proofErr as a self-closing WordprocessingML element.
+func (p ProofErr) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name = xml.Name{Local: "w:proofErr"}
+	if len(p.Attrs) > 0 {
+		start.Attr = append([]xml.Attr(nil), p.Attrs...)
+	} else if p.Type != "" {
+		start.Attr = []xml.Attr{{Name: xml.Name{Local: "w:type"}, Value: p.Type}}
+	} else {
+		start.Attr = nil
+	}
 	return e.EncodeElement(struct{}{}, start)
 }
 

@@ -32,6 +32,7 @@ type (
 	Alignment           = xml.Alignment
 	Indentation         = xml.Indentation
 	Spacing             = xml.Spacing
+	ProofErr            = xml.ProofErr
 	Hyperlink           = xml.Hyperlink
 )
 
@@ -53,26 +54,26 @@ type (
 
 // Re-export table types
 type (
-	Table                = xml.Table
-	TableProperties      = xml.TableProperties
-	TableIndentation     = xml.TableIndentation
-	TableBorders         = xml.TableBorders
-	TableLayout          = xml.TableLayout
-	TableCellMargins     = xml.TableCellMargins
-	CellMargin           = xml.CellMargin
-	TableLook            = xml.TableLook
-	TableGrid            = xml.TableGrid
-	GridColumn           = xml.GridColumn
-	TableRow             = xml.TableRow
-	TableRowProperties   = xml.TableRowProperties
-	Height               = xml.Height
-	TableCell            = xml.TableCell
-	TableCellProperties  = xml.TableCellProperties
-	Width                = xml.Width
-	GridSpan             = xml.GridSpan
-	Shading              = xml.Shading
-	TableCellBorders     = xml.TableCellBorders
-	BorderProperties     = xml.BorderProperties
+	Table               = xml.Table
+	TableProperties     = xml.TableProperties
+	TableIndentation    = xml.TableIndentation
+	TableBorders        = xml.TableBorders
+	TableLayout         = xml.TableLayout
+	TableCellMargins    = xml.TableCellMargins
+	CellMargin          = xml.CellMargin
+	TableLook           = xml.TableLook
+	TableGrid           = xml.TableGrid
+	GridColumn          = xml.GridColumn
+	TableRow            = xml.TableRow
+	TableRowProperties  = xml.TableRowProperties
+	Height              = xml.Height
+	TableCell           = xml.TableCell
+	TableCellProperties = xml.TableCellProperties
+	Width               = xml.Width
+	GridSpan            = xml.GridSpan
+	Shading             = xml.Shading
+	TableCellBorders    = xml.TableCellBorders
+	BorderProperties    = xml.BorderProperties
 )
 
 // Re-export functions

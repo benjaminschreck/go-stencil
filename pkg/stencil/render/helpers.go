@@ -1,6 +1,7 @@
 package render
 
 import (
+	stdxml "encoding/xml"
 	"reflect"
 	"strings"
 
@@ -23,6 +24,11 @@ func runPropertiesEquivalent(p1, p2 *xml.RunProperties) bool {
 	// Use reflect.DeepEqual to compare the properties
 	// This will check all fields including Bold, Italic, Underline, etc.
 	return reflect.DeepEqual(p1, p2)
+}
+
+// runAttributesEquivalent checks whether two run attribute slices are equivalent.
+func runAttributesEquivalent(a1, a2 []stdxml.Attr) bool {
+	return reflect.DeepEqual(a1, a2)
 }
 
 // MergeConsecutiveRuns merges consecutive runs in a paragraph to handle split template variables
@@ -53,7 +59,14 @@ func MergeConsecutiveRuns(para *xml.Paragraph) {
 		// Only merge if:
 		// 1. Both runs have text and no break
 		// 2. Both runs have equivalent formatting properties
-		if run.Text != nil && run.Break == nil && currentRun != nil && currentRun.Text != nil && runPropertiesEquivalent(run.Properties, currentRun.Properties) {
+		if run.Text != nil &&
+			run.Break == nil &&
+			currentRun != nil &&
+			currentRun.Text != nil &&
+			len(run.RawXML) == 0 &&
+			len(currentRun.RawXML) == 0 &&
+			runPropertiesEquivalent(run.Properties, currentRun.Properties) &&
+			runAttributesEquivalent(run.Attrs, currentRun.Attrs) {
 			// Merge text content
 			currentRun.Text.Content += run.Text.Content
 			// Preserve xml:space="preserve" if either run has it
@@ -72,6 +85,7 @@ func MergeConsecutiveRuns(para *xml.Paragraph) {
 				// First add the break
 				breakRun := xml.Run{
 					Properties: run.Properties,
+					Attrs:      run.Attrs,
 					Break:      run.Break,
 				}
 				mergedRuns = append(mergedRuns, breakRun)
@@ -79,7 +93,9 @@ func MergeConsecutiveRuns(para *xml.Paragraph) {
 				// Then create a new run with just the text
 				textRun := xml.Run{
 					Properties: run.Properties,
+					Attrs:      run.Attrs,
 					Text:       run.Text,
+					RawXML:     run.RawXML,
 				}
 				currentRun = &textRun
 			} else {
@@ -106,7 +122,7 @@ func mergeConsecutiveRunsWithContent(para *xml.Paragraph) {
 		return
 	}
 
-	var mergedContent []interface{}
+	var mergedContent []xml.ParagraphContent
 	var pendingRuns []xml.Run
 
 	// Helper function to merge pending runs
@@ -143,6 +159,11 @@ func mergeConsecutiveRunsWithContent(para *xml.Paragraph) {
 			} else {
 				mergedContent = append(mergedContent, c)
 			}
+
+		default:
+			// Preserve non-run paragraph content (e.g. proofErr) at original position.
+			mergePendingRuns()
+			mergedContent = append(mergedContent, c)
 		}
 	}
 
@@ -150,10 +171,7 @@ func mergeConsecutiveRunsWithContent(para *xml.Paragraph) {
 	mergePendingRuns()
 
 	// Update paragraph content
-	para.Content = make([]xml.ParagraphContent, len(mergedContent))
-	for i, content := range mergedContent {
-		para.Content[i] = content.(xml.ParagraphContent)
-	}
+	para.Content = mergedContent
 
 	// Also update the legacy Runs array for compatibility
 	para.Runs = nil
@@ -181,7 +199,14 @@ func mergeRunSlice(runs []xml.Run) []xml.Run {
 		}
 
 		// Only merge text runs without breaks that have equivalent properties
-		if run.Text != nil && run.Break == nil && current != nil && current.Text != nil && runPropertiesEquivalent(run.Properties, current.Properties) {
+		if run.Text != nil &&
+			run.Break == nil &&
+			current != nil &&
+			current.Text != nil &&
+			len(run.RawXML) == 0 &&
+			len(current.RawXML) == 0 &&
+			runPropertiesEquivalent(run.Properties, current.Properties) &&
+			runAttributesEquivalent(run.Attrs, current.Attrs) {
 			current.Text.Content += run.Text.Content
 			// Preserve xml:space="preserve" if either run has it
 			if run.Text.Space == "preserve" || current.Text.Space == "preserve" {
@@ -197,6 +222,7 @@ func mergeRunSlice(runs []xml.Run) []xml.Run {
 				// First add the break
 				breakRun := xml.Run{
 					Properties: run.Properties,
+					Attrs:      run.Attrs,
 					Break:      run.Break,
 				}
 				merged = append(merged, breakRun)
@@ -204,7 +230,9 @@ func mergeRunSlice(runs []xml.Run) []xml.Run {
 				// Then create a new run with just the text
 				textRun := xml.Run{
 					Properties: run.Properties,
+					Attrs:      run.Attrs,
 					Text:       run.Text,
+					RawXML:     run.RawXML,
 				}
 				current = &textRun
 			} else {
@@ -263,6 +291,7 @@ func mergeTemplateExpressionRuns(runs []xml.Run) []xml.Run {
 			if j > i {
 				combinedRun := xml.Run{
 					Properties: run.Properties, // Use formatting from the first run
+					Attrs:      run.Attrs,
 					Text: &xml.Text{
 						XMLName: run.Text.XMLName,
 						Space:   "preserve", // Preserve spaces in merged content

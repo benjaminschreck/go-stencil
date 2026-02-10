@@ -11,10 +11,10 @@ import (
 func namespaceToPrefix(uri string) string {
 	prefixMap := map[string]string{
 		// Core Word namespaces
-		"http://schemas.openxmlformats.org/wordprocessingml/2006/main":           "w",
-		"http://schemas.openxmlformats.org/officeDocument/2006/relationships":    "r",
-		"http://schemas.openxmlformats.org/officeDocument/2006/math":             "m",
-		"http://www.w3.org/XML/1998/namespace":                                   "xml",
+		"http://schemas.openxmlformats.org/wordprocessingml/2006/main":        "w",
+		"http://schemas.openxmlformats.org/officeDocument/2006/relationships": "r",
+		"http://schemas.openxmlformats.org/officeDocument/2006/math":          "m",
+		"http://www.w3.org/XML/1998/namespace":                                "xml",
 		// Drawing namespaces
 		"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing": "wp",
 		"http://schemas.openxmlformats.org/drawingml/2006/main":                  "a",
@@ -22,9 +22,9 @@ func namespaceToPrefix(uri string) string {
 		"http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing":    "wp14",
 		"http://schemas.microsoft.com/office/drawing/2010/main":                  "a14",
 		// VML namespaces
-		"urn:schemas-microsoft-com:vml":          "v",
+		"urn:schemas-microsoft-com:vml":           "v",
 		"urn:schemas-microsoft-com:office:office": "o",
-		"urn:schemas-microsoft-com:office:word":  "w10",
+		"urn:schemas-microsoft-com:office:word":   "w10",
 		// Markup compatibility namespace
 		"http://schemas.openxmlformats.org/markup-compatibility/2006": "mc",
 		// Word processing shapes and canvas
@@ -33,26 +33,26 @@ func namespaceToPrefix(uri string) string {
 		"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup":  "wpg",
 		"http://schemas.microsoft.com/office/word/2010/wordprocessingInk":    "wpi",
 		// Extended Word namespaces
-		"http://schemas.microsoft.com/office/word/2010/wordml":            "w14",
-		"http://schemas.microsoft.com/office/word/2012/wordml":            "w15",
-		"http://schemas.microsoft.com/office/word/2015/wordml/symex":      "w16se",
-		"http://schemas.microsoft.com/office/word/2016/wordml/cid":        "w16cid",
-		"http://schemas.microsoft.com/office/word/2018/wordml":            "w16",
-		"http://schemas.microsoft.com/office/word/2018/wordml/cex":        "w16cex",
-		"http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash": "w16sdtdh",
+		"http://schemas.microsoft.com/office/word/2010/wordml":               "w14",
+		"http://schemas.microsoft.com/office/word/2012/wordml":               "w15",
+		"http://schemas.microsoft.com/office/word/2015/wordml/symex":         "w16se",
+		"http://schemas.microsoft.com/office/word/2016/wordml/cid":           "w16cid",
+		"http://schemas.microsoft.com/office/word/2018/wordml":               "w16",
+		"http://schemas.microsoft.com/office/word/2018/wordml/cex":           "w16cex",
+		"http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash":   "w16sdtdh",
 		"http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock": "w16sdtfl",
-		"http://schemas.microsoft.com/office/word/2023/wordml/word16du":   "w16du",
-		"http://schemas.microsoft.com/office/word/2006/wordml":            "wne",
+		"http://schemas.microsoft.com/office/word/2023/wordml/word16du":      "w16du",
+		"http://schemas.microsoft.com/office/word/2006/wordml":               "wne",
 		// Chart namespaces
-		"http://schemas.microsoft.com/office/drawing/2014/chartex":     "cx",
-		"http://schemas.microsoft.com/office/drawing/2015/9/8/chartex":  "cx1",
+		"http://schemas.microsoft.com/office/drawing/2014/chartex":       "cx",
+		"http://schemas.microsoft.com/office/drawing/2015/9/8/chartex":   "cx1",
 		"http://schemas.microsoft.com/office/drawing/2015/10/21/chartex": "cx2",
-		"http://schemas.microsoft.com/office/drawing/2016/5/9/chartex":  "cx3",
-		"http://schemas.microsoft.com/office/drawing/2016/5/10/chartex": "cx4",
-		"http://schemas.microsoft.com/office/drawing/2016/5/11/chartex": "cx5",
-		"http://schemas.microsoft.com/office/drawing/2016/5/12/chartex": "cx6",
-		"http://schemas.microsoft.com/office/drawing/2016/5/13/chartex": "cx7",
-		"http://schemas.microsoft.com/office/drawing/2016/5/14/chartex": "cx8",
+		"http://schemas.microsoft.com/office/drawing/2016/5/9/chartex":   "cx3",
+		"http://schemas.microsoft.com/office/drawing/2016/5/10/chartex":  "cx4",
+		"http://schemas.microsoft.com/office/drawing/2016/5/11/chartex":  "cx5",
+		"http://schemas.microsoft.com/office/drawing/2016/5/12/chartex":  "cx6",
+		"http://schemas.microsoft.com/office/drawing/2016/5/13/chartex":  "cx7",
+		"http://schemas.microsoft.com/office/drawing/2016/5/14/chartex":  "cx8",
 		// Other drawing namespaces
 		"http://schemas.microsoft.com/office/drawing/2016/ink":     "aink",
 		"http://schemas.microsoft.com/office/drawing/2017/model3d": "am3d",
@@ -72,8 +72,10 @@ type Run struct {
 	Properties *RunProperties `xml:"rPr"`
 	Text       *Text          `xml:"t"`
 	Break      *Break         `xml:"br"`
+	// Attrs preserves run-level attributes (e.g. w:rsidRPr).
+	Attrs []xml.Attr `xml:"-"`
 	// RawXML stores unparsed XML elements (like drawings) to preserve them
-	RawXML     []RawXMLElement `xml:"-"`
+	RawXML []RawXMLElement `xml:"-"`
 }
 
 // isParagraphContent implements the ParagraphContent interface
@@ -81,6 +83,13 @@ func (r Run) isParagraphContent() {}
 
 // UnmarshalXML implements custom XML unmarshaling to preserve unknown elements
 func (r *Run) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	// Preserve run-level attributes.
+	if len(start.Attr) > 0 {
+		r.Attrs = append([]xml.Attr(nil), start.Attr...)
+	} else {
+		r.Attrs = nil
+	}
+
 	// Process elements in order
 	for {
 		token, err := d.Token()
@@ -216,6 +225,11 @@ func (r *Run) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 func (r Run) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	// Start the run element
 	start.Name = xml.Name{Local: "w:r"}
+	if len(r.Attrs) > 0 {
+		start.Attr = append([]xml.Attr(nil), r.Attrs...)
+	} else {
+		start.Attr = nil
+	}
 	if err := e.EncodeToken(start); err != nil {
 		return err
 	}
@@ -258,15 +272,17 @@ func (r *Run) GetText() string {
 // RunProperties represents run formatting properties
 type RunProperties struct {
 	Bold          *Empty          `xml:"b"`
+	BoldCs        *Empty          `xml:"bCs"`
 	Italic        *Empty          `xml:"i"`
+	ItalicCs      *Empty          `xml:"iCs"`
 	Underline     *UnderlineStyle `xml:"u"`
 	Strike        *Empty          `xml:"strike"`
 	VerticalAlign *VerticalAlign  `xml:"vertAlign"`
 	Color         *Color          `xml:"color"`
 	Size          *Size           `xml:"sz"`
-	SizeCs        *Size           `xml:"szCs"`  // Complex script size
-	Kern          *Kern           `xml:"kern"`  // Character kerning
-	Lang          *Lang           `xml:"lang"`  // Language settings
+	SizeCs        *Size           `xml:"szCs"` // Complex script size
+	Kern          *Kern           `xml:"kern"` // Character kerning
+	Lang          *Lang           `xml:"lang"` // Language settings
 	Font          *Font           `xml:"rFonts"`
 	Style         *RunStyle       `xml:"rStyle"`
 }
@@ -377,7 +393,15 @@ func (l Lang) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 
 // Font represents font information
 type Font struct {
-	ASCII string `xml:"ascii,attr"`
+	ASCII         string `xml:"ascii,attr,omitempty"`
+	HAnsi         string `xml:"hAnsi,attr,omitempty"`
+	CS            string `xml:"cs,attr,omitempty"`
+	EastAsia      string `xml:"eastAsia,attr,omitempty"`
+	ASCIITheme    string `xml:"asciiTheme,attr,omitempty"`
+	HAnsiTheme    string `xml:"hAnsiTheme,attr,omitempty"`
+	CSTheme       string `xml:"csTheme,attr,omitempty"`
+	EastAsiaTheme string `xml:"eastAsiaTheme,attr,omitempty"`
+	Hint          string `xml:"hint,attr,omitempty"`
 }
 
 // MarshalXML implements custom XML marshaling for Font
@@ -386,8 +410,33 @@ func (f Font) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	if !strings.HasPrefix(start.Name.Local, "w:") {
 		start.Name.Local = "w:" + start.Name.Local
 	}
-	start.Attr = []xml.Attr{
-		{Name: xml.Name{Local: "w:ascii"}, Value: f.ASCII},
+	start.Attr = []xml.Attr{}
+	if f.ASCII != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:ascii"}, Value: f.ASCII})
+	}
+	if f.HAnsi != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:hAnsi"}, Value: f.HAnsi})
+	}
+	if f.CS != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:cs"}, Value: f.CS})
+	}
+	if f.EastAsia != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:eastAsia"}, Value: f.EastAsia})
+	}
+	if f.ASCIITheme != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:asciiTheme"}, Value: f.ASCIITheme})
+	}
+	if f.HAnsiTheme != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:hAnsiTheme"}, Value: f.HAnsiTheme})
+	}
+	if f.CSTheme != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:csTheme"}, Value: f.CSTheme})
+	}
+	if f.EastAsiaTheme != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:eastAsiaTheme"}, Value: f.EastAsiaTheme})
+	}
+	if f.Hint != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "w:hint"}, Value: f.Hint})
 	}
 	return e.EncodeElement(struct{}{}, start)
 }

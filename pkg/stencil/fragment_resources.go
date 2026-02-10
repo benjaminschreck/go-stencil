@@ -115,6 +115,11 @@ func cloneParagraph(para *Paragraph) *Paragraph {
 		Properties: para.Properties, // Properties can be shallow copied
 	}
 
+	if para.Attrs != nil {
+		cloned.Attrs = make([]xml.Attr, len(para.Attrs))
+		copy(cloned.Attrs, para.Attrs)
+	}
+
 	// Clone Content (ordered list)
 	if para.Content != nil {
 		cloned.Content = make([]ParagraphContent, len(para.Content))
@@ -161,6 +166,11 @@ func cloneRun(run *Run) *Run {
 		Break:      run.Break,      // Shallow copy is fine
 	}
 
+	if run.Attrs != nil {
+		cloned.Attrs = make([]xml.Attr, len(run.Attrs))
+		copy(cloned.Attrs, run.Attrs)
+	}
+
 	// Clone RawXML elements (contains images!)
 	if run.RawXML != nil {
 		cloned.RawXML = make([]RawXMLElement, len(run.RawXML))
@@ -204,7 +214,8 @@ func cloneHyperlink(link *Hyperlink) *Hyperlink {
 	}
 
 	cloned := &Hyperlink{
-		ID: link.ID,
+		ID:      link.ID,
+		History: link.History,
 	}
 
 	// Clone Runs
