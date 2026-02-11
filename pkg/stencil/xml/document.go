@@ -5,6 +5,12 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
+)
+
+var (
+	parseNamespaceContextMu sync.Mutex
+	activeParseNamespaces   map[string]string
 )
 
 // Document represents a Word document structure
@@ -18,6 +24,12 @@ type Document struct {
 func (doc *Document) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	// Save the attributes from the root element
 	doc.Attrs = start.Attr
+	parseNamespaceContextMu.Lock()
+	activeParseNamespaces = extractNamespacesFromAttrs(start.Attr)
+	defer func() {
+		activeParseNamespaces = nil
+		parseNamespaceContextMu.Unlock()
+	}()
 
 	// Use an anonymous struct to avoid recursive UnmarshalXML calls
 	var temp struct {
@@ -33,6 +45,14 @@ func (doc *Document) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 	doc.Body = temp.Body
 
 	return nil
+}
+
+func lookupActiveParseNamespace(prefix string) (string, bool) {
+	if activeParseNamespaces == nil {
+		return "", false
+	}
+	uri, ok := activeParseNamespaces[prefix]
+	return uri, ok
 }
 
 // Body represents the document body
@@ -178,9 +198,13 @@ func ParseDocument(r io.Reader) (*Document, error) {
 // ExtractNamespaces returns all namespace declarations from document attributes
 // Returns a map of prefix -> namespace URI
 func (doc *Document) ExtractNamespaces() map[string]string {
+	return extractNamespacesFromAttrs(doc.Attrs)
+}
+
+func extractNamespacesFromAttrs(attrs []xml.Attr) map[string]string {
 	namespaces := make(map[string]string)
 
-	for _, attr := range doc.Attrs {
+	for _, attr := range attrs {
 		// Handle different forms that Go's XML parser produces:
 		// Form 1: Name.Space = "xmlns", Name.Local = "prefix"
 		// Form 2: Name.Local = "xmlns:prefix", Name.Space = ""

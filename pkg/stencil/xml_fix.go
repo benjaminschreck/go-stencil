@@ -350,8 +350,8 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	// We keep the original document-level declarations and rewrite element-local prefixes.
 	xmlStr = strings.ReplaceAll(xmlStr, ` xmlns:main="http://schemas.openxmlformats.org/wordprocessingml/2006/main"`, ``)
 	xmlStr = strings.ReplaceAll(xmlStr, ` xmlns:wordml="http://schemas.microsoft.com/office/word/2010/wordml"`, ``)
-	xmlStr = strings.ReplaceAll(xmlStr, "main:", "w:")
-	xmlStr = strings.ReplaceAll(xmlStr, "wordml:", "w14:")
+	xmlStr = rewritePrefixInsideTags(xmlStr, "main:", "w:")
+	xmlStr = rewritePrefixInsideTags(xmlStr, "wordml:", "w14:")
 
 	// Add proper document declaration and root element with namespaces
 	var buf bytes.Buffer
@@ -442,4 +442,112 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 	buf.WriteString(`</w:document>`)
 
 	return buf.Bytes(), nil
+}
+
+// rewritePrefixInsideTags rewrites a namespace prefix only inside XML tag
+// markup (element/attribute names), never inside text nodes.
+func rewritePrefixInsideTags(input, fromPrefix, toPrefix string) string {
+	if fromPrefix == "" || fromPrefix == toPrefix || !strings.Contains(input, fromPrefix) {
+		return input
+	}
+
+	var out strings.Builder
+	out.Grow(len(input))
+
+	inTag := false
+	var quote byte
+	for i := 0; i < len(input); {
+		ch := input[i]
+		if !inTag {
+			if ch == '<' {
+				// Preserve XML declarations/PI/comments/CDATA/doctype as-is.
+				if strings.HasPrefix(input[i:], "<![CDATA[") {
+					end := strings.Index(input[i+9:], "]]>")
+					if end < 0 {
+						out.WriteString(input[i:])
+						return out.String()
+					}
+					end += i + 9 + 3
+					out.WriteString(input[i:end])
+					i = end
+					continue
+				}
+				if strings.HasPrefix(input[i:], "<!--") {
+					end := strings.Index(input[i+4:], "-->")
+					if end < 0 {
+						out.WriteString(input[i:])
+						return out.String()
+					}
+					end += i + 4 + 3
+					out.WriteString(input[i:end])
+					i = end
+					continue
+				}
+				if strings.HasPrefix(input[i:], "<?") {
+					end := strings.Index(input[i+2:], "?>")
+					if end < 0 {
+						out.WriteString(input[i:])
+						return out.String()
+					}
+					end += i + 2 + 2
+					out.WriteString(input[i:end])
+					i = end
+					continue
+				}
+				if strings.HasPrefix(input[i:], "<!") {
+					end := strings.Index(input[i+2:], ">")
+					if end < 0 {
+						out.WriteString(input[i:])
+						return out.String()
+					}
+					end += i + 2 + 1
+					out.WriteString(input[i:end])
+					i = end
+					continue
+				}
+
+				inTag = true
+				out.WriteByte(ch)
+				i++
+				continue
+			}
+			out.WriteByte(ch)
+			i++
+			continue
+		}
+
+		if quote != 0 {
+			out.WriteByte(ch)
+			if ch == quote {
+				quote = 0
+			}
+			i++
+			continue
+		}
+
+		if ch == '"' || ch == '\'' {
+			quote = ch
+			out.WriteByte(ch)
+			i++
+			continue
+		}
+
+		if ch == '>' {
+			inTag = false
+			out.WriteByte(ch)
+			i++
+			continue
+		}
+
+		if strings.HasPrefix(input[i:], fromPrefix) {
+			out.WriteString(toPrefix)
+			i += len(fromPrefix)
+			continue
+		}
+
+		out.WriteByte(ch)
+		i++
+	}
+
+	return out.String()
 }

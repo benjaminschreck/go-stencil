@@ -7,6 +7,13 @@ import (
 	"strings"
 )
 
+const (
+	wordprocessingMLNamespace       = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+	wordprocessingMLStrictNamespace = "http://purl.oclc.org/ooxml/wordprocessingml/main"
+	markupCompatibilityNamespace    = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+	relationshipsStrictNamespace    = "http://purl.oclc.org/ooxml/officeDocument/relationships"
+)
+
 // Paragraph represents a paragraph in the document
 type Paragraph struct {
 	Properties *ParagraphProperties `xml:"pPr"`
@@ -57,6 +64,12 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 				}
 				p.Properties = &props
 			case "r":
+				if !isWordprocessingMLElement(t) {
+					if err := collectNestedParagraphContent(d, t, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
+						return err
+					}
+					break
+				}
 				var run Run
 				if err := d.DecodeElement(&run, &t); err != nil {
 					return err
@@ -64,6 +77,12 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 				tempContent = append(tempContent, &run)
 				tempRuns = append(tempRuns, run)
 			case "hyperlink":
+				if !isWordprocessingMLElement(t) {
+					if err := collectNestedParagraphContent(d, t, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
+						return err
+					}
+					break
+				}
 				var hyperlink Hyperlink
 				if err := d.DecodeElement(&hyperlink, &t); err != nil {
 					return err
@@ -72,6 +91,12 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 				tempHyperlinks = append(tempHyperlinks, hyperlink)
 				useContent = true
 			case "proofErr":
+				if !isWordprocessingMLElement(t) {
+					if err := collectNestedParagraphContent(d, t, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
+						return err
+					}
+					break
+				}
 				var proofErr ProofErr
 				if err := d.DecodeElement(&proofErr, &t); err != nil {
 					return err
@@ -79,8 +104,9 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 				tempContent = append(tempContent, &proofErr)
 				useContent = true
 			default:
-				// Skip unsupported paragraph-level elements we don't currently model.
-				if err := d.Skip(); err != nil {
+				// Some Word wrappers (e.g. smartTag/ins/sdt) can contain runs.
+				// Traverse unknown containers and collect nested paragraph content.
+				if err := collectNestedParagraphContent(d, t, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
 					return err
 				}
 			}
@@ -99,6 +125,261 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	}
 
 	return nil
+}
+
+func isWordprocessingMLElement(start xml.StartElement) bool {
+	return start.Name.Space == "" ||
+		start.Name.Space == wordprocessingMLNamespace ||
+		start.Name.Space == wordprocessingMLStrictNamespace
+}
+
+func shouldSkipNestedWrapper(start xml.StartElement) bool {
+	if !isWordprocessingMLElement(start) {
+		return false
+	}
+	switch start.Name.Local {
+	case "del", "moveFrom":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAlternateContentElement(start xml.StartElement) bool {
+	return start.Name.Space == markupCompatibilityNamespace && start.Name.Local == "AlternateContent"
+}
+
+func choiceRequirementsSupported(alternateContent xml.StartElement, choice xml.StartElement) bool {
+	var requires string
+	for _, attr := range choice.Attr {
+		if attr.Name.Local != "Requires" {
+			continue
+		}
+		// OOXML mc:Choice uses unqualified Requires, but be lenient.
+		if attr.Name.Space == "" || attr.Name.Space == markupCompatibilityNamespace {
+			requires = attr.Value
+			break
+		}
+	}
+
+	// Invalid/missing Requires: treat as unsupported so Fallback can be used.
+	prefixes := strings.Fields(requires)
+	if len(prefixes) == 0 {
+		return false
+	}
+
+	choiceNamespaces := extractNamespacesFromAttrs(choice.Attr)
+	alternateContentNamespaces := extractNamespacesFromAttrs(alternateContent.Attr)
+	for _, prefix := range prefixes {
+		if prefix == "xml" {
+			continue
+		}
+
+		uri, ok := choiceNamespaces[prefix]
+		if !ok {
+			uri, ok = alternateContentNamespaces[prefix]
+		}
+		if !ok {
+			uri, ok = lookupActiveParseNamespace(prefix)
+		}
+
+		if !ok || !supportedMCNamespaceURI(uri) {
+			return false
+		}
+	}
+	return true
+}
+
+func supportedMCNamespaceURI(uri string) bool {
+	switch uri {
+	case wordprocessingMLStrictNamespace, relationshipsStrictNamespace:
+		return true
+	}
+	return namespaceToPrefix(uri) != uri
+}
+
+// collectNestedParagraphContent walks unknown paragraph child elements and keeps
+// supported nested content instead of dropping it with Decoder.Skip().
+func collectNestedParagraphContent(
+	d *xml.Decoder,
+	start xml.StartElement,
+	tempContent *[]ParagraphContent,
+	tempRuns *[]Run,
+	tempHyperlinks *[]Hyperlink,
+	useContent *bool,
+) error {
+	if shouldSkipNestedWrapper(start) {
+		return d.Skip()
+	}
+	if isAlternateContentElement(start) {
+		return collectAlternateContentBranch(d, start, tempContent, tempRuns, tempHyperlinks, useContent)
+	}
+
+	switch start.Name.Local {
+	case "r":
+		if !isWordprocessingMLElement(start) {
+			break
+		}
+		var run Run
+		if err := d.DecodeElement(&run, &start); err != nil {
+			return err
+		}
+		*tempContent = append(*tempContent, &run)
+		*tempRuns = append(*tempRuns, run)
+		return nil
+	case "hyperlink":
+		if !isWordprocessingMLElement(start) {
+			break
+		}
+		var hyperlink Hyperlink
+		if err := d.DecodeElement(&hyperlink, &start); err != nil {
+			return err
+		}
+		*tempContent = append(*tempContent, &hyperlink)
+		*tempHyperlinks = append(*tempHyperlinks, hyperlink)
+		*useContent = true
+		return nil
+	case "proofErr":
+		if !isWordprocessingMLElement(start) {
+			break
+		}
+		var proofErr ProofErr
+		if err := d.DecodeElement(&proofErr, &start); err != nil {
+			return err
+		}
+		*tempContent = append(*tempContent, &proofErr)
+		*useContent = true
+		return nil
+	}
+
+	for {
+		token, err := d.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		switch t := token.(type) {
+		case xml.StartElement:
+			if err := collectNestedParagraphContent(d, t, tempContent, tempRuns, tempHyperlinks, useContent); err != nil {
+				return err
+			}
+		case xml.EndElement:
+			if t.Name.Local == start.Name.Local && t.Name.Space == start.Name.Space {
+				return nil
+			}
+		}
+	}
+}
+
+// collectAlternateContentBranch handles mc:AlternateContent by selecting a single branch.
+// OOXML semantics prefer a Choice branch when available, otherwise Fallback.
+func collectAlternateContentBranch(
+	d *xml.Decoder,
+	start xml.StartElement,
+	tempContent *[]ParagraphContent,
+	tempRuns *[]Run,
+	tempHyperlinks *[]Hyperlink,
+	useContent *bool,
+) error {
+	type branchContent struct {
+		content    []ParagraphContent
+		runs       []Run
+		hyperlinks []Hyperlink
+		useContent bool
+	}
+
+	appendBranch := func(branch *branchContent) {
+		if branch == nil {
+			return
+		}
+		*tempContent = append(*tempContent, branch.content...)
+		*tempRuns = append(*tempRuns, branch.runs...)
+		*tempHyperlinks = append(*tempHyperlinks, branch.hyperlinks...)
+		if branch.useContent {
+			*useContent = true
+		}
+	}
+
+	captureBranch := func(branchStart xml.StartElement) (*branchContent, error) {
+		var branch branchContent
+		if err := collectNestedParagraphContent(
+			d,
+			branchStart,
+			&branch.content,
+			&branch.runs,
+			&branch.hyperlinks,
+			&branch.useContent,
+		); err != nil {
+			return nil, err
+		}
+		return &branch, nil
+	}
+
+	var selectedChoice *branchContent
+	var firstChoice *branchContent
+	var fallback *branchContent
+
+	for {
+		token, err := d.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		switch t := token.(type) {
+		case xml.StartElement:
+			if t.Name.Space == markupCompatibilityNamespace && t.Name.Local == "Choice" {
+				branch, err := captureBranch(t)
+				if err != nil {
+					return err
+				}
+				if firstChoice == nil {
+					firstChoice = branch
+				}
+				if selectedChoice == nil && choiceRequirementsSupported(start, t) {
+					selectedChoice = branch
+				}
+				continue
+			}
+
+			if t.Name.Space == markupCompatibilityNamespace && t.Name.Local == "Fallback" {
+				if fallback == nil {
+					branch, err := captureBranch(t)
+					if err != nil {
+						return err
+					}
+					fallback = branch
+				} else {
+					if err := d.Skip(); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+
+			if err := collectNestedParagraphContent(d, t, tempContent, tempRuns, tempHyperlinks, useContent); err != nil {
+				return err
+			}
+		case xml.EndElement:
+			if t.Name.Local == start.Name.Local && t.Name.Space == start.Name.Space {
+				if selectedChoice != nil {
+					appendBranch(selectedChoice)
+				} else if fallback != nil {
+					appendBranch(fallback)
+				} else if firstChoice != nil {
+					// Prevent silent data loss when no choice requirements are recognized
+					// and the AlternateContent has no fallback branch.
+					appendBranch(firstChoice)
+				}
+				return nil
+			}
+		}
+	}
 }
 
 // MarshalXML implements custom XML marshaling for Paragraph to ensure proper namespacing
