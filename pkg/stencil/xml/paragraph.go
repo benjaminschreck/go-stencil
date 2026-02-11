@@ -31,6 +31,10 @@ func (p Paragraph) isBodyElement() {}
 
 // UnmarshalXML implements custom XML unmarshaling to preserve element order
 func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	pushParseNamespaceScope(d, start.Attr)
+	defer popParseNamespaceScope(d)
+	parseNamespaces := currentParseNamespaces(d)
+
 	// Preserve paragraph-level attributes.
 	if len(start.Attr) > 0 {
 		p.Attrs = append([]xml.Attr(nil), start.Attr...)
@@ -65,7 +69,7 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 				p.Properties = &props
 			case "r":
 				if !isWordprocessingMLElement(t) {
-					if err := collectNestedParagraphContent(d, t, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
+					if err := collectNestedParagraphContent(d, t, parseNamespaces, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
 						return err
 					}
 					break
@@ -78,7 +82,7 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 				tempRuns = append(tempRuns, run)
 			case "hyperlink":
 				if !isWordprocessingMLElement(t) {
-					if err := collectNestedParagraphContent(d, t, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
+					if err := collectNestedParagraphContent(d, t, parseNamespaces, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
 						return err
 					}
 					break
@@ -92,7 +96,7 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 				useContent = true
 			case "proofErr":
 				if !isWordprocessingMLElement(t) {
-					if err := collectNestedParagraphContent(d, t, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
+					if err := collectNestedParagraphContent(d, t, parseNamespaces, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
 						return err
 					}
 					break
@@ -106,7 +110,7 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 			default:
 				// Some Word wrappers (e.g. smartTag/ins/sdt) can contain runs.
 				// Traverse unknown containers and collect nested paragraph content.
-				if err := collectNestedParagraphContent(d, t, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
+				if err := collectNestedParagraphContent(d, t, parseNamespaces, &tempContent, &tempRuns, &tempHyperlinks, &useContent); err != nil {
 					return err
 				}
 			}
@@ -149,7 +153,7 @@ func isAlternateContentElement(start xml.StartElement) bool {
 	return start.Name.Space == markupCompatibilityNamespace && start.Name.Local == "AlternateContent"
 }
 
-func choiceRequirementsSupported(alternateContent xml.StartElement, choice xml.StartElement) bool {
+func choiceRequirementsSupported(inScopeNamespaces map[string]string, choice xml.StartElement) bool {
 	var requires string
 	for _, attr := range choice.Attr {
 		if attr.Name.Local != "Requires" {
@@ -168,21 +172,13 @@ func choiceRequirementsSupported(alternateContent xml.StartElement, choice xml.S
 		return false
 	}
 
-	choiceNamespaces := extractNamespacesFromAttrs(choice.Attr)
-	alternateContentNamespaces := extractNamespacesFromAttrs(alternateContent.Attr)
+	choiceNamespaces := mergeNamespaces(inScopeNamespaces, choice.Attr)
 	for _, prefix := range prefixes {
 		if prefix == "xml" {
 			continue
 		}
 
 		uri, ok := choiceNamespaces[prefix]
-		if !ok {
-			uri, ok = alternateContentNamespaces[prefix]
-		}
-		if !ok {
-			uri, ok = lookupActiveParseNamespace(prefix)
-		}
-
 		if !ok || !supportedMCNamespaceURI(uri) {
 			return false
 		}
@@ -203,16 +199,19 @@ func supportedMCNamespaceURI(uri string) bool {
 func collectNestedParagraphContent(
 	d *xml.Decoder,
 	start xml.StartElement,
+	inScopeNamespaces map[string]string,
 	tempContent *[]ParagraphContent,
 	tempRuns *[]Run,
 	tempHyperlinks *[]Hyperlink,
 	useContent *bool,
 ) error {
+	currentNamespaces := mergeNamespaces(inScopeNamespaces, start.Attr)
+
 	if shouldSkipNestedWrapper(start) {
 		return d.Skip()
 	}
 	if isAlternateContentElement(start) {
-		return collectAlternateContentBranch(d, start, tempContent, tempRuns, tempHyperlinks, useContent)
+		return collectAlternateContentBranch(d, start, currentNamespaces, tempContent, tempRuns, tempHyperlinks, useContent)
 	}
 
 	switch start.Name.Local {
@@ -263,7 +262,7 @@ func collectNestedParagraphContent(
 
 		switch t := token.(type) {
 		case xml.StartElement:
-			if err := collectNestedParagraphContent(d, t, tempContent, tempRuns, tempHyperlinks, useContent); err != nil {
+			if err := collectNestedParagraphContent(d, t, currentNamespaces, tempContent, tempRuns, tempHyperlinks, useContent); err != nil {
 				return err
 			}
 		case xml.EndElement:
@@ -279,6 +278,7 @@ func collectNestedParagraphContent(
 func collectAlternateContentBranch(
 	d *xml.Decoder,
 	start xml.StartElement,
+	inScopeNamespaces map[string]string,
 	tempContent *[]ParagraphContent,
 	tempRuns *[]Run,
 	tempHyperlinks *[]Hyperlink,
@@ -308,6 +308,7 @@ func collectAlternateContentBranch(
 		if err := collectNestedParagraphContent(
 			d,
 			branchStart,
+			inScopeNamespaces,
 			&branch.content,
 			&branch.runs,
 			&branch.hyperlinks,
@@ -341,7 +342,7 @@ func collectAlternateContentBranch(
 				if firstChoice == nil {
 					firstChoice = branch
 				}
-				if selectedChoice == nil && choiceRequirementsSupported(start, t) {
+				if selectedChoice == nil && choiceRequirementsSupported(inScopeNamespaces, t) {
 					selectedChoice = branch
 				}
 				continue
@@ -362,7 +363,7 @@ func collectAlternateContentBranch(
 				continue
 			}
 
-			if err := collectNestedParagraphContent(d, t, tempContent, tempRuns, tempHyperlinks, useContent); err != nil {
+			if err := collectNestedParagraphContent(d, t, inScopeNamespaces, tempContent, tempRuns, tempHyperlinks, useContent); err != nil {
 				return err
 			}
 		case xml.EndElement:

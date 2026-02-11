@@ -17,6 +17,26 @@ type Table struct {
 // isBodyElement implements the BodyElement interface
 func (t Table) isBodyElement() {}
 
+// UnmarshalXML implements custom XML unmarshaling to keep namespace scope in sync.
+func (t *Table) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	pushParseNamespaceScope(d, start.Attr)
+	defer popParseNamespaceScope(d)
+
+	var temp struct {
+		Properties *TableProperties `xml:"tblPr"`
+		Grid       *TableGrid       `xml:"tblGrid"`
+		Rows       []TableRow       `xml:"tr"`
+	}
+	if err := d.DecodeElement(&temp, &start); err != nil {
+		return err
+	}
+
+	t.Properties = temp.Properties
+	t.Grid = temp.Grid
+	t.Rows = temp.Rows
+	return nil
+}
+
 // MarshalXML implements custom XML marshaling for Table to ensure proper namespacing
 func (t Table) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	// Start the table element with w: namespace
@@ -152,9 +172,9 @@ func (t TableLayout) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 
 // TableCellMargins represents default cell margins for a table
 type TableCellMargins struct {
-	Left  *CellMargin `xml:"left"`
-	Right *CellMargin `xml:"right"`
-	Top   *CellMargin `xml:"top"`
+	Left   *CellMargin `xml:"left"`
+	Right  *CellMargin `xml:"right"`
+	Top    *CellMargin `xml:"top"`
 	Bottom *CellMargin `xml:"bottom"`
 }
 
@@ -288,6 +308,24 @@ type TableRow struct {
 	Cells      []TableCell         `xml:"tc"`
 }
 
+// UnmarshalXML implements custom XML unmarshaling to keep namespace scope in sync.
+func (r *TableRow) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	pushParseNamespaceScope(d, start.Attr)
+	defer popParseNamespaceScope(d)
+
+	var temp struct {
+		Properties *TableRowProperties `xml:"trPr"`
+		Cells      []TableCell         `xml:"tc"`
+	}
+	if err := d.DecodeElement(&temp, &start); err != nil {
+		return err
+	}
+
+	r.Properties = temp.Properties
+	r.Cells = temp.Cells
+	return nil
+}
+
 // MarshalXML implements custom XML marshaling for TableRow to ensure proper namespacing
 func (r TableRow) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	// Start the row element
@@ -403,6 +441,24 @@ type TableCell struct {
 	Paragraphs []Paragraph          `xml:"p"`
 }
 
+// UnmarshalXML implements custom XML unmarshaling to keep namespace scope in sync.
+func (c *TableCell) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	pushParseNamespaceScope(d, start.Attr)
+	defer popParseNamespaceScope(d)
+
+	var temp struct {
+		Properties *TableCellProperties `xml:"tcPr"`
+		Paragraphs []Paragraph          `xml:"p"`
+	}
+	if err := d.DecodeElement(&temp, &start); err != nil {
+		return err
+	}
+
+	c.Properties = temp.Properties
+	c.Paragraphs = temp.Paragraphs
+	return nil
+}
+
 // MarshalXML implements custom XML marshaling for TableCell to ensure proper namespacing
 func (c TableCell) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	// Start the cell element
@@ -442,10 +498,10 @@ func (c *TableCell) GetText() string {
 
 // TableCellProperties represents cell properties
 type TableCellProperties struct {
-	Width     *Width          `xml:"tcW"`
-	VAlign    *VerticalAlign  `xml:"vAlign"`
-	GridSpan  *GridSpan       `xml:"gridSpan"`
-	Shading   *Shading        `xml:"shd"`
+	Width     *Width            `xml:"tcW"`
+	VAlign    *VerticalAlign    `xml:"vAlign"`
+	GridSpan  *GridSpan         `xml:"gridSpan"`
+	Shading   *Shading          `xml:"shd"`
 	TcBorders *TableCellBorders `xml:"tcBorders"`
 }
 

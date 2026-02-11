@@ -2,7 +2,11 @@ package xml
 
 import (
 	"encoding/xml"
+	"io"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestDocumentExtractNamespaces(t *testing.T) {
@@ -141,5 +145,85 @@ func TestDocumentMergeNamespaces(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type blockingXMLReader struct {
+	data     []byte
+	offset   int
+	release  <-chan struct{}
+	readDone chan struct{}
+	once     sync.Once
+}
+
+func (r *blockingXMLReader) Read(p []byte) (int, error) {
+	if r.offset < len(r.data) {
+		n := copy(p, r.data[r.offset:])
+		r.offset += n
+		if r.offset >= len(r.data) {
+			r.once.Do(func() {
+				close(r.readDone)
+			})
+		}
+		return n, nil
+	}
+
+	r.once.Do(func() {
+		close(r.readDone)
+	})
+	<-r.release
+	return 0, io.EOF
+}
+
+func TestParseDocument_ConcurrentParsersDoNotSerialize(t *testing.T) {
+	release := make(chan struct{})
+	readDone := make(chan struct{})
+	blockedReader := &blockingXMLReader{
+		data: []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+	<w:body>
+		<w:p><w:r><w:t>blocked`),
+		release:  release,
+		readDone: readDone,
+	}
+
+	firstParseDone := make(chan error, 1)
+	go func() {
+		_, err := ParseDocument(blockedReader)
+		firstParseDone <- err
+	}()
+
+	select {
+	case <-readDone:
+	case <-time.After(1 * time.Second):
+		t.Fatal("blocked reader prefix was not consumed")
+	}
+
+	secondParseDone := make(chan error, 1)
+	go func() {
+		_, err := ParseDocument(strings.NewReader(`<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+	<w:body>
+		<w:p><w:r><w:t>second</w:t></w:r></w:p>
+	</w:body>
+</w:document>`))
+		secondParseDone <- err
+	}()
+
+	select {
+	case err := <-secondParseDone:
+		if err != nil {
+			t.Fatalf("second parse failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second parse was blocked by the first parse")
+	}
+
+	close(release)
+
+	select {
+	case <-firstParseDone:
+	case <-time.After(1 * time.Second):
+		t.Fatal("first parse did not finish after release")
 	}
 }

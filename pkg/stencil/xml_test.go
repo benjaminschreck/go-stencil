@@ -509,6 +509,77 @@ func TestParseDocument(t *testing.T) {
 			},
 		},
 		{
+			name: "alternate content resolves alias prefix declared on paragraph ancestor",
+			xml: `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">
+	<w:body>
+		<w:p xmlns:w0="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+			<mc:AlternateContent>
+				<mc:Choice Requires="w0">
+					<w:r><w:t>choice</w:t></w:r>
+				</mc:Choice>
+				<mc:Fallback>
+					<w:r><w:t>fallback</w:t></w:r>
+				</mc:Fallback>
+			</mc:AlternateContent>
+		</w:p>
+	</w:body>
+</w:document>`,
+			wantErr: false,
+			check: func(t *testing.T, doc *Document) {
+				if len(doc.Body.Elements) == 0 {
+					t.Fatal("expected at least one element")
+				}
+				para, ok := doc.Body.Elements[0].(*Paragraph)
+				if !ok {
+					t.Fatalf("expected first element to be *Paragraph, got %T", doc.Body.Elements[0])
+				}
+				if text := para.GetText(); text != "choice" {
+					t.Fatalf("expected choice branch for paragraph-ancestor alias prefix, got %q", text)
+				}
+			},
+		},
+		{
+			name: "alternate content resolves alias prefix declared on table ancestor",
+			xml: `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">
+	<w:body>
+		<w:tbl xmlns:w0="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+			<w:tr>
+				<w:tc>
+					<w:p>
+						<mc:AlternateContent>
+							<mc:Choice Requires="w0">
+								<w:r><w:t>choice</w:t></w:r>
+							</mc:Choice>
+							<mc:Fallback>
+								<w:r><w:t>fallback</w:t></w:r>
+							</mc:Fallback>
+						</mc:AlternateContent>
+					</w:p>
+				</w:tc>
+			</w:tr>
+		</w:tbl>
+	</w:body>
+</w:document>`,
+			wantErr: false,
+			check: func(t *testing.T, doc *Document) {
+				if len(doc.Body.Elements) == 0 {
+					t.Fatal("expected at least one element")
+				}
+				tbl, ok := doc.Body.Elements[0].(*Table)
+				if !ok {
+					t.Fatalf("expected first element to be *Table, got %T", doc.Body.Elements[0])
+				}
+				if len(tbl.Rows) != 1 || len(tbl.Rows[0].Cells) != 1 || len(tbl.Rows[0].Cells[0].Paragraphs) != 1 {
+					t.Fatalf("unexpected table shape: rows=%d", len(tbl.Rows))
+				}
+				if text := tbl.Rows[0].Cells[0].Paragraphs[0].GetText(); text != "choice" {
+					t.Fatalf("expected choice branch for table-ancestor alias prefix, got %q", text)
+				}
+			},
+		},
+		{
 			name: "alternate content uses fallback for unknown word-like prefix",
 			xml: `<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">

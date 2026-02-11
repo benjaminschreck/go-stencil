@@ -9,9 +9,12 @@ import (
 )
 
 var (
-	parseNamespaceContextMu sync.Mutex
-	activeParseNamespaces   map[string]string
+	parseContexts sync.Map
 )
+
+type parseContext struct {
+	namespaceStack []map[string]string
+}
 
 // Document represents a Word document structure
 type Document struct {
@@ -24,12 +27,10 @@ type Document struct {
 func (doc *Document) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	// Save the attributes from the root element
 	doc.Attrs = start.Attr
-	parseNamespaceContextMu.Lock()
-	activeParseNamespaces = extractNamespacesFromAttrs(start.Attr)
-	defer func() {
-		activeParseNamespaces = nil
-		parseNamespaceContextMu.Unlock()
-	}()
+	parseContexts.Store(d, &parseContext{
+		namespaceStack: []map[string]string{extractNamespacesFromAttrs(start.Attr)},
+	})
+	defer parseContexts.Delete(d)
 
 	// Use an anonymous struct to avoid recursive UnmarshalXML calls
 	var temp struct {
@@ -47,12 +48,68 @@ func (doc *Document) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 	return nil
 }
 
-func lookupActiveParseNamespace(prefix string) (string, bool) {
-	if activeParseNamespaces == nil {
-		return "", false
+func parseContextForDecoder(d *xml.Decoder) *parseContext {
+	ctx, ok := parseContexts.Load(d)
+	if !ok {
+		return nil
 	}
-	uri, ok := activeParseNamespaces[prefix]
-	return uri, ok
+	parseCtx, ok := ctx.(*parseContext)
+	if !ok {
+		return nil
+	}
+	return parseCtx
+}
+
+func pushParseNamespaceScope(d *xml.Decoder, attrs []xml.Attr) {
+	parseCtx := parseContextForDecoder(d)
+	if parseCtx == nil {
+		return
+	}
+
+	current := map[string]string{}
+	if n := len(parseCtx.namespaceStack); n > 0 {
+		current = copyNamespaces(parseCtx.namespaceStack[n-1])
+	}
+	for prefix, uri := range extractNamespacesFromAttrs(attrs) {
+		current[prefix] = uri
+	}
+
+	parseCtx.namespaceStack = append(parseCtx.namespaceStack, current)
+}
+
+func popParseNamespaceScope(d *xml.Decoder) {
+	parseCtx := parseContextForDecoder(d)
+	if parseCtx == nil || len(parseCtx.namespaceStack) == 0 {
+		return
+	}
+	parseCtx.namespaceStack = parseCtx.namespaceStack[:len(parseCtx.namespaceStack)-1]
+}
+
+func currentParseNamespaces(d *xml.Decoder) map[string]string {
+	parseCtx := parseContextForDecoder(d)
+	if parseCtx == nil || len(parseCtx.namespaceStack) == 0 {
+		return nil
+	}
+	return copyNamespaces(parseCtx.namespaceStack[len(parseCtx.namespaceStack)-1])
+}
+
+func copyNamespaces(namespaces map[string]string) map[string]string {
+	if len(namespaces) == 0 {
+		return map[string]string{}
+	}
+	dup := make(map[string]string, len(namespaces))
+	for prefix, uri := range namespaces {
+		dup[prefix] = uri
+	}
+	return dup
+}
+
+func mergeNamespaces(namespaces map[string]string, attrs []xml.Attr) map[string]string {
+	merged := copyNamespaces(namespaces)
+	for prefix, uri := range extractNamespacesFromAttrs(attrs) {
+		merged[prefix] = uri
+	}
+	return merged
 }
 
 // Body represents the document body
@@ -65,6 +122,9 @@ type Body struct {
 
 // UnmarshalXML implements custom XML unmarshaling to preserve element order
 func (b *Body) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	pushParseNamespaceScope(d, start.Attr)
+	defer popParseNamespaceScope(d)
+
 	// Process elements in order
 	for {
 		token, err := d.Token()
