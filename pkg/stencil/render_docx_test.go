@@ -190,6 +190,64 @@ func TestRenderBodyWithControlStructures(t *testing.T) {
 	}
 }
 
+func TestRenderBodyWithControlStructuresIfSplitAcrossRuns(t *testing.T) {
+	body := &Body{
+		Elements: []BodyElement{
+			&Paragraph{
+				Content: []ParagraphContent{
+					&Run{Text: &Text{Content: "{{"}},
+					&ProofErr{Type: "spellStart"},
+					&Run{Text: &Text{Content: "if"}},
+					&ProofErr{Type: "spellEnd"},
+					&Run{Text: &Text{Content: " gegner."}},
+					&Run{Text: &Text{Content: "name}}"}},
+				},
+			},
+			&Paragraph{
+				Runs: []Run{
+					{Text: &Text{Content: "Unfallgegner: {{gegner.vornameName}}"}},
+				},
+			},
+			&Paragraph{
+				Runs: []Run{
+					{Text: &Text{Content: "{{end}}"}},
+				},
+			},
+		},
+	}
+
+	data := TemplateData{
+		"gegner": map[string]interface{}{
+			"name":        "Iris Schulz",
+			"vornameName": "Iris Schulz",
+		},
+	}
+
+	rendered, err := RenderBodyWithControlStructures(body, data, nil)
+	if err != nil {
+		t.Fatalf("RenderBodyWithControlStructures() error = %v", err)
+	}
+
+	var gotText []string
+	for _, elem := range rendered.Elements {
+		para, ok := elem.(*Paragraph)
+		if !ok {
+			continue
+		}
+		text := render.GetParagraphText(para)
+		if text != "" {
+			gotText = append(gotText, text)
+		}
+	}
+
+	if len(gotText) != 1 {
+		t.Fatalf("expected 1 non-empty paragraph, got %d (%v)", len(gotText), gotText)
+	}
+	if gotText[0] != "Unfallgegner: Iris Schulz" {
+		t.Fatalf("unexpected text: %q", gotText[0])
+	}
+}
+
 func TestDetectControlStructure(t *testing.T) {
 	tests := []struct {
 		name        string

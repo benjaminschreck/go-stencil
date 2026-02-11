@@ -333,10 +333,10 @@ func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderC
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Apply table merging to fix split tables from for loops outside tables
 	rendered.Elements = MergeConsecutiveTables(rendered.Elements)
-	
+
 	return rendered, nil
 }
 
@@ -373,7 +373,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 	// Process elements in order
 	i := 0
 	for i < len(body.Elements) {
-		
+
 		elem := body.Elements[i]
 
 		switch el := elem.(type) {
@@ -451,28 +451,9 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				}
 
 			case "if":
-				// Find runs before the {{if}} statement
-				var prefixRuns []Run
-				ifFound := false
-				for _, run := range para.Runs {
-					if run.Text != nil && strings.Contains(run.Text.Content, "{{if ") {
-						// Check if there's text before {{if}} in this run
-						ifIndex := strings.Index(run.Text.Content, "{{if ")
-						if ifIndex > 0 {
-							// Split this run - keep the prefix
-							prefixRun := Run{
-								Properties: run.Properties,
-								Text: &Text{Content: run.Text.Content[:ifIndex]},
-							}
-							prefixRuns = append(prefixRuns, prefixRun)
-						}
-						ifFound = true
-						break
-					} else if !ifFound {
-						// This run comes before the {{if}}, keep it entirely
-						prefixRuns = append(prefixRuns, run)
-					}
-				}
+				// Preserve any literal text before "{{if " in the opening paragraph.
+				// This must work even when Word split "{{if ...}}" across multiple runs.
+				prefixRuns := extractPrefixRunsBeforeControlMarker(para.Runs, "{{if ")
 
 				// Handle if statement
 				endIdx, elseBranches, err := render.FindIfStructureInElements(body.Elements, i)
@@ -508,7 +489,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					if err != nil {
 						return nil, err
 					}
-					
+
 					// If there were runs before the {{if}}, prepend them to the first element
 					if len(prefixRuns) > 0 && len(branchElements) > 0 {
 						if firstPara, ok := branchElements[0].(*Paragraph); ok {
@@ -516,13 +497,13 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 							newPara := &Paragraph{
 								Properties: firstPara.Properties,
 							}
-							
+
 							// Add all prefix runs (including any line breaks)
 							newPara.Runs = append(newPara.Runs, prefixRuns...)
-							
+
 							// Add all runs from the first paragraph
 							newPara.Runs = append(newPara.Runs, firstPara.Runs...)
-							
+
 							// Replace the first element
 							branchElements[0] = newPara
 						} else if len(prefixRuns) > 0 {
@@ -535,7 +516,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 							branchElements = append([]BodyElement{prefixPara}, branchElements...)
 						}
 					}
-					
+
 					rendered.Elements = append(rendered.Elements, branchElements...)
 					branchRendered = true
 				} else {
@@ -566,7 +547,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 								if err != nil {
 									return nil, err
 								}
-								
+
 								// If there were runs before the {{if}}, prepend them to the first element
 								if len(prefixRuns) > 0 && len(branchElements) > 0 {
 									if firstPara, ok := branchElements[0].(*Paragraph); ok {
@@ -574,13 +555,13 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 										newPara := &Paragraph{
 											Properties: firstPara.Properties,
 										}
-										
+
 										// Add all prefix runs (including any line breaks)
 										newPara.Runs = append(newPara.Runs, prefixRuns...)
-										
+
 										// Add all runs from the first paragraph
 										newPara.Runs = append(newPara.Runs, firstPara.Runs...)
-										
+
 										// Replace the first element
 										branchElements[0] = newPara
 									} else if len(prefixRuns) > 0 {
@@ -593,7 +574,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 										branchElements = append([]BodyElement{prefixPara}, branchElements...)
 									}
 								}
-								
+
 								rendered.Elements = append(rendered.Elements, branchElements...)
 								branchRendered = true
 								break
@@ -605,7 +586,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 							if err != nil {
 								return nil, err
 							}
-							
+
 							// If there were runs before the {{if}}, prepend them to the first element
 							if len(prefixRuns) > 0 && len(branchElements) > 0 {
 								if firstPara, ok := branchElements[0].(*Paragraph); ok {
@@ -613,13 +594,13 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 									newPara := &Paragraph{
 										Properties: firstPara.Properties,
 									}
-									
+
 									// Add all prefix runs (including any line breaks)
 									newPara.Runs = append(newPara.Runs, prefixRuns...)
-									
+
 									// Add all runs from the first paragraph
 									newPara.Runs = append(newPara.Runs, firstPara.Runs...)
-									
+
 									// Replace the first element
 									branchElements[0] = newPara
 								} else if len(prefixRuns) > 0 {
@@ -632,7 +613,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 									branchElements = append([]BodyElement{prefixPara}, branchElements...)
 								}
 							}
-							
+
 							rendered.Elements = append(rendered.Elements, branchElements...)
 							break
 						}
@@ -936,8 +917,76 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 		}
 	}
 
-
 	return rendered, nil
+}
+
+// extractPrefixRunsBeforeControlMarker returns runs that appear before the first
+// control marker in the paragraph text. It supports markers split across runs.
+func extractPrefixRunsBeforeControlMarker(runs []Run, marker string) []Run {
+	if len(runs) == 0 {
+		return nil
+	}
+
+	var fullText strings.Builder
+	for _, run := range runs {
+		if run.Break != nil {
+			// Keep line break position aligned with the run walk below.
+			fullText.WriteByte('\n')
+		}
+		if run.Text != nil {
+			fullText.WriteString(run.Text.Content)
+		}
+	}
+
+	markerIdx := strings.Index(fullText.String(), marker)
+	if markerIdx <= 0 {
+		// markerIdx == 0 means marker starts immediately; no prefix.
+		// markerIdx < 0 means marker wasn't found; safest is no prefix.
+		return nil
+	}
+
+	remaining := markerIdx
+	prefixRuns := make([]Run, 0, len(runs))
+
+	for _, run := range runs {
+		if remaining <= 0 {
+			break
+		}
+
+		if run.Break != nil {
+			prefixRuns = append(prefixRuns, run)
+			remaining--
+			if remaining <= 0 {
+				break
+			}
+		}
+
+		if run.Text == nil {
+			continue
+		}
+
+		textLen := len(run.Text.Content)
+		if textLen <= remaining {
+			prefixRuns = append(prefixRuns, run)
+			remaining -= textLen
+			continue
+		}
+
+		// Marker starts inside this run - keep only the prefix text segment.
+		prefixRun := run
+		textCopy := *run.Text
+		textCopy.Content = run.Text.Content[:remaining]
+		prefixRun.Text = &textCopy
+		prefixRuns = append(prefixRuns, prefixRun)
+		remaining = 0
+	}
+
+	// If we could not map the full prefix offset, avoid injecting partial data.
+	if remaining > 0 {
+		return nil
+	}
+
+	return prefixRuns
 }
 
 // renderInlineForLoop handles loops that are entirely within one paragraph
