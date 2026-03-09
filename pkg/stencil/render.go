@@ -169,6 +169,14 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 
 			// Only use control structure rendering if we have actual control structures
 			if hasActualControlStructures {
+				inlineRendered, handled, err := tryRenderInlineControlParagraph(para, data, ctx, useLegacyRunRendering, legacyRuns)
+				if err != nil {
+					return nil, err
+				}
+				if handled {
+					return inlineRendered, nil
+				}
+
 				// This should not be reached for simple variable substitution
 				// Render the control structures
 				renderedText, err := renderControlBodyWithContext(structures, data, ctx)
@@ -325,6 +333,330 @@ func cloneRunsForLegacyRendering(runs []Run) []Run {
 		}
 	}
 	return cloned
+}
+
+type inlineRunBranch struct {
+	index      int
+	branchType string
+	condition  string
+}
+
+func tryRenderInlineControlParagraph(para *Paragraph, data TemplateData, ctx *renderContext, useLegacyRunRendering bool, legacyRuns []Run) (*Paragraph, bool, error) {
+	if len(para.Hyperlinks) > 0 {
+		return nil, false, nil
+	}
+
+	sourceRuns := para.Runs
+	if useLegacyRunRendering {
+		sourceRuns = legacyRuns
+	}
+	if len(sourceRuns) == 0 {
+		return nil, false, nil
+	}
+
+	splitRuns, ok := splitRunsAroundTemplateMarkers(sourceRuns)
+	if !ok {
+		return nil, false, nil
+	}
+
+	renderedRuns, nextIdx, err := renderInlineControlRuns(splitRuns, 0, data, ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if nextIdx != len(splitRuns) {
+		return nil, false, nil
+	}
+
+	rendered := &Paragraph{
+		Properties: para.Properties,
+		Attrs:      para.Attrs,
+		Runs:       renderedRuns,
+	}
+
+	if len(para.Content) > 0 && !useLegacyRunRendering {
+		rendered.Content = make([]ParagraphContent, 0, len(renderedRuns))
+		for _, run := range renderedRuns {
+			runCopy := run
+			rendered.Content = append(rendered.Content, &runCopy)
+		}
+	}
+
+	return rendered, true, nil
+}
+
+func splitRunsAroundTemplateMarkers(runs []Run) ([]Run, bool) {
+	split := make([]Run, 0, len(runs))
+
+	for _, run := range runs {
+		if len(run.RawXML) > 0 {
+			return nil, false
+		}
+		if run.Break != nil && run.Text != nil {
+			return nil, false
+		}
+		if run.Text == nil || !strings.Contains(run.Text.Content, "{{") {
+			split = append(split, run)
+			continue
+		}
+
+		content := run.Text.Content
+		cursor := 0
+		for cursor < len(content) {
+			openIdx := strings.Index(content[cursor:], "{{")
+			if openIdx < 0 {
+				if tail := content[cursor:]; tail != "" {
+					split = append(split, cloneRunWithText(run, tail))
+				}
+				break
+			}
+
+			openIdx += cursor
+			if openIdx > cursor {
+				split = append(split, cloneRunWithText(run, content[cursor:openIdx]))
+			}
+
+			closeIdx := strings.Index(content[openIdx+2:], "}}")
+			if closeIdx < 0 {
+				return nil, false
+			}
+			closeIdx += openIdx + 4
+			split = append(split, cloneRunWithText(run, content[openIdx:closeIdx]))
+			cursor = closeIdx
+		}
+	}
+
+	return split, true
+}
+
+func cloneRunWithText(run Run, text string) Run {
+	cloned := run
+	if run.Text != nil {
+		textCopy := *run.Text
+		textCopy.Content = text
+		if run.Text.Space == "preserve" || strings.HasPrefix(text, " ") || strings.HasSuffix(text, " ") {
+			textCopy.Space = "preserve"
+		} else {
+			textCopy.Space = ""
+		}
+		cloned.Text = &textCopy
+	}
+	cloned.Break = nil
+	return cloned
+}
+
+func renderInlineControlRuns(runs []Run, startIdx int, data TemplateData, ctx *renderContext) ([]Run, int, error) {
+	result := make([]Run, 0, len(runs)-startIdx)
+	i := startIdx
+
+	for i < len(runs) {
+		tagType, tagValue, isControlTag := parseInlineControlTag(runs[i])
+		if isControlTag {
+			switch tagType {
+			case "if":
+				rendered, nextIdx, err := renderInlineIfRuns(runs, i, tagValue, false, data, ctx)
+				if err != nil {
+					return nil, i, err
+				}
+				result = append(result, rendered...)
+				i = nextIdx
+				continue
+			case "unless":
+				rendered, nextIdx, err := renderInlineIfRuns(runs, i, tagValue, true, data, ctx)
+				if err != nil {
+					return nil, i, err
+				}
+				result = append(result, rendered...)
+				i = nextIdx
+				continue
+			case "include":
+				rendered, err := renderInlineIncludeRun(runs[i], tagValue, data, ctx)
+				if err != nil {
+					return nil, i, err
+				}
+				result = append(result, rendered...)
+				i++
+				continue
+			case "else", "elsif", "end":
+				return result, i, nil
+			}
+		}
+
+		renderedRun, err := RenderRunWithContext(&runs[i], data, ctx)
+		if err != nil {
+			return nil, i, err
+		}
+		if renderedRun.Text != nil && ooxmlFragmentRegex.MatchString(renderedRun.Text.Content) {
+			expandedRuns, err := expandOOXMLFragments(renderedRun, data, ctx)
+			if err != nil {
+				return nil, i, err
+			}
+			result = append(result, expandedRuns...)
+		} else {
+			result = append(result, *renderedRun)
+		}
+		i++
+	}
+
+	return result, i, nil
+}
+
+func renderInlineIfRuns(runs []Run, startIdx int, condition string, invert bool, data TemplateData, ctx *renderContext) ([]Run, int, error) {
+	branches, endIdx, err := findInlineIfBranchesInRuns(runs, startIdx)
+	if err != nil {
+		return nil, startIdx, err
+	}
+
+	expr, err := ParseExpression(condition)
+	if err != nil {
+		return nil, startIdx, fmt.Errorf("failed to parse inline condition: %w", err)
+	}
+	condValue, err := expr.Evaluate(data)
+	if err != nil {
+		return nil, startIdx, fmt.Errorf("failed to evaluate inline condition: %w", err)
+	}
+
+	shouldRender := isTruthy(condValue)
+	if invert {
+		shouldRender = !shouldRender
+	}
+
+	if shouldRender {
+		branchEnd := endIdx
+		if len(branches) > 0 {
+			branchEnd = branches[0].index
+		}
+		rendered, _, err := renderInlineControlRuns(runs[startIdx+1:branchEnd], 0, data, ctx)
+		return rendered, endIdx + 1, err
+	}
+
+	for idx, branch := range branches {
+		switch branch.branchType {
+		case "elsif":
+			expr, err := ParseExpression(branch.condition)
+			if err != nil {
+				return nil, startIdx, fmt.Errorf("failed to parse inline elsif condition: %w", err)
+			}
+			elsifValue, err := expr.Evaluate(data)
+			if err != nil {
+				return nil, startIdx, fmt.Errorf("failed to evaluate inline elsif condition: %w", err)
+			}
+			if !isTruthy(elsifValue) {
+				continue
+			}
+
+			branchEnd := endIdx
+			if idx+1 < len(branches) {
+				branchEnd = branches[idx+1].index
+			}
+			rendered, _, err := renderInlineControlRuns(runs[branch.index+1:branchEnd], 0, data, ctx)
+			return rendered, endIdx + 1, err
+
+		case "else":
+			rendered, _, err := renderInlineControlRuns(runs[branch.index+1:endIdx], 0, data, ctx)
+			return rendered, endIdx + 1, err
+		}
+	}
+
+	return nil, endIdx + 1, nil
+}
+
+func findInlineIfBranchesInRuns(runs []Run, startIdx int) ([]inlineRunBranch, int, error) {
+	depth := 1
+	branches := make([]inlineRunBranch, 0)
+
+	for i := startIdx + 1; i < len(runs); i++ {
+		tagType, tagValue, isControlTag := parseInlineControlTag(runs[i])
+		if !isControlTag {
+			continue
+		}
+
+		if depth == 1 {
+			switch tagType {
+			case "elsif":
+				branches = append(branches, inlineRunBranch{
+					index:      i,
+					branchType: "elsif",
+					condition:  tagValue,
+				})
+			case "else":
+				branches = append(branches, inlineRunBranch{
+					index:      i,
+					branchType: "else",
+				})
+			}
+		}
+
+		switch tagType {
+		case "if", "unless":
+			depth++
+		case "end":
+			depth--
+			if depth == 0 {
+				return branches, i, nil
+			}
+		}
+	}
+
+	return nil, -1, fmt.Errorf("no matching {{end}} found for inline control structure")
+}
+
+func parseInlineControlTag(run Run) (string, string, bool) {
+	if run.Text == nil {
+		return "", "", false
+	}
+
+	text := strings.TrimSpace(run.Text.Content)
+	if !strings.HasPrefix(text, "{{") || !strings.HasSuffix(text, "}}") {
+		return "", "", false
+	}
+
+	inner := strings.TrimSpace(text[2 : len(text)-2])
+	switch {
+	case strings.HasPrefix(inner, "if "):
+		return "if", strings.TrimSpace(inner[3:]), true
+	case strings.HasPrefix(inner, "unless "):
+		return "unless", strings.TrimSpace(inner[7:]), true
+	case inner == "else":
+		return "else", "", true
+	case strings.HasPrefix(inner, "elsif "):
+		return "elsif", strings.TrimSpace(inner[6:]), true
+	case strings.HasPrefix(inner, "elseif "):
+		return "elsif", strings.TrimSpace(inner[7:]), true
+	case strings.HasPrefix(inner, "elif "):
+		return "elsif", strings.TrimSpace(inner[5:]), true
+	case inner == "end":
+		return "end", "", true
+	case strings.HasPrefix(inner, "include "):
+		return "include", strings.TrimSpace(inner[8:]), true
+	default:
+		return "", "", false
+	}
+}
+
+func renderInlineIncludeRun(run Run, fragmentNameExpr string, data TemplateData, ctx *renderContext) ([]Run, error) {
+	expr, err := ParseExpression(fragmentNameExpr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse include fragment name: %w", err)
+	}
+
+	renderedText, err := (&IncludeNode{FragmentName: expr}).RenderWithContext(data, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if renderedText == "" {
+		return nil, nil
+	}
+
+	includeRun := cloneRunWithText(run, renderedText)
+	renderedRun, err := RenderRunWithContext(&includeRun, data, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if renderedRun.Text != nil && ooxmlFragmentRegex.MatchString(renderedRun.Text.Content) {
+		return expandOOXMLFragments(renderedRun, data, ctx)
+	}
+
+	return []Run{*renderedRun}, nil
 }
 
 // ooxmlFragmentRegex matches OOXML fragment placeholders
