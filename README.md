@@ -24,6 +24,8 @@ go-stencil is a powerful template engine that allows you to create dynamic Micro
 go get github.com/benjaminschreck/go-stencil
 ```
 
+Tagged releases follow semantic versioning. For reproducible builds, prefer pinning an explicit tag such as `@v0.x.y` instead of relying on `@latest`.
+
 ## Quick Start
 
 ```go

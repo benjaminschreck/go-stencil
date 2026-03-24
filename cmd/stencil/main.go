@@ -2,30 +2,46 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
+
+	"github.com/benjaminschreck/go-stencil/internal/version"
 )
 
 func main() {
-	fmt.Println("go-stencil - Template engine for DOCX/PPTX files")
-	fmt.Println("Version: 0.1.0")
-	
-	if len(os.Args) < 2 {
-		fmt.Println("\nUsage: stencil <command> [arguments]")
-		fmt.Println("\nCommands:")
-		fmt.Println("  render <template> <data>    Render a template with data")
-		fmt.Println("  version                     Show version information")
-		os.Exit(1)
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printBanner(stdout)
+		printUsage(stderr)
+		return 1
 	}
-	
-	command := os.Args[1]
-	
-	switch command {
+
+	switch args[0] {
 	case "version":
-		fmt.Println("go-stencil version 0.1.0")
+		fmt.Fprintf(stdout, "go-stencil version %s\n", version.Details())
+		return 0
 	case "render":
-		fmt.Println("Render command not yet implemented")
+		fmt.Fprintln(stdout, "Render command not yet implemented")
+		return 0
 	default:
-		fmt.Printf("Unknown command: %s\n", command)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "unknown command: %s\n\n", args[0])
+		printUsage(stderr)
+		return 1
 	}
+}
+
+func printBanner(w io.Writer) {
+	fmt.Fprintln(w, "go-stencil - Template engine for DOCX/PPTX files")
+	fmt.Fprintf(w, "Version: %s\n", version.Details())
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "Usage: stencil <command> [arguments]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Commands:")
+	fmt.Fprintln(w, "  render <template> <data>    Render a template with data")
+	fmt.Fprintln(w, "  version                     Show version information")
 }
