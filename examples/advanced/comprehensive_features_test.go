@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"encoding/xml"
 	"io"
 	"os"
 	"strings"
@@ -100,18 +101,19 @@ func testComprehensiveControlStructures(t *testing.T) {
 	defer file.Close()
 
 	documentXML := extractDocumentXML(t, file)
+	documentText := extractDocumentText(t, documentXML)
 
 	// Test if/elsif/else structure
 	t.Log("Testing if/elsif/else conditions...")
 	// With score=85, should show "B - Good job!"
-	if !strings.Contains(documentXML, "B - Good job!") {
+	if !strings.Contains(documentText, "B - Good job!") {
 		t.Error("elsif condition failed: expected 'B - Good job!' for score=85")
 	}
 
 	// Test unless statement
 	t.Log("Testing unless statement...")
 	// With isWeekend=false, should show "It's a weekday - time to work!"
-	if !strings.Contains(documentXML, "It&#39;s a weekday - time to work!") {
+	if !strings.Contains(documentText, "It's a weekday - time to work!") {
 		t.Error("unless condition failed: expected 'It's a weekday - time to work!' for isWeekend=false")
 	}
 
@@ -320,12 +322,13 @@ func testComprehensiveAdvancedFeatures(t *testing.T) {
 	defer file.Close()
 
 	documentXML := extractDocumentXML(t, file)
+	documentText := extractDocumentText(t, documentXML)
 
 	t.Log("Testing advanced features...")
 
 	// Test mathematical expressions
 	// The output shows "Advanced calculation: 309.225"
-	if !strings.Contains(documentXML, "Advanced calculation: 309.225") {
+	if !strings.Contains(documentText, "Advanced calculation: 309.225") {
 		t.Error("Complex mathematical expression failed")
 	}
 
@@ -334,13 +337,13 @@ func testComprehensiveAdvancedFeatures(t *testing.T) {
 	// tax = 285 * 0.085 = 24.225
 	// total = 285 + 24.225 = 309.225
 	// Depending on formatting, might see 309.23 or 309.225
-	if !strings.Contains(documentXML, "309.2") {
+	if !strings.Contains(documentText, "309.2") {
 		t.Error("Complex mathematical expression failed")
 	}
 
 	// Test multiple permission checks
 	// The output shows "Welcome to the exclusive area!"
-	if !strings.Contains(documentXML, "Welcome to the exclusive area!") {
+	if !strings.Contains(documentText, "Welcome to the exclusive area!") {
 		t.Error("Complex logical expression failed")
 	}
 
@@ -510,4 +513,27 @@ func extractDocumentXML(t *testing.T, file *os.File) string {
 
 	t.Fatal("document.xml not found in output file")
 	return ""
+}
+
+func extractDocumentText(t *testing.T, documentXML string) string {
+	t.Helper()
+
+	decoder := xml.NewDecoder(strings.NewReader(documentXML))
+	var text strings.Builder
+
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Failed to decode document.xml text: %v", err)
+		}
+
+		if charData, ok := token.(xml.CharData); ok {
+			text.Write([]byte(charData))
+		}
+	}
+
+	return text.String()
 }

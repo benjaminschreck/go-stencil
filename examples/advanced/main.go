@@ -92,6 +92,17 @@ func main() {
 	)
 	defer engine.Close()
 
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "beispiel-nummerierung":
+			fmt.Println("=== Example: Beispiel Nummerierung ===")
+			beispielNummerierungExample(engine)
+			return
+		default:
+			log.Fatalf("Unknown example %q", os.Args[1])
+		}
+	}
+
 	// Example 1: Basic template rendering
 	fmt.Println("=== Example 1: Basic Template ===")
 	basicExample(engine)
@@ -127,6 +138,10 @@ func main() {
 	// Example 9: Nested fragments showcase
 	fmt.Println("\n=== Example 9: Nested Fragments Showcase ===")
 	nestedFragmentsExample(engine)
+
+	// Example 10: Real-world numbering and field preservation sample
+	fmt.Println("\n=== Example 10: Beispiel Nummerierung ===")
+	beispielNummerierungExample(engine)
 }
 
 func basicExample(engine *stencil.Engine) {
@@ -879,4 +894,30 @@ func nestedFragmentsExample(engine *stencil.Engine) {
 	fmt.Println("- fragment1 (Company Header) includes fragment2")
 	fmt.Println("- fragment2 (Product Catalog) includes fragment3")
 	fmt.Println("- fragment3 (Legal Footer) is the deepest level")
+}
+
+func beispielNummerierungExample(engine *stencil.Engine) {
+	tmpl, err := engine.PrepareFile("Beispiel Nummerierung.docx")
+	if err != nil {
+		log.Fatalf("Failed to prepare template: %v", err)
+	}
+	defer tmpl.Close()
+
+	// The sample document references an include fragment named "klagezeugen".
+	// Keep it intentionally small so the rendered output stays close to the source.
+	err = tmpl.AddFragment("klagezeugen", "")
+	if err != nil {
+		log.Fatalf("Failed to add klagezeugen fragment: %v", err)
+	}
+
+	data := stencil.TemplateData{
+		"klageunfallverlauf": "Beispielhafter Unfallverlauf fuer den Render-Test.",
+	}
+
+	output, err := tmpl.Render(data)
+	if err != nil {
+		log.Fatalf("Failed to render template: %v", err)
+	}
+
+	saveOutput(output, "output/beispiel_nummerierung_output.docx")
 }

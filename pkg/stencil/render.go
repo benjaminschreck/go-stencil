@@ -50,6 +50,11 @@ func RenderParagraph(para *Paragraph, data TemplateData) (*Paragraph, error) {
 
 // RenderParagraphWithContext renders a paragraph with context
 func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderContext) (*Paragraph, error) {
+	fullText := buildParagraphRenderText(para)
+	if !strings.Contains(fullText, "{{") {
+		return cloneParagraph(para), nil
+	}
+
 	// Proofing markers (w:proofErr) can split template tokens across runs.
 	// Keep a legacy run-only view for rendering in those paragraphs so
 	// split variables like "{{" + "name" + "}}" still evaluate.
@@ -90,53 +95,6 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 	// This must happen before we check for control structures, especially for
 	// paragraphs generated during for loop iterations in fragments
 	render.MergeConsecutiveRuns(para)
-
-	// First check if the paragraph contains control structures
-	// by getting the full text content including line breaks
-	fullText := ""
-
-	// Use Content if available, otherwise fall back to Runs
-	if len(para.Content) > 0 {
-		for _, content := range para.Content {
-			switch c := content.(type) {
-			case *Run:
-				if c.Text != nil {
-					fullText += c.Text.Content
-				} else if c.Break != nil {
-					fullText += "\n"
-				}
-			case *Hyperlink:
-				// Get text from hyperlink runs
-				for _, run := range c.Runs {
-					if run.Text != nil {
-						fullText += run.Text.Content
-					} else if run.Break != nil {
-						fullText += "\n"
-					}
-				}
-			}
-		}
-	} else {
-		// Fall back to legacy fields
-		for _, run := range para.Runs {
-			if run.Text != nil {
-				fullText += run.Text.Content
-			} else if run.Break != nil {
-				// Include line breaks in the full text
-				fullText += "\n"
-			}
-		}
-		// Also check hyperlinks
-		for _, hyperlink := range para.Hyperlinks {
-			for _, run := range hyperlink.Runs {
-				if run.Text != nil {
-					fullText += run.Text.Content
-				} else if run.Break != nil {
-					fullText += "\n"
-				}
-			}
-		}
-	}
 
 	// Check if we have control structures
 	// Note: We only check for actual control structure tokens, not variable tokens
@@ -317,6 +275,51 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 	}
 
 	return rendered, nil
+}
+
+func buildParagraphRenderText(para *Paragraph) string {
+	var fullText strings.Builder
+
+	if len(para.Content) > 0 {
+		for _, content := range para.Content {
+			switch c := content.(type) {
+			case *Run:
+				if c.Text != nil {
+					fullText.WriteString(c.Text.Content)
+				} else if c.Break != nil {
+					fullText.WriteByte('\n')
+				}
+			case *Hyperlink:
+				for _, run := range c.Runs {
+					if run.Text != nil {
+						fullText.WriteString(run.Text.Content)
+					} else if run.Break != nil {
+						fullText.WriteByte('\n')
+					}
+				}
+			}
+		}
+		return fullText.String()
+	}
+
+	for _, run := range para.Runs {
+		if run.Text != nil {
+			fullText.WriteString(run.Text.Content)
+		} else if run.Break != nil {
+			fullText.WriteByte('\n')
+		}
+	}
+	for _, hyperlink := range para.Hyperlinks {
+		for _, run := range hyperlink.Runs {
+			if run.Text != nil {
+				fullText.WriteString(run.Text.Content)
+			} else if run.Break != nil {
+				fullText.WriteByte('\n')
+			}
+		}
+	}
+
+	return fullText.String()
 }
 
 func cloneRunsForLegacyRendering(runs []Run) []Run {

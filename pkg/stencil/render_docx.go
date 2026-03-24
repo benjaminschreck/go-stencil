@@ -12,29 +12,7 @@ import (
 // renderElementsWithContext renders a slice of elements with the given context
 // This function DOES process control structures to support nested loops and conditionals
 func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *renderContext) ([]BodyElement, error) {
-	// First, merge runs in all paragraphs to handle split template variables
-	// This is critical for detecting control structures in fragments where markers may be split
-	for i, elem := range elements {
-		switch el := elem.(type) {
-		case *Paragraph:
-			p := *el // Create a copy
-			render.MergeConsecutiveRuns(&p)
-			elements[i] = &p // Update the element with merged runs
-		case *Table:
-			// Also merge runs in table cells
-			t := *el // Create a copy
-			for rowIdx, row := range t.Rows {
-				for cellIdx, cell := range row.Cells {
-					for paraIdx, para := range cell.Paragraphs {
-						p := para // Create a copy
-						render.MergeConsecutiveRuns(&p)
-						t.Rows[rowIdx].Cells[cellIdx].Paragraphs[paraIdx] = p
-					}
-				}
-			}
-			elements[i] = &t // Update the element with merged runs
-		}
-	}
+	detectionElements := cloneElementsForControlDetection(elements)
 
 	result := make([]BodyElement, 0, len(elements))
 
@@ -42,18 +20,23 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 	i := 0
 	for i < len(elements) {
 		elem := elements[i]
+		detectionElem := detectionElements[i]
 
 		switch el := elem.(type) {
 		case *Paragraph:
-			para := *el
+			para := cloneParagraph(el)
+			detectionPara, ok := detectionElem.(*Paragraph)
+			if !ok || detectionPara == nil {
+				return nil, fmt.Errorf("control detection paragraph missing at element %d", i)
+			}
 
 			// Check if this paragraph contains a control structure FIRST
-			controlType, controlContent := render.DetectControlStructure(&para)
+			controlType, controlContent := render.DetectControlStructure(detectionPara)
 
 			switch controlType {
 			case "inline-for":
 				// Handle inline for loop (entire loop in one paragraph)
-				renderedParas, err := renderInlineForLoop(&para, controlContent, data, ctx)
+				renderedParas, err := renderInlineForLoop(detectionPara, controlContent, data, ctx)
 				if err != nil {
 					return nil, err
 				}
@@ -64,7 +47,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 
 			case "for":
 				// Handle block-level for loop - find matching end
-				endIdx, err := render.FindMatchingEndInElements(elements, i)
+				endIdx, err := render.FindMatchingEndInElements(detectionElements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{for}} at element %d", i)
 				}
@@ -114,7 +97,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 
 			case "if":
 				// Handle if statement - find matching else/elsif/end
-				endIdx, elseBranches, err := render.FindIfStructureInElements(elements, i)
+				endIdx, elseBranches, err := render.FindIfStructureInElements(detectionElements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{if}} at element %d: %w", i, err)
 				}
@@ -197,7 +180,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 
 			case "unless":
 				// Handle unless statement (similar to if but inverted)
-				endIdx, elseBranches, err := render.FindIfStructureInElements(elements, i)
+				endIdx, elseBranches, err := render.FindIfStructureInElements(detectionElements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{unless}} at element %d", i)
 				}
@@ -245,7 +228,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 
 			default:
 				// Regular paragraph, render normally
-				renderedPara, err := RenderParagraphWithContext(&para, data, ctx)
+				renderedPara, err := RenderParagraphWithContext(para, data, ctx)
 				if err != nil {
 					return nil, err
 				}
@@ -267,8 +250,8 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 			}
 
 		case *Table:
-			table := *el
-			rendered, err := RenderTableWithControlStructures(&table, data, ctx)
+			table := cloneTable(el)
+			rendered, err := RenderTableWithControlStructures(table, data, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -295,6 +278,26 @@ func getFragmentKeys(ctx *renderContext) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+func cloneElementsForControlDetection(elements []BodyElement) []BodyElement {
+	if len(elements) == 0 {
+		return nil
+	}
+
+	cloned := make([]BodyElement, len(elements))
+	for i, elem := range elements {
+		switch el := elem.(type) {
+		case *Paragraph:
+			merged := cloneParagraph(el)
+			render.MergeConsecutiveRuns(merged)
+			cloned[i] = merged
+		default:
+			cloned[i] = elem
+		}
+	}
+
+	return cloned
 }
 
 var docxFragmentMarkerRegex = regexp.MustCompile(`__DOCX_FRAGMENT__(.+?)__`)
@@ -470,28 +473,7 @@ func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderC
 
 // renderBodyWithElementOrder renders using the new Elements field that preserves order
 func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
-	// First, merge runs in all paragraphs to handle split template variables
-	for i, elem := range body.Elements {
-		switch el := elem.(type) {
-		case *Paragraph:
-			p := *el // Create a copy
-			render.MergeConsecutiveRuns(&p)
-			body.Elements[i] = &p // Update the element with merged runs
-		case *Table:
-			// Also merge runs in table cells
-			t := *el // Create a copy
-			for rowIdx, row := range t.Rows {
-				for cellIdx, cell := range row.Cells {
-					for paraIdx, para := range cell.Paragraphs {
-						p := para // Create a copy
-						render.MergeConsecutiveRuns(&p)
-						t.Rows[rowIdx].Cells[cellIdx].Paragraphs[paraIdx] = p
-					}
-				}
-			}
-			body.Elements[i] = &t // Update the element with merged runs
-		}
-	}
+	detectionElements := cloneElementsForControlDetection(body.Elements)
 
 	rendered := &Body{
 		Elements:          make([]BodyElement, 0),
@@ -503,18 +485,23 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 	for i < len(body.Elements) {
 
 		elem := body.Elements[i]
+		detectionElem := detectionElements[i]
 
 		switch el := elem.(type) {
 		case *Paragraph:
-			para := *el
+			para := cloneParagraph(el)
+			detectionPara, ok := detectionElem.(*Paragraph)
+			if !ok || detectionPara == nil {
+				return nil, fmt.Errorf("control detection paragraph missing at body element %d", i)
+			}
 
 			// Check if this paragraph contains a control structure
-			controlType, controlContent := render.DetectControlStructure(&para)
+			controlType, controlContent := render.DetectControlStructure(detectionPara)
 
 			switch controlType {
 			case "inline-for":
 				// Handle inline for loop (entire loop in one paragraph)
-				renderedParas, err := renderInlineForLoop(&para, controlContent, data, ctx)
+				renderedParas, err := renderInlineForLoop(detectionPara, controlContent, data, ctx)
 				if err != nil {
 					return nil, err
 				}
@@ -525,7 +512,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 
 			case "for":
 				// Handle for loop
-				endIdx, err := render.FindMatchingEndInElements(body.Elements, i)
+				endIdx, err := render.FindMatchingEndInElements(detectionElements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{for}} at element %d", i)
 				}
@@ -581,10 +568,10 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 			case "if":
 				// Preserve any literal text before "{{if " in the opening paragraph.
 				// This must work even when Word split "{{if ...}}" across multiple runs.
-				prefixRuns := extractPrefixRunsBeforeControlMarker(para.Runs, "{{if ")
+				prefixRuns := extractPrefixRunsBeforeControlMarker(detectionPara.Runs, "{{if ")
 
 				// Handle if statement
-				endIdx, elseBranches, err := render.FindIfStructureInElements(body.Elements, i)
+				endIdx, elseBranches, err := render.FindIfStructureInElements(detectionElements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{if}} at element %d: %w", i, err)
 				}
@@ -758,7 +745,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 
 			case "unless":
 				// Handle unless statement (similar to if but inverted)
-				endIdx, elseBranches, err := render.FindIfStructureInElements(body.Elements, i)
+				endIdx, elseBranches, err := render.FindIfStructureInElements(detectionElements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{unless}} at element %d", i)
 				}
@@ -986,7 +973,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 
 			default:
 				// Regular paragraph, render normally
-				renderedPara, err := RenderParagraphWithContext(&para, data, ctx)
+				renderedPara, err := RenderParagraphWithContext(para, data, ctx)
 				if err != nil {
 					return nil, err
 				}
@@ -1013,7 +1000,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 
 		case *Table:
 			// Render table with control structures
-			renderedTable, err := RenderTableWithControlStructures(el, data, ctx)
+			renderedTable, err := RenderTableWithControlStructures(cloneTable(el), data, ctx)
 			if err != nil {
 				return nil, fmt.Errorf("failed to render table: %w", err)
 			}

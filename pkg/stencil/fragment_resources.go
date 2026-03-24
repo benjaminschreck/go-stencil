@@ -162,13 +162,21 @@ func cloneRun(run *Run) *Run {
 
 	cloned := &Run{
 		Properties: run.Properties, // Shallow copy is fine
-		Text:       run.Text,       // Shallow copy is fine
-		Break:      run.Break,      // Shallow copy is fine
 	}
 
 	if run.Attrs != nil {
 		cloned.Attrs = make([]xml.Attr, len(run.Attrs))
 		copy(cloned.Attrs, run.Attrs)
+	}
+
+	if run.Text != nil {
+		textCopy := *run.Text
+		cloned.Text = &textCopy
+	}
+
+	if run.Break != nil {
+		breakCopy := *run.Break
+		cloned.Break = &breakCopy
 	}
 
 	// Clone RawXML elements (contains images!)
