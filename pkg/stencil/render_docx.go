@@ -250,46 +250,16 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 					return nil, err
 				}
 
-				// Check if the rendered paragraph contains a DOCX fragment marker
-				paraText := renderedPara.GetText()
-				if strings.Contains(paraText, "__DOCX_FRAGMENT__") {
-					// Extract the fragment name from the marker
-					re := regexp.MustCompile(`__DOCX_FRAGMENT__(.+?)__`)
-					matches := re.FindStringSubmatch(paraText)
-					if len(matches) > 1 {
-						fragmentName := matches[1]
-						markerKey := fmt.Sprintf("__DOCX_FRAGMENT__%s__", fragmentName)
-
-						// Get the fragment from context
-						if frag, ok := ctx.ooxmlFragments[markerKey]; ok {
-							fragment := frag.(*fragment)
-
-							// Render the fragment's body elements with the current data context
-							if fragment.parsed != nil && fragment.parsed.Body != nil {
-								// Recursively render the fragment's body elements
-								// This will also handle any nested fragment inclusions
-								fragmentElements, err := renderElementsWithContext(fragment.parsed.Body.Elements, data, ctx)
-								if err != nil {
-									return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
-								}
-
-								// Insert the fragment's elements instead of the marker paragraph
-								// Note: These elements have already been recursively processed,
-								// so any nested markers should already be resolved
-								result = append(result, fragmentElements...)
-								i++
-								continue
-							} else {
-								// Fragment exists but has no parsed body
-								return nil, fmt.Errorf("fragment %s has no parsed body", fragmentName)
-							}
-						} else {
-							// Fragment not found in context - this is an error
-							return nil, fmt.Errorf("fragment marker %s found but fragment not in context (available: %v)", fragmentName, getFragmentKeys(ctx))
-						}
-					}
-					// If we get here, couldn't extract fragment name from marker
-					return nil, fmt.Errorf("found DOCX fragment marker but couldn't extract name from: %s", paraText)
+				fragmentElements, handled, err := expandDOCXFragmentParagraph(renderedPara, data, ctx, func(fragment *fragment) ([]BodyElement, error) {
+					return renderElementsWithContext(fragment.parsed.Body.Elements, data, ctx)
+				})
+				if err != nil {
+					return nil, err
+				}
+				if handled {
+					result = append(result, fragmentElements...)
+					i++
+					continue
 				}
 
 				result = append(result, renderedPara)
@@ -325,6 +295,164 @@ func getFragmentKeys(ctx *renderContext) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+var docxFragmentMarkerRegex = regexp.MustCompile(`__DOCX_FRAGMENT__(.+?)__`)
+
+func expandDOCXFragmentParagraph(
+	renderedPara *Paragraph,
+	data TemplateData,
+	ctx *renderContext,
+	renderFragment func(*fragment) ([]BodyElement, error),
+) ([]BodyElement, bool, error) {
+	if renderedPara == nil {
+		return nil, false, nil
+	}
+
+	paraText := renderedPara.GetText()
+	matches := docxFragmentMarkerRegex.FindAllStringSubmatchIndex(paraText, -1)
+	if len(matches) == 0 {
+		return nil, false, nil
+	}
+	if ctx == nil || ctx.ooxmlFragments == nil {
+		return nil, false, fmt.Errorf("fragment marker found but fragments not in context")
+	}
+
+	result := make([]BodyElement, 0, len(matches)+1)
+	var currentPara *Paragraph
+	currentParaAttached := false
+
+	if prefixRuns := extractRunsBetweenTextOffsets(renderedPara.Runs, 0, matches[0][0]); len(prefixRuns) > 0 {
+		currentPara = newParagraphWithRunsLike(renderedPara, prefixRuns)
+	}
+
+	for matchIdx, match := range matches {
+		fragmentName := paraText[match[2]:match[3]]
+		markerKey := fmt.Sprintf("__DOCX_FRAGMENT__%s__", fragmentName)
+
+		fragValue, ok := ctx.ooxmlFragments[markerKey]
+		if !ok {
+			return nil, false, fmt.Errorf("fragment marker %s found but fragment not in context (available: %v)", fragmentName, getFragmentKeys(ctx))
+		}
+
+		frag, ok := fragValue.(*fragment)
+		if !ok {
+			return nil, false, fmt.Errorf("fragment marker %s resolved to unexpected type %T", fragmentName, fragValue)
+		}
+		if frag.parsed == nil || frag.parsed.Body == nil {
+			return nil, false, fmt.Errorf("fragment %s has no parsed body", fragmentName)
+		}
+
+		fragmentElements, err := renderFragment(frag)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
+		}
+
+		if len(fragmentElements) > 0 {
+			mergedIntoAttachedPara := currentParaAttached && currentPara != nil
+			if firstPara, ok := fragmentElements[0].(*Paragraph); ok {
+				if currentPara != nil {
+					if currentParaAttached {
+						currentPara.Runs = append(currentPara.Runs, firstPara.Runs...)
+						fragmentElements = fragmentElements[1:]
+					} else {
+						firstPara.Runs = append(currentPara.Runs, firstPara.Runs...)
+					}
+					currentPara = nil
+					currentParaAttached = false
+				}
+			} else if currentPara != nil && !currentParaAttached {
+				result = append(result, currentPara)
+				currentPara = nil
+			}
+
+			result = append(result, fragmentElements...)
+
+			if len(fragmentElements) > 0 {
+				if lastPara, ok := fragmentElements[len(fragmentElements)-1].(*Paragraph); ok {
+					currentPara = lastPara
+					currentParaAttached = true
+				} else {
+					currentPara = nil
+					currentParaAttached = false
+				}
+			} else if mergedIntoAttachedPara {
+				currentPara = result[len(result)-1].(*Paragraph)
+				currentParaAttached = true
+			}
+		}
+
+		segmentStart := match[1]
+		segmentEnd := len(paraText)
+		if matchIdx+1 < len(matches) {
+			segmentEnd = matches[matchIdx+1][0]
+		}
+
+		if betweenRuns := extractRunsBetweenTextOffsets(renderedPara.Runs, segmentStart, segmentEnd); len(betweenRuns) > 0 {
+			if currentPara == nil {
+				currentPara = newParagraphWithRunsLike(renderedPara, betweenRuns)
+				currentParaAttached = false
+			} else {
+				currentPara.Runs = append(currentPara.Runs, betweenRuns...)
+			}
+		}
+	}
+
+	if currentPara != nil && !currentParaAttached {
+		result = append(result, currentPara)
+	}
+
+	return result, true, nil
+}
+
+func newParagraphWithRunsLike(base *Paragraph, runs []Run) *Paragraph {
+	if len(runs) == 0 {
+		return nil
+	}
+
+	para := &Paragraph{
+		Properties: base.Properties,
+		Attrs:      base.Attrs,
+		Runs:       cloneRunsForLegacyRendering(runs),
+	}
+	return para
+}
+
+func extractRunsBetweenTextOffsets(runs []Run, start, end int) []Run {
+	if start >= end || len(runs) == 0 {
+		return nil
+	}
+
+	var extracted []Run
+	textPos := 0
+
+	for _, run := range runs {
+		if run.Text == nil {
+			continue
+		}
+
+		runStart := textPos
+		runEnd := textPos + len(run.Text.Content)
+		textPos = runEnd
+
+		if end <= runStart || start >= runEnd {
+			continue
+		}
+
+		segmentStart := max(start-runStart, 0)
+		segmentEnd := min(end-runStart, len(run.Text.Content))
+		if segmentStart >= segmentEnd {
+			continue
+		}
+
+		clonedRun := *cloneRun(&run)
+		textCopy := *clonedRun.Text
+		textCopy.Content = run.Text.Content[segmentStart:segmentEnd]
+		clonedRun.Text = &textCopy
+		extracted = append(extracted, clonedRun)
+	}
+
+	return extracted
 }
 
 // RenderBodyWithControlStructures renders a document body handling control structures
@@ -863,43 +991,20 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					return nil, err
 				}
 
-				// Check if the rendered paragraph contains a DOCX fragment marker
-				paraText := renderedPara.GetText()
-				if strings.Contains(paraText, "__DOCX_FRAGMENT__") {
-					// Extract the fragment name from the marker
-					re := regexp.MustCompile(`__DOCX_FRAGMENT__(.+?)__`)
-					matches := re.FindStringSubmatch(paraText)
-					if len(matches) > 1 {
-						fragmentName := matches[1]
-						markerKey := fmt.Sprintf("__DOCX_FRAGMENT__%s__", fragmentName)
-
-						// Get the fragment from context
-						if frag, ok := ctx.ooxmlFragments[markerKey]; ok {
-							fragment := frag.(*fragment)
-
-							// Render the fragment's body elements with the current data context
-							if fragment.parsed != nil && fragment.parsed.Body != nil {
-								// Recursively render the fragment's body elements
-								fragmentBody, err := RenderBodyWithControlStructures(fragment.parsed.Body, data, ctx)
-								if err != nil {
-									return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
-								}
-
-								// Insert the fragment's elements instead of the marker paragraph
-								rendered.Elements = append(rendered.Elements, fragmentBody.Elements...)
-								i++
-								continue
-							} else {
-								// Fragment exists but has no parsed body
-								return nil, fmt.Errorf("fragment %s has no parsed body", fragmentName)
-							}
-						} else {
-							// Fragment not found in context - this is an error
-							return nil, fmt.Errorf("fragment marker %s found but fragment not in context (available: %v)", fragmentName, getFragmentKeys(ctx))
-						}
+				fragmentElements, handled, err := expandDOCXFragmentParagraph(renderedPara, data, ctx, func(fragment *fragment) ([]BodyElement, error) {
+					fragmentBody, err := RenderBodyWithControlStructures(fragment.parsed.Body, data, ctx)
+					if err != nil {
+						return nil, err
 					}
-					// If we get here, couldn't extract fragment name from marker
-					return nil, fmt.Errorf("found DOCX fragment marker but couldn't extract name from: %s", paraText)
+					return fragmentBody.Elements, nil
+				})
+				if err != nil {
+					return nil, err
+				}
+				if handled {
+					rendered.Elements = append(rendered.Elements, fragmentElements...)
+					i++
+					continue
 				}
 
 				rendered.Elements = append(rendered.Elements, renderedPara)

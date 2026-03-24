@@ -306,6 +306,91 @@ func TestDOCXFragmentInsideInlineIf(t *testing.T) {
 	}
 }
 
+func TestDOCXFragmentPreservesLiteralTextAroundIncludeInSameParagraph(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`Before {{include "frag"}} After`,
+	})
+	fragmentDoc := createFragmentDOCX(t, "Fragment")
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("frag", fragmentDoc); err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(TemplateData{})
+	if err != nil {
+		t.Fatalf("unexpected error rendering docx fragment with surrounding text: %v", err)
+	}
+
+	content := extractTextFromDOCX(t, rendered)
+	if !strings.Contains(content, "Before Fragment After") {
+		t.Fatalf("expected surrounding text to be preserved, got %q", content)
+	}
+}
+
+func TestDOCXFragmentPreservesLiteralTextAroundMultipleIncludesInSameParagraph(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`A {{include "left"}} B {{include "right"}} C`,
+	})
+	leftDoc := createFragmentDOCX(t, "L")
+	rightDoc := createFragmentDOCX(t, "R")
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("left", leftDoc); err != nil {
+		t.Fatalf("failed to add left fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("right", rightDoc); err != nil {
+		t.Fatalf("failed to add right fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(TemplateData{})
+	if err != nil {
+		t.Fatalf("unexpected error rendering multiple docx fragments with surrounding text: %v", err)
+	}
+
+	content := extractTextFromDOCX(t, rendered)
+	if !strings.Contains(content, "A L B R C") {
+		t.Fatalf("expected surrounding text for multiple includes to be preserved, got %q", content)
+	}
+}
+
+func TestDOCXFragmentPreservesLiteralTextAroundIncludeInsideIncludedFragment(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`{{include "outer"}}`,
+	})
+	outerDoc := createDOCXWithParagraphs(t, []string{
+		`Before {{include "inner"}} After`,
+	})
+	innerDoc := createFragmentDOCX(t, "Nested")
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("outer", outerDoc); err != nil {
+		t.Fatalf("failed to add outer fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("inner", innerDoc); err != nil {
+		t.Fatalf("failed to add inner fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(TemplateData{})
+	if err != nil {
+		t.Fatalf("unexpected error rendering nested included fragment with surrounding text: %v", err)
+	}
+
+	content := extractTextFromDOCX(t, rendered)
+	if !strings.Contains(content, "Before Nested After") {
+		t.Fatalf("expected surrounding text inside included fragment to be preserved, got %q", content)
+	}
+}
+
 func TestDOCXIncludedFragmentWithBlockIfOpeningParagraphContainsNestedInlineControls(t *testing.T) {
 	mainDoc := createDOCXWithParagraphs(t, []string{
 		`{{include "outer"}}`,
