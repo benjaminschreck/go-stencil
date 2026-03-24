@@ -19,6 +19,11 @@ if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
+if [[ -n "${push_tag}" && "${push_tag}" != "--push" ]]; then
+  usage
+  exit 1
+fi
+
 if [[ -n "$(git status --short)" ]]; then
   echo "working tree must be clean before creating a release tag" >&2
   exit 1
@@ -40,9 +45,6 @@ echo "created annotated tag ${tag}"
 if [[ "${push_tag}" == "--push" ]]; then
   git push origin "${tag}"
   echo "pushed ${tag} to origin"
-elif [[ -n "${push_tag}" ]]; then
-  usage
-  exit 1
 else
   echo "run '$0 ${tag} --push' to publish the release"
 fi

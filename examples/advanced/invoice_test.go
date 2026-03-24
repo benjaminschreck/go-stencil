@@ -214,9 +214,8 @@ func TestInvoiceOutput(t *testing.T) {
 		t.Log("Note: 'PAID' text not found - verify if conditional rendering is implemented")
 	}
 
-	// Note: This invoice template doesn't use actual Word tables (<w:tbl>)
-	// It appears to use paragraph-based layout instead
-	outputParagraphs := strings.Count(outputDocXML, "<w:p>")
+	// Count both bare and attributed paragraph tags to match Word's XML output.
+	outputParagraphs := strings.Count(outputDocXML, "<w:p>") + strings.Count(outputDocXML, "<w:p ")
 	if outputParagraphs == 0 {
 		t.Error("No paragraphs found in output")
 	} else {
