@@ -12,21 +12,30 @@ func DetectControlStructure(para *Paragraph) (string, string) {
 	text := GetParagraphText(para)
 	text = strings.TrimSpace(text)
 
+	firstControl, firstControlIdx := firstInlineControlType(text)
+	firstControlHasMatchingEnd := false
+	if firstControl != "" {
+		openingEnd := strings.Index(text[firstControlIdx:], "}}")
+		if openingEnd >= 0 {
+			firstControlHasMatchingEnd = FindMatchingEnd(text, firstControlIdx+openingEnd+2) >= 0
+		}
+	}
+
 	// Check for control structures
-	if strings.Contains(text, "{{for ") && strings.Contains(text, "{{end}}") {
+	if firstControl == "for" && firstControlHasMatchingEnd {
 		// Handle inline for loop (e.g., "{{for item in items}} content {{end}}")
 		return "inline-for", text
 	}
 
 	// Check for inline if statements
-	if strings.Contains(text, "{{if ") && strings.Contains(text, "{{end}}") {
+	if firstControl == "if" && firstControlHasMatchingEnd {
 		// This paragraph contains a complete if statement
 		// Let RenderParagraphWithContext handle it
 		return "", ""
 	}
 
 	// Check for inline unless statements
-	if strings.Contains(text, "{{unless ") && strings.Contains(text, "{{end}}") {
+	if firstControl == "unless" && firstControlHasMatchingEnd {
 		// This paragraph contains a complete unless statement
 		// Let RenderParagraphWithContext handle it
 		return "", ""
@@ -136,6 +145,31 @@ func DetectControlStructure(para *Paragraph) (string, string) {
 	}
 
 	return "", ""
+}
+
+func firstInlineControlType(text string) (string, int) {
+	firstIdx := len(text) + 1
+	firstType := ""
+
+	for _, marker := range []struct {
+		prefix string
+		typ    string
+	}{
+		{prefix: "{{for ", typ: "for"},
+		{prefix: "{{if ", typ: "if"},
+		{prefix: "{{unless ", typ: "unless"},
+	} {
+		if idx := strings.Index(text, marker.prefix); idx >= 0 && idx < firstIdx {
+			firstIdx = idx
+			firstType = marker.typ
+		}
+	}
+
+	if firstType == "" {
+		return "", -1
+	}
+
+	return firstType, firstIdx
 }
 
 // GetParagraphText extracts all text from a paragraph

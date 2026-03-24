@@ -12,13 +12,13 @@ import (
 
 func TestFragmentInclude(t *testing.T) {
 	tests := []struct {
-		name           string
-		template       string
-		fragments      map[string]string
-		data           map[string]interface{}
-		expected       string
-		expectError    bool
-		errorContains  string
+		name          string
+		template      string
+		fragments     map[string]string
+		data          map[string]interface{}
+		expected      string
+		expectError   bool
+		errorContains string
 	}{
 		{
 			name:     "simple fragment include with string literal",
@@ -82,26 +82,26 @@ func TestFragmentInclude(t *testing.T) {
 			expected: "Items: A B C",
 		},
 		{
-			name:     "fragment not found",
-			template: "{{include \"missing\"}}",
-			fragments: map[string]string{},
-			data:     map[string]interface{}{},
-			expectError: true,
+			name:          "fragment not found",
+			template:      "{{include \"missing\"}}",
+			fragments:     map[string]string{},
+			data:          map[string]interface{}{},
+			expectError:   true,
 			errorContains: "fragment not found: missing",
 		},
 		{
-			name:     "fragment name evaluates to non-string",
-			template: "{{include 123}}",
-			fragments: map[string]string{},
-			data:     map[string]interface{}{},
-			expectError: true,
+			name:          "fragment name evaluates to non-string",
+			template:      "{{include 123}}",
+			fragments:     map[string]string{},
+			data:          map[string]interface{}{},
+			expectError:   true,
 			errorContains: "fragment name must be a string",
 		},
 		{
 			name:     "complex nested fragments with data",
 			template: "{{include \"page\"}}",
 			fragments: map[string]string{
-				"page": "{{include \"header\"}} {{content}} {{include \"footer\"}}",
+				"page":   "{{include \"header\"}} {{content}} {{include \"footer\"}}",
 				"header": "=== {{title}} ===",
 				"footer": "--- Page {{pageNum}} ---",
 			},
@@ -155,7 +155,7 @@ func TestFragmentInclude(t *testing.T) {
 
 			// Render
 			result, err := tmpl.Render(tt.data)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Fatal("expected error but got none")
@@ -178,44 +178,44 @@ func TestFragmentInclude(t *testing.T) {
 func TestFragmentInDOCX(t *testing.T) {
 	// Create a simple DOCX with fragment includes
 	docxContent := createTestDOCXWithFragments(t)
-	
+
 	// Create fragment DOCX files
 	headerFragment := createFragmentDOCX(t, "Header: {{title}}")
 	footerFragment := createFragmentDOCX(t, "Footer: Page {{page}}")
-	
+
 	// Create template
 	tmpl, err := ParseBytes(docxContent)
 	if err != nil {
 		t.Fatalf("failed to parse template: %v", err)
 	}
-	
+
 	// Add fragments as DOCX
 	err = tmpl.AddFragmentFromBytes("header", headerFragment)
 	if err != nil {
 		t.Fatalf("failed to add header fragment: %v", err)
 	}
-	
+
 	err = tmpl.AddFragmentFromBytes("footer", footerFragment)
 	if err != nil {
 		t.Fatalf("failed to add footer fragment: %v", err)
 	}
-	
+
 	// Render with data
 	data := map[string]interface{}{
 		"title":   "Test Document",
 		"content": "Main content here",
 		"page":    1,
 	}
-	
+
 	rendered, err := tmpl.RenderToBytes(data)
 	if err != nil {
 		t.Fatalf("failed to render template: %v", err)
 	}
-	
+
 	// Verify the rendered content
 	content := extractTextFromDOCX(t, rendered)
 	t.Logf("Rendered content: %q", content)
-	
+
 	// Also log the raw document XML for debugging
 	r, _ := zip.NewReader(bytes.NewReader(rendered), int64(len(rendered)))
 	for _, f := range r.File {
@@ -227,7 +227,7 @@ func TestFragmentInDOCX(t *testing.T) {
 			break
 		}
 	}
-	
+
 	if !strings.Contains(content, "Header: Test Document") {
 		t.Errorf("rendered content does not contain expected header, got: %q", content)
 	}
@@ -265,34 +265,413 @@ func TestDOCXIncludeSameFragmentMultipleParagraphs(t *testing.T) {
 	}
 }
 
+func TestDOCXFragmentInsideInlineIf(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`{{if show}}{{include "frag"}}{{end}}`,
+	})
+	fragmentDoc := createFragmentDOCX(t, "Fragment {{name}}")
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("frag", fragmentDoc); err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(TemplateData{
+		"show": true,
+		"name": "Alice",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering docx fragment in inline if: %v", err)
+	}
+
+	content := extractTextFromDOCX(t, rendered)
+	if !strings.Contains(content, "Fragment Alice") {
+		t.Fatalf("expected rendered fragment text in output, got %q", content)
+	}
+
+	renderedHidden, err := tmpl.RenderToBytes(TemplateData{
+		"show": false,
+		"name": "Alice",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering hidden docx fragment: %v", err)
+	}
+
+	hiddenContent := extractTextFromDOCX(t, renderedHidden)
+	if strings.Contains(hiddenContent, "Fragment Alice") {
+		t.Fatalf("expected fragment text to be omitted when condition is false, got %q", hiddenContent)
+	}
+}
+
+func TestDOCXIncludedFragmentWithBlockIfOpeningParagraphContainsNestedInlineControls(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`{{include "outer"}}`,
+	})
+	outerDoc := createDOCXWithParagraphs(t, []string{
+		`{{if show}}{{unless suppress}}{{end}}{{for _ in empty}}{{end}}`,
+		`Visible`,
+		`{{include "inner"}}`,
+		`{{else}}`,
+		`Hidden`,
+		`{{end}}`,
+	})
+	innerDoc := createFragmentDOCX(t, `Inner {{name}}`)
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("outer", outerDoc); err != nil {
+		t.Fatalf("failed to add outer fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("inner", innerDoc); err != nil {
+		t.Fatalf("failed to add inner fragment: %v", err)
+	}
+
+	renderedVisible, err := tmpl.RenderToBytes(TemplateData{
+		"show":     true,
+		"suppress": false,
+		"empty":    []interface{}{},
+		"name":     "Alice",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering visible included fragment: %v", err)
+	}
+
+	visibleContent := extractTextFromDOCX(t, renderedVisible)
+	if !strings.Contains(visibleContent, "Visible") || !strings.Contains(visibleContent, "Inner Alice") {
+		t.Fatalf("expected visible branch with nested include, got %q", visibleContent)
+	}
+	if strings.Contains(visibleContent, "Hidden") {
+		t.Fatalf("did not expect hidden branch in visible output, got %q", visibleContent)
+	}
+
+	renderedHidden, err := tmpl.RenderToBytes(TemplateData{
+		"show":     false,
+		"suppress": false,
+		"empty":    []interface{}{},
+		"name":     "Alice",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering hidden included fragment: %v", err)
+	}
+
+	hiddenContent := extractTextFromDOCX(t, renderedHidden)
+	if !strings.Contains(hiddenContent, "Hidden") {
+		t.Fatalf("expected hidden branch in output, got %q", hiddenContent)
+	}
+	if strings.Contains(hiddenContent, "Visible Inner Alice") {
+		t.Fatalf("did not expect visible branch in hidden output, got %q", hiddenContent)
+	}
+}
+
+func TestDOCXIncludedFragmentWithBlockUnlessOpeningParagraphContainsNestedInlineControls(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`{{include "outer"}}`,
+	})
+	outerDoc := createDOCXWithParagraphs(t, []string{
+		`{{unless hide}}{{if showHeader}}{{end}}{{for _ in empty}}{{end}}`,
+		`Shown`,
+		`{{else}}`,
+		`{{include "fallback"}}`,
+		`{{end}}`,
+	})
+	fallbackDoc := createFragmentDOCX(t, `Fallback {{name}}`)
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("outer", outerDoc); err != nil {
+		t.Fatalf("failed to add outer fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("fallback", fallbackDoc); err != nil {
+		t.Fatalf("failed to add fallback fragment: %v", err)
+	}
+
+	renderedShown, err := tmpl.RenderToBytes(TemplateData{
+		"hide":       false,
+		"showHeader": true,
+		"empty":      []interface{}{},
+		"name":       "Alice",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering shown unless branch: %v", err)
+	}
+
+	shownContent := extractTextFromDOCX(t, renderedShown)
+	if !strings.Contains(shownContent, "Shown") {
+		t.Fatalf("expected shown branch in output, got %q", shownContent)
+	}
+	if strings.Contains(shownContent, "Fallback Alice") {
+		t.Fatalf("did not expect fallback branch in shown output, got %q", shownContent)
+	}
+
+	renderedFallback, err := tmpl.RenderToBytes(TemplateData{
+		"hide":       true,
+		"showHeader": true,
+		"empty":      []interface{}{},
+		"name":       "Alice",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering fallback unless branch: %v", err)
+	}
+
+	fallbackContent := extractTextFromDOCX(t, renderedFallback)
+	if !strings.Contains(fallbackContent, "Fallback Alice") {
+		t.Fatalf("expected fallback branch with nested include, got %q", fallbackContent)
+	}
+	if strings.Contains(fallbackContent, "Shown") {
+		t.Fatalf("did not expect shown branch in fallback output, got %q", fallbackContent)
+	}
+}
+
+func TestDOCXIncludedFragmentChainWithBlockForOpeningParagraphContainsNestedInlineControls(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`{{include "outer"}}`,
+	})
+	outerDoc := createDOCXWithParagraphs(t, []string{
+		`{{for item in items}}{{if showHeader}}{{end}}{{unless skipBody}}{{end}}{{for _ in empty}}{{end}}`,
+		`{{include "row"}}`,
+		`{{end}}`,
+	})
+	rowDoc := createDOCXWithParagraphs(t, []string{
+		`{{if item.active}}Item: {{item.name}}{{else}}Inactive: {{item.name}}{{end}}`,
+	})
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("outer", outerDoc); err != nil {
+		t.Fatalf("failed to add outer fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("row", rowDoc); err != nil {
+		t.Fatalf("failed to add row fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(TemplateData{
+		"items": []interface{}{
+			map[string]interface{}{"name": "A", "active": true},
+			map[string]interface{}{"name": "B", "active": false},
+			map[string]interface{}{"name": "C", "active": true},
+		},
+		"showHeader": false,
+		"skipBody":   false,
+		"empty":      []interface{}{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering included fragment chain: %v", err)
+	}
+
+	content := extractTextFromDOCX(t, rendered)
+	for _, expected := range []string{"Item: A", "Inactive: B", "Item: C"} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("expected %q in rendered output, got %q", expected, content)
+		}
+	}
+}
+
+func TestNestedDOCXFragmentsDepth3PreserveRunStyling(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`{{include "outer"}}`,
+	})
+	outerDoc := createDOCXWithBodyXML(t, `
+    <w:p>
+      <w:r>
+        <w:rPr><w:b/><w:bCs/></w:rPr>
+        <w:t>Outer Bold</w:t>
+      </w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>{{include "middle"}}</w:t></w:r>
+    </w:p>`)
+	middleDoc := createDOCXWithBodyXML(t, `
+    <w:p>
+      <w:r>
+        <w:rPr><w:i/><w:iCs/></w:rPr>
+        <w:t>Middle Italic</w:t>
+      </w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>{{include "inner"}}</w:t></w:r>
+    </w:p>`)
+	innerDoc := createDOCXWithBodyXML(t, `
+    <w:p>
+      <w:r>
+        <w:rPr><w:b/><w:bCs/></w:rPr>
+        <w:t>Inner {{value}}</w:t>
+      </w:r>
+    </w:p>`)
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("outer", outerDoc); err != nil {
+		t.Fatalf("failed to add outer fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("middle", middleDoc); err != nil {
+		t.Fatalf("failed to add middle fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("inner", innerDoc); err != nil {
+		t.Fatalf("failed to add inner fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(TemplateData{"value": "Leaf"})
+	if err != nil {
+		t.Fatalf("failed to render nested styled fragments: %v", err)
+	}
+
+	content := extractTextFromDOCX(t, rendered)
+	for _, expected := range []string{"Outer Bold", "Middle Italic", "Inner Leaf"} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("expected %q in rendered content, got %q", expected, content)
+		}
+	}
+
+	docXML := extractDocumentXMLFromDOCX(t, rendered)
+	if !strings.Contains(docXML, "<w:b/>") {
+		t.Fatalf("expected bold run formatting in output XML, got: %s", docXML)
+	}
+	if !strings.Contains(docXML, "<w:i/>") {
+		t.Fatalf("expected italic run formatting in output XML, got: %s", docXML)
+	}
+}
+
+func TestNestedDOCXFragmentStyleMergingDepth3(t *testing.T) {
+	mainDoc := createDOCXWithStyle(t, `Main {{include "outer"}}`, "MainStyle", `<w:color w:val="111111"/>`)
+	outerDoc := createDOCXWithStyle(t, `Outer {{include "middle"}}`, "OuterStyle", `<w:color w:val="0000FF"/>`)
+	middleDoc := createDOCXWithStyle(t, `Middle {{include "inner"}}`, "MiddleStyle", `<w:i/>`)
+	innerDoc := createDOCXWithStyle(t, `Inner`, "InnerStyle", `<w:b/>`)
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("outer", outerDoc); err != nil {
+		t.Fatalf("failed to add outer fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("middle", middleDoc); err != nil {
+		t.Fatalf("failed to add middle fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("inner", innerDoc); err != nil {
+		t.Fatalf("failed to add inner fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(TemplateData{})
+	if err != nil {
+		t.Fatalf("failed to render nested styled fragments: %v", err)
+	}
+
+	styles := extractStylesFromDOCX(t, rendered)
+	expectedStyles := map[string]bool{
+		"MainStyle":   false,
+		"OuterStyle":  false,
+		"MiddleStyle": false,
+		"InnerStyle":  false,
+	}
+	for _, style := range styles {
+		if _, ok := expectedStyles[style]; ok {
+			expectedStyles[style] = true
+		}
+	}
+	for styleName, found := range expectedStyles {
+		if !found {
+			t.Fatalf("expected %s in merged styles, found styles=%v", styleName, styles)
+		}
+	}
+}
+
+func TestNestedTableFragmentsDepth3AtBodyLevel(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`{{include "outer"}}`,
+	})
+	outerDoc := createDOCXWithBodyXML(t, `
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Outer Table</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+    <w:p><w:r><w:t>{{include "middle"}}</w:t></w:r></w:p>`)
+	middleDoc := createDOCXWithBodyXML(t, `
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Middle Table</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+    <w:p><w:r><w:t>{{include "inner"}}</w:t></w:r></w:p>`)
+	innerDoc := createDOCXWithBodyXML(t, `
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Inner Table {{value}}</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>`)
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("outer", outerDoc); err != nil {
+		t.Fatalf("failed to add outer fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("middle", middleDoc); err != nil {
+		t.Fatalf("failed to add middle fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("inner", innerDoc); err != nil {
+		t.Fatalf("failed to add inner fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(TemplateData{"value": "Leaf"})
+	if err != nil {
+		t.Fatalf("failed to render nested table fragments: %v", err)
+	}
+
+	docXML := extractDocumentXMLFromDOCX(t, rendered)
+	if count := strings.Count(docXML, "<w:tbl>"); count != 1 {
+		t.Fatalf("expected nested fragment tables to be merged into 1 table, got %d in %s", count, docXML)
+	}
+	if rowCount := strings.Count(docXML, "<w:tr>"); rowCount != 3 {
+		t.Fatalf("expected merged table to contain 3 rows, got %d in %s", rowCount, docXML)
+	}
+	for _, expected := range []string{"Outer Table", "Middle Table", "Inner Table Leaf"} {
+		if !strings.Contains(docXML, expected) {
+			t.Fatalf("expected %q in rendered document XML, got %s", expected, docXML)
+		}
+	}
+}
+
 func TestFragmentStyleMerging(t *testing.T) {
 	// Create main document with a style
 	mainDoc := createDOCXWithStyle(t, "Main {{include \"fragment\"}}", "MainStyle", "color:blue")
-	
+
 	// Create fragment with its own style
 	fragmentDoc := createDOCXWithStyle(t, "Fragment Text", "FragStyle", "color:red")
-	
+
 	// Parse and add fragment
 	tmpl, err := ParseBytes(mainDoc)
 	if err != nil {
 		t.Fatalf("failed to parse template: %v", err)
 	}
-	
+
 	err = tmpl.AddFragmentFromBytes("fragment", fragmentDoc)
 	if err != nil {
 		t.Fatalf("failed to add fragment: %v", err)
 	}
-	
+
 	// Render
 	rendered, err := tmpl.RenderToBytes(map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("failed to render template: %v", err)
 	}
-	
+
 	// Verify both styles are present in the rendered document
 	styles := extractStylesFromDOCX(t, rendered)
 	t.Logf("Found styles: %v", styles)
-	
+
 	hasMainStyle := false
 	hasFragStyle := false
 	for _, style := range styles {
@@ -348,9 +727,9 @@ func TestFragmentStyleMergingMultipleFragments(t *testing.T) {
 	t.Logf("Found styles: %v", styles)
 
 	expectedStyles := map[string]bool{
-		"MainStyle":   false,
-		"Frag1Style":  false,
-		"Frag2Style":  false,
+		"MainStyle":  false,
+		"Frag1Style": false,
+		"Frag2Style": false,
 	}
 
 	for _, style := range styles {
@@ -641,18 +1020,18 @@ func TestFragmentCircularReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to parse template: %v", err)
 	}
-	
+
 	// Add circular fragments
 	err = tmpl.AddFragment("a", "A: {{include \"b\"}}")
 	if err != nil {
 		t.Fatalf("failed to add fragment a: %v", err)
 	}
-	
+
 	err = tmpl.AddFragment("b", "B: {{include \"a\"}}")
 	if err != nil {
 		t.Fatalf("failed to add fragment b: %v", err)
 	}
-	
+
 	// Render should detect circular reference
 	_, err = tmpl.Render(map[string]interface{}{})
 	if err == nil {
@@ -669,20 +1048,20 @@ func createTestDOCXWithFragments(_ *testing.T) []byte {
 	// Create a DOCX with multiple paragraphs, each containing an include or content
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
-	
+
 	// Add _rels/.rels
 	rels, _ := w.Create("_rels/.rels")
 	io.WriteString(rels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`)
-	
+
 	// Add word/_rels/document.xml.rels
 	wordRels, _ := w.Create("word/_rels/document.xml.rels")
 	io.WriteString(wordRels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 </Relationships>`)
-	
+
 	// Add word/document.xml with three paragraphs
 	doc, _ := w.Create("word/document.xml")
 	io.WriteString(doc, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -705,7 +1084,7 @@ func createTestDOCXWithFragments(_ *testing.T) []byte {
     </w:p>
   </w:body>
 </w:document>`)
-	
+
 	// Add [Content_Types].xml
 	ct, _ := w.Create("[Content_Types].xml")
 	io.WriteString(ct, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -714,7 +1093,7 @@ func createTestDOCXWithFragments(_ *testing.T) []byte {
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 </Types>`)
-	
+
 	w.Close()
 	return buf.Bytes()
 }
@@ -766,6 +1145,55 @@ func createDOCXWithParagraphs(_ *testing.T, paragraphs []string) []byte {
 	return buf.Bytes()
 }
 
+func createDOCXWithBodyXML(t *testing.T, bodyXML string) []byte {
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+
+	rels, err := w.Create("_rels/.rels")
+	if err != nil {
+		t.Fatalf("failed to create _rels/.rels: %v", err)
+	}
+	io.WriteString(rels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`)
+
+	wordRels, err := w.Create("word/_rels/document.xml.rels")
+	if err != nil {
+		t.Fatalf("failed to create word/_rels/document.xml.rels: %v", err)
+	}
+	io.WriteString(wordRels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>`)
+
+	doc, err := w.Create("word/document.xml")
+	if err != nil {
+		t.Fatalf("failed to create word/document.xml: %v", err)
+	}
+	io.WriteString(doc, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>`+bodyXML+`
+  </w:body>
+</w:document>`)
+
+	ct, err := w.Create("[Content_Types].xml")
+	if err != nil {
+		t.Fatalf("failed to create [Content_Types].xml: %v", err)
+	}
+	io.WriteString(ct, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`)
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close zip writer: %v", err)
+	}
+
+	return buf.Bytes()
+}
+
 func createFragmentDOCX(t *testing.T, content string) []byte {
 	return createSimpleDOCX(t, content)
 }
@@ -773,21 +1201,21 @@ func createFragmentDOCX(t *testing.T, content string) []byte {
 func createDOCXWithStyle(_ *testing.T, content, styleName, styleProps string) []byte {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
-	
+
 	// Add _rels/.rels
 	rels, _ := w.Create("_rels/.rels")
 	io.WriteString(rels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`)
-	
+
 	// Add word/_rels/document.xml.rels
 	wordRels, _ := w.Create("word/_rels/document.xml.rels")
 	io.WriteString(wordRels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`)
-	
+
 	// Add word/styles.xml with custom style
 	styles, _ := w.Create("word/styles.xml")
 	io.WriteString(styles, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -797,7 +1225,7 @@ func createDOCXWithStyle(_ *testing.T, content, styleName, styleProps string) []
     <w:rPr>`+styleProps+`</w:rPr>
   </w:style>
 </w:styles>`)
-	
+
 	// Add word/document.xml
 	doc, _ := w.Create("word/document.xml")
 	io.WriteString(doc, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -810,7 +1238,7 @@ func createDOCXWithStyle(_ *testing.T, content, styleName, styleProps string) []
     </w:p>
   </w:body>
 </w:document>`)
-	
+
 	// Add [Content_Types].xml
 	ct, _ := w.Create("[Content_Types].xml")
 	io.WriteString(ct, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -820,7 +1248,7 @@ func createDOCXWithStyle(_ *testing.T, content, styleName, styleProps string) []
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 </Types>`)
-	
+
 	w.Close()
 	return buf.Bytes()
 }
@@ -889,7 +1317,7 @@ func extractStylesFromDOCX(t *testing.T, docxBytes []byte) []string {
 	if err != nil {
 		t.Fatalf("failed to read zip: %v", err)
 	}
-	
+
 	var styles []string
 	for _, f := range r.File {
 		if f.Name == "word/styles.xml" {
@@ -898,12 +1326,12 @@ func extractStylesFromDOCX(t *testing.T, docxBytes []byte) []string {
 				t.Fatalf("failed to open styles.xml: %v", err)
 			}
 			defer rc.Close()
-			
+
 			content, err := io.ReadAll(rc)
 			if err != nil {
 				t.Fatalf("failed to read styles.xml: %v", err)
 			}
-			
+
 			// Extract style IDs using regex for more accurate extraction
 			text := string(content)
 			// Look for w:styleId="..." patterns
@@ -916,7 +1344,7 @@ func extractStylesFromDOCX(t *testing.T, docxBytes []byte) []string {
 			}
 		}
 	}
-	
+
 	return styles
 }
 
@@ -924,7 +1352,7 @@ func extractStylesFromDOCX(t *testing.T, docxBytes []byte) []string {
 func createSimpleDOCX(t *testing.T, content string) []byte {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
-	
+
 	// Add _rels/.rels
 	rels, err := w.Create("_rels/.rels")
 	if err != nil {
@@ -934,7 +1362,7 @@ func createSimpleDOCX(t *testing.T, content string) []byte {
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`)
-	
+
 	// Add word/_rels/document.xml.rels
 	wordRels, err := w.Create("word/_rels/document.xml.rels")
 	if err != nil {
@@ -943,7 +1371,7 @@ func createSimpleDOCX(t *testing.T, content string) []byte {
 	io.WriteString(wordRels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 </Relationships>`)
-	
+
 	// Add word/document.xml
 	doc, err := w.Create("word/document.xml")
 	if err != nil {
@@ -959,7 +1387,7 @@ func createSimpleDOCX(t *testing.T, content string) []byte {
     </w:p>
   </w:body>
 </w:document>`)
-	
+
 	// Add [Content_Types].xml
 	ct, err := w.Create("[Content_Types].xml")
 	if err != nil {
@@ -971,7 +1399,7 @@ func createSimpleDOCX(t *testing.T, content string) []byte {
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 </Types>`)
-	
+
 	w.Close()
 	return buf.Bytes()
 }
@@ -982,7 +1410,7 @@ func extractTextFromDOCX(t *testing.T, docxBytes []byte) string {
 	if err != nil {
 		t.Fatalf("failed to read zip: %v", err)
 	}
-	
+
 	for _, f := range r.File {
 		if f.Name == "word/document.xml" {
 			rc, err := f.Open()
@@ -990,17 +1418,44 @@ func extractTextFromDOCX(t *testing.T, docxBytes []byte) string {
 				t.Fatalf("failed to open document.xml: %v", err)
 			}
 			defer rc.Close()
-			
+
 			content, err := io.ReadAll(rc)
 			if err != nil {
 				t.Fatalf("failed to read document.xml: %v", err)
 			}
-			
+
 			// Extract text from w:t elements
 			return extractTextFromDocumentXML(string(content))
 		}
 	}
-	
+
+	return ""
+}
+
+func extractDocumentXMLFromDOCX(t *testing.T, docxBytes []byte) string {
+	r, err := zip.NewReader(bytes.NewReader(docxBytes), int64(len(docxBytes)))
+	if err != nil {
+		t.Fatalf("failed to read zip: %v", err)
+	}
+
+	for _, f := range r.File {
+		if f.Name == "word/document.xml" {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("failed to open document.xml: %v", err)
+			}
+			defer rc.Close()
+
+			content, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("failed to read document.xml: %v", err)
+			}
+
+			return string(content)
+		}
+	}
+
+	t.Fatal("word/document.xml not found in docx")
 	return ""
 }
 
@@ -1010,7 +1465,7 @@ func extractTextFromDocumentXML(xmlContent string) string {
 	var result strings.Builder
 	inText := false
 	tagStart := -1
-	
+
 	for i, ch := range xmlContent {
 		if ch == '<' {
 			tagStart = i
@@ -1030,7 +1485,7 @@ func extractTextFromDocumentXML(xmlContent string) string {
 			result.WriteRune(ch)
 		}
 	}
-	
+
 	return result.String()
 }
 

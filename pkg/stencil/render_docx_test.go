@@ -294,6 +294,120 @@ func TestDetectControlStructure(t *testing.T) {
 			wantContent: "List: {{for x in list}} {{x}}{{end}}",
 		},
 		{
+			name: "top-level if with nested inline for",
+			paragraph: func() *Paragraph {
+				p := createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
+							{
+								Text: &Text{
+									Content: "{{if fahrerGegner}}{{for passivpartei in passivseite}}{{if passivpartei.nameAdresse == fahrerGegner.nameAdresse}}{{if passivpartei.anrede == „Frau“}}die Beklagtenpartei zu {{passivpartei.index}}) als Fahrerin {{else}}der Beklage zu {{passivpartei.index}}) als Fahrer {{end}}{{end}}{{end}}{{else}}der Fahrer {{end}}",
+								},
+							},
+						},
+					},
+				}).Elements[0].(*Paragraph)
+				return p
+			}(),
+			wantType:    "",
+			wantContent: "",
+		},
+		{
+			name: "block if with nested inline for in opening paragraph",
+			paragraph: func() *Paragraph {
+				p := createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
+							{
+								Text: &Text{
+									Content: "{{if show}}{{for _ in empty}}{{end}}",
+								},
+							},
+						},
+					},
+				}).Elements[0].(*Paragraph)
+				return p
+			}(),
+			wantType:    "if",
+			wantContent: "show",
+		},
+		{
+			name: "block for with nested inline if in opening paragraph",
+			paragraph: func() *Paragraph {
+				p := createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
+							{
+								Text: &Text{
+									Content: "{{for item in items}}{{if showHeader}}{{end}}",
+								},
+							},
+						},
+					},
+				}).Elements[0].(*Paragraph)
+				return p
+			}(),
+			wantType:    "for",
+			wantContent: "item in items",
+		},
+		{
+			name: "block unless with nested inline if and for in opening paragraph",
+			paragraph: func() *Paragraph {
+				p := createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
+							{
+								Text: &Text{
+									Content: "{{unless hide}}{{if showHeader}}{{end}}{{for _ in empty}}{{end}}",
+								},
+							},
+						},
+					},
+				}).Elements[0].(*Paragraph)
+				return p
+			}(),
+			wantType:    "unless",
+			wantContent: "hide",
+		},
+		{
+			name: "block if with multiple nested inline controls in opening paragraph",
+			paragraph: func() *Paragraph {
+				p := createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
+							{
+								Text: &Text{
+									Content: "{{if show}}{{unless suppress}}{{end}}{{for _ in empty}}{{if nested}}{{end}}{{end}}{{if extra}}{{end}}",
+								},
+							},
+						},
+					},
+				}).Elements[0].(*Paragraph)
+				return p
+			}(),
+			wantType:    "if",
+			wantContent: "show",
+		},
+		{
+			name: "block for with multiple nested inline controls in opening paragraph",
+			paragraph: func() *Paragraph {
+				p := createBodyWithParagraphs([]Paragraph{
+					{
+						Runs: []Run{
+							{
+								Text: &Text{
+									Content: "{{for item in items}}{{if showHeader}}{{end}}{{unless skipBody}}{{end}}{{for _ in empty}}{{end}}",
+								},
+							},
+						},
+					},
+				}).Elements[0].(*Paragraph)
+				return p
+			}(),
+			wantType:    "for",
+			wantContent: "item in items",
+		},
+		{
 			name: "end marker",
 			paragraph: func() *Paragraph {
 				p := createBodyWithParagraphs([]Paragraph{
@@ -343,5 +457,389 @@ func TestDetectControlStructure(t *testing.T) {
 				t.Errorf("render.DetectControlStructure() content = %v, want %v", gotContent, tt.wantContent)
 			}
 		})
+	}
+}
+
+func TestRenderBodyWithControlStructuresNestedInlineForInsideIf(t *testing.T) {
+	body := createBodyWithParagraphs([]Paragraph{
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{if fahrerGegner}}{{for passivpartei in passivseite}}{{if passivpartei.nameAdresse == fahrerGegner.nameAdresse}}{{if passivpartei.anrede == „Frau“}}die Beklagtenpartei zu {{passivpartei.index}}) als Fahrerin {{else}}der Beklage zu {{passivpartei.index}}) als Fahrer {{end}}{{end}}{{end}}{{else}}der Fahrer {{end}}",
+					},
+				},
+			},
+		},
+	})
+
+	data := TemplateData{
+		"fahrerGegner": map[string]interface{}{
+			"nameAdresse": "addr-1",
+		},
+		"passivseite": []interface{}{
+			map[string]interface{}{
+				"nameAdresse": "addr-1",
+				"anrede":      "Frau",
+				"index":       1,
+			},
+		},
+	}
+
+	rendered, err := RenderBodyWithControlStructures(body, data, nil)
+	if err != nil {
+		t.Fatalf("RenderBodyWithControlStructures() error = %v", err)
+	}
+
+	if len(rendered.Elements) != 1 {
+		t.Fatalf("expected 1 rendered element, got %d", len(rendered.Elements))
+	}
+
+	para, ok := rendered.Elements[0].(*Paragraph)
+	if !ok {
+		t.Fatalf("expected paragraph element, got %T", rendered.Elements[0])
+	}
+
+	got := render.GetParagraphText(para)
+	want := "die Beklagtenpartei zu 1) als Fahrerin "
+	if got != want {
+		t.Fatalf("unexpected text: got %q want %q", got, want)
+	}
+}
+
+func collectRenderedParagraphTexts(t *testing.T, body *Body) []string {
+	t.Helper()
+
+	var got []string
+	for _, elem := range body.Elements {
+		para, ok := elem.(*Paragraph)
+		if !ok {
+			t.Fatalf("expected paragraph element, got %T", elem)
+		}
+		got = append(got, render.GetParagraphText(para))
+	}
+
+	return got
+}
+
+func TestRenderBodyWithControlStructuresBlockIfOpeningParagraphContainsNestedInlineFor(t *testing.T) {
+	body := createBodyWithParagraphs([]Paragraph{
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{if show}}{{for _ in empty}}{{end}}",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "Visible",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{end}}",
+					},
+				},
+			},
+		},
+	})
+
+	renderedHidden, err := RenderBodyWithControlStructures(body, TemplateData{
+		"show":  false,
+		"empty": []interface{}{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("RenderBodyWithControlStructures() hidden error = %v", err)
+	}
+	if len(renderedHidden.Elements) != 0 {
+		t.Fatalf("expected no rendered elements when outer if is false, got %d", len(renderedHidden.Elements))
+	}
+
+	renderedVisible, err := RenderBodyWithControlStructures(body, TemplateData{
+		"show":  true,
+		"empty": []interface{}{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("RenderBodyWithControlStructures() visible error = %v", err)
+	}
+	if len(renderedVisible.Elements) != 1 {
+		t.Fatalf("expected 1 rendered element when outer if is true, got %d", len(renderedVisible.Elements))
+	}
+
+	para, ok := renderedVisible.Elements[0].(*Paragraph)
+	if !ok {
+		t.Fatalf("expected paragraph element, got %T", renderedVisible.Elements[0])
+	}
+	if got := render.GetParagraphText(para); got != "Visible" {
+		t.Fatalf("unexpected visible text: got %q want %q", got, "Visible")
+	}
+}
+
+func TestRenderBodyWithControlStructuresBlockForOpeningParagraphContainsNestedInlineIf(t *testing.T) {
+	body := createBodyWithParagraphs([]Paragraph{
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{for item in items}}{{if showHeader}}{{end}}",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "Item: {{item}}",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{end}}",
+					},
+				},
+			},
+		},
+	})
+
+	rendered, err := RenderBodyWithControlStructures(body, TemplateData{
+		"items":      []string{"A", "B"},
+		"showHeader": false,
+	}, nil)
+	if err != nil {
+		t.Fatalf("RenderBodyWithControlStructures() error = %v", err)
+	}
+
+	got := collectRenderedParagraphTexts(t, rendered)
+	want := []string{"Item: A", "Item: B"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d rendered elements, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected paragraph %d text: got %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestRenderBodyWithControlStructuresBlockUnlessOpeningParagraphContainsNestedInlineCombinations(t *testing.T) {
+	body := createBodyWithParagraphs([]Paragraph{
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{unless hide}}{{if showHeader}}{{end}}{{for _ in empty}}{{end}}",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "Shown",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{else}}",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "Hidden",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{end}}",
+					},
+				},
+			},
+		},
+	})
+
+	renderedShown, err := RenderBodyWithControlStructures(body, TemplateData{
+		"hide":       false,
+		"showHeader": true,
+		"empty":      []interface{}{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("RenderBodyWithControlStructures() shown error = %v", err)
+	}
+	if got := collectRenderedParagraphTexts(t, renderedShown); len(got) != 1 || got[0] != "Shown" {
+		t.Fatalf("unexpected shown branch paragraphs: %v", got)
+	}
+
+	renderedHidden, err := RenderBodyWithControlStructures(body, TemplateData{
+		"hide":       true,
+		"showHeader": true,
+		"empty":      []interface{}{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("RenderBodyWithControlStructures() hidden error = %v", err)
+	}
+	if got := collectRenderedParagraphTexts(t, renderedHidden); len(got) != 1 || got[0] != "Hidden" {
+		t.Fatalf("unexpected hidden branch paragraphs: %v", got)
+	}
+}
+
+func TestRenderBodyWithControlStructuresBlockIfOpeningParagraphContainsMultipleNestedInlineControls(t *testing.T) {
+	body := createBodyWithParagraphs([]Paragraph{
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{if show}}{{unless suppress}}{{end}}{{for _ in empty}}{{if nested}}{{end}}{{end}}{{if extra}}{{end}}",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "Then branch",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{else}}",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "Else branch",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{end}}",
+					},
+				},
+			},
+		},
+	})
+
+	renderedThen, err := RenderBodyWithControlStructures(body, TemplateData{
+		"show":     true,
+		"suppress": false,
+		"empty":    []interface{}{},
+		"nested":   false,
+		"extra":    false,
+	}, nil)
+	if err != nil {
+		t.Fatalf("RenderBodyWithControlStructures() then error = %v", err)
+	}
+	if got := collectRenderedParagraphTexts(t, renderedThen); len(got) != 1 || got[0] != "Then branch" {
+		t.Fatalf("unexpected then branch paragraphs: %v", got)
+	}
+
+	renderedElse, err := RenderBodyWithControlStructures(body, TemplateData{
+		"show":     false,
+		"suppress": false,
+		"empty":    []interface{}{},
+		"nested":   true,
+		"extra":    true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("RenderBodyWithControlStructures() else error = %v", err)
+	}
+	if got := collectRenderedParagraphTexts(t, renderedElse); len(got) != 1 || got[0] != "Else branch" {
+		t.Fatalf("unexpected else branch paragraphs: %v", got)
+	}
+}
+
+func TestRenderBodyWithControlStructuresBlockForOpeningParagraphContainsMultipleNestedInlineControls(t *testing.T) {
+	body := createBodyWithParagraphs([]Paragraph{
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{for item in items}}{{if showHeader}}{{end}}{{unless skipBody}}{{end}}{{for _ in empty}}{{end}}",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{if item.active}}Item: {{item.name}}{{else}}Inactive: {{item.name}}{{end}}",
+					},
+				},
+			},
+		},
+		{
+			Runs: []Run{
+				{
+					Text: &Text{
+						Content: "{{end}}",
+					},
+				},
+			},
+		},
+	})
+
+	rendered, err := RenderBodyWithControlStructures(body, TemplateData{
+		"items": []interface{}{
+			map[string]interface{}{"name": "A", "active": true},
+			map[string]interface{}{"name": "B", "active": false},
+			map[string]interface{}{"name": "C", "active": true},
+		},
+		"showHeader": false,
+		"skipBody":   false,
+		"empty":      []interface{}{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("RenderBodyWithControlStructures() error = %v", err)
+	}
+
+	got := collectRenderedParagraphTexts(t, rendered)
+	want := []string{"Item: A", "Inactive: B", "Item: C"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d rendered elements, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected paragraph %d text: got %q want %q", i, got[i], want[i])
+		}
 	}
 }
