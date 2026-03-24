@@ -85,3 +85,125 @@ func TestRenderParagraphWithContext_ProofErrInlineIfPreservesBoldBranchFormattin
 		t.Fatalf("expected bold formatting on rendered else branch, got %+v", renderedElse.Runs[0].Properties)
 	}
 }
+
+func TestRenderParagraphWithContext_InlineIfWithTextFragmentPreservesBranchFormatting(t *testing.T) {
+	bold := &RunProperties{
+		Bold:   &Empty{},
+		BoldCs: &Empty{},
+	}
+
+	para := &Paragraph{
+		Runs: []Run{
+			{Text: &Text{Content: "{{if show}}"}},
+			{
+				Properties: bold,
+				Text:       &Text{Content: "{{include \"frag\"}}"},
+			},
+			{Text: &Text{Content: "{{else}}"}},
+			{
+				Properties: bold,
+				Text:       &Text{Content: "Fallback"},
+			},
+			{Text: &Text{Content: "{{end}}"}},
+		},
+	}
+
+	ctx := &renderContext{
+		fragments: map[string]*fragment{
+			"frag": {
+				content: "Schmerzensgeld {{name}}",
+			},
+		},
+		fragmentStack:  make([]string, 0),
+		ooxmlFragments: make(map[string]interface{}),
+	}
+
+	rendered, err := RenderParagraphWithContext(para, TemplateData{
+		"show": true,
+		"name": "Alice",
+	}, ctx)
+	if err != nil {
+		t.Fatalf("RenderParagraphWithContext returned error: %v", err)
+	}
+
+	if got := rendered.GetText(); got != "Schmerzensgeld Alice" {
+		t.Fatalf("rendered text = %q, want %q", got, "Schmerzensgeld Alice")
+	}
+	if len(rendered.Runs) != 1 {
+		t.Fatalf("expected 1 rendered run, got %d", len(rendered.Runs))
+	}
+	if rendered.Runs[0].Properties == nil || rendered.Runs[0].Properties.Bold == nil {
+		t.Fatalf("expected bold formatting on rendered fragment branch, got %+v", rendered.Runs[0].Properties)
+	}
+
+	renderedElse, err := RenderParagraphWithContext(para, TemplateData{
+		"show": false,
+		"name": "Alice",
+	}, ctx)
+	if err != nil {
+		t.Fatalf("RenderParagraphWithContext returned error for else branch: %v", err)
+	}
+
+	if got := renderedElse.GetText(); got != "Fallback" {
+		t.Fatalf("rendered else text = %q, want %q", got, "Fallback")
+	}
+	if len(renderedElse.Runs) != 1 {
+		t.Fatalf("expected 1 rendered else run, got %d", len(renderedElse.Runs))
+	}
+	if renderedElse.Runs[0].Properties == nil || renderedElse.Runs[0].Properties.Bold == nil {
+		t.Fatalf("expected bold formatting on rendered else branch, got %+v", renderedElse.Runs[0].Properties)
+	}
+}
+
+func TestRenderParagraphWithContext_InlineIfWithBraceSplitEndPreservesBranchFormatting(t *testing.T) {
+	bold := &RunProperties{
+		Bold:   &Empty{},
+		BoldCs: &Empty{},
+	}
+
+	para := &Paragraph{
+		Runs: []Run{
+			{Text: &Text{Content: "{{if show}}"}},
+			{
+				Properties: bold,
+				Text:       &Text{Content: "Visible"},
+			},
+			{
+				Properties: &RunProperties{Italic: &Empty{}},
+				Text:       &Text{Content: "{"},
+			},
+			{
+				Properties: &RunProperties{Underline: &UnderlineStyle{Val: "single"}},
+				Text:       &Text{Content: "{end}}"},
+			},
+		},
+	}
+
+	rendered, err := RenderParagraphWithContext(para, TemplateData{
+		"show": true,
+	}, &renderContext{})
+	if err != nil {
+		t.Fatalf("RenderParagraphWithContext returned error: %v", err)
+	}
+
+	if got := rendered.GetText(); got != "Visible" {
+		t.Fatalf("rendered text = %q, want %q", got, "Visible")
+	}
+	if len(rendered.Runs) != 1 {
+		t.Fatalf("expected 1 rendered run, got %d", len(rendered.Runs))
+	}
+	if rendered.Runs[0].Properties == nil || rendered.Runs[0].Properties.Bold == nil {
+		t.Fatalf("expected bold formatting on rendered branch, got %+v", rendered.Runs[0].Properties)
+	}
+
+	renderedHidden, err := RenderParagraphWithContext(para, TemplateData{
+		"show": false,
+	}, &renderContext{})
+	if err != nil {
+		t.Fatalf("RenderParagraphWithContext returned error for hidden branch: %v", err)
+	}
+
+	if got := renderedHidden.GetText(); got != "" {
+		t.Fatalf("rendered hidden text = %q, want empty", got)
+	}
+}

@@ -306,6 +306,332 @@ func TestDOCXFragmentInsideInlineIf(t *testing.T) {
 	}
 }
 
+func TestDOCXFragmentInlineIfWithBraceSplitEndAcrossRuns(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`{{include "frag"}}`,
+	})
+	fragmentDoc := createDOCXWithBodyXML(t, `
+    <w:p>
+      <w:r>
+        <w:t>{{if show}}</w:t>
+      </w:r>
+      <w:r>
+        <w:t>Visible</w:t>
+      </w:r>
+      <w:r>
+        <w:rPr><w:b/></w:rPr>
+        <w:t>{</w:t>
+      </w:r>
+      <w:r>
+        <w:rPr><w:i/></w:rPr>
+        <w:t>{end}}</w:t>
+      </w:r>
+    </w:p>`)
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("frag", fragmentDoc); err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(TemplateData{
+		"show": true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering fragment with brace-split {{end}}: %v", err)
+	}
+
+	content := extractTextFromDOCX(t, rendered)
+	if !strings.Contains(content, "Visible") {
+		t.Fatalf("expected rendered fragment text in output, got %q", content)
+	}
+
+	renderedHidden, err := tmpl.RenderToBytes(TemplateData{
+		"show": false,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering hidden fragment with brace-split {{end}}: %v", err)
+	}
+
+	hiddenContent := extractTextFromDOCX(t, renderedHidden)
+	if strings.Contains(hiddenContent, "Visible") {
+		t.Fatalf("expected fragment text to be omitted when condition is false, got %q", hiddenContent)
+	}
+}
+
+func TestDOCXNestedIncludedFragmentWithManyNestedInlineStatementsAndBraceSplitEnd(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`{{include "outer"}}`,
+	})
+	outerDoc := createDOCXWithParagraphs(t, []string{
+		`{{if showOuter}}{{unless suppressOuter}}{{end}}{{for _ in emptyOuter}}{{end}}`,
+		`Outer prefix`,
+		`{{include "middle"}}`,
+		`{{else}}`,
+		`Outer hidden`,
+		`{{end}}`,
+	})
+	middleDoc := createDOCXWithParagraphs(t, []string{
+		`{{unless hideMiddle}}{{if showMiddleHeader}}{{end}}{{for _ in emptyMiddle}}{{end}}`,
+		`Middle prefix`,
+		`{{include "inner"}}`,
+		`{{else}}`,
+		`Middle hidden`,
+		`{{end}}`,
+	})
+	innerDoc := createDOCXWithBodyXML(t, `
+    <w:p>
+      <w:r>
+        <w:t>{{if showInner}}{{if isVIP}}VIP{{else}}STD{{end}}{{unless muted}} / {{end}}{{if hasRef}}Ref: {{reference}}{{end}}{{if showNote}}{{if urgent}} / URGENT{{else}} / note{{end}}{{end}}</w:t>
+      </w:r>
+      <w:r>
+        <w:rPr><w:b/></w:rPr>
+        <w:t>{</w:t>
+      </w:r>
+      <w:r>
+        <w:rPr><w:i/></w:rPr>
+        <w:t>{end}}</w:t>
+      </w:r>
+    </w:p>`)
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("outer", outerDoc); err != nil {
+		t.Fatalf("failed to add outer fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("middle", middleDoc); err != nil {
+		t.Fatalf("failed to add middle fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("inner", innerDoc); err != nil {
+		t.Fatalf("failed to add inner fragment: %v", err)
+	}
+
+	renderedVisible, err := tmpl.RenderToBytes(TemplateData{
+		"showOuter":        true,
+		"suppressOuter":    false,
+		"emptyOuter":       []interface{}{},
+		"hideMiddle":       false,
+		"showMiddleHeader": true,
+		"emptyMiddle":      []interface{}{},
+		"showInner":        true,
+		"isVIP":            true,
+		"muted":            false,
+		"hasRef":           true,
+		"reference":        "4711",
+		"showNote":         true,
+		"urgent":           true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering visible nested fragment chain: %v", err)
+	}
+
+	visibleContent := extractTextFromDOCX(t, renderedVisible)
+	if !strings.Contains(visibleContent, "Outer prefix") {
+		t.Fatalf("expected outer content in visible output, got %q", visibleContent)
+	}
+	if !strings.Contains(visibleContent, "Middle prefix") {
+		t.Fatalf("expected middle content in visible output, got %q", visibleContent)
+	}
+	if !strings.Contains(visibleContent, "VIP / Ref: 4711 / URGENT") {
+		t.Fatalf("expected inner nested inline content in visible output, got %q", visibleContent)
+	}
+	if strings.Contains(visibleContent, "Outer hidden") || strings.Contains(visibleContent, "Middle hidden") {
+		t.Fatalf("did not expect hidden branches in visible output, got %q", visibleContent)
+	}
+
+	renderedMiddleHidden, err := tmpl.RenderToBytes(TemplateData{
+		"showOuter":        true,
+		"suppressOuter":    false,
+		"emptyOuter":       []interface{}{},
+		"hideMiddle":       true,
+		"showMiddleHeader": true,
+		"emptyMiddle":      []interface{}{},
+		"showInner":        true,
+		"isVIP":            true,
+		"muted":            false,
+		"hasRef":           true,
+		"reference":        "4711",
+		"showNote":         true,
+		"urgent":           true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering middle-hidden nested fragment chain: %v", err)
+	}
+
+	middleHiddenContent := extractTextFromDOCX(t, renderedMiddleHidden)
+	if !strings.Contains(middleHiddenContent, "Outer prefix") || !strings.Contains(middleHiddenContent, "Middle hidden") {
+		t.Fatalf("expected outer content and middle hidden branch, got %q", middleHiddenContent)
+	}
+	if strings.Contains(middleHiddenContent, "VIP / Ref: 4711 / URGENT") {
+		t.Fatalf("did not expect inner content when middle branch is hidden, got %q", middleHiddenContent)
+	}
+
+	renderedOuterHidden, err := tmpl.RenderToBytes(TemplateData{
+		"showOuter":        false,
+		"suppressOuter":    false,
+		"emptyOuter":       []interface{}{},
+		"hideMiddle":       false,
+		"showMiddleHeader": true,
+		"emptyMiddle":      []interface{}{},
+		"showInner":        true,
+		"isVIP":            false,
+		"muted":            true,
+		"hasRef":           true,
+		"reference":        "4711",
+		"showNote":         true,
+		"urgent":           false,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering outer-hidden nested fragment chain: %v", err)
+	}
+
+	outerHiddenContent := extractTextFromDOCX(t, renderedOuterHidden)
+	if !strings.Contains(outerHiddenContent, "Outer hidden") {
+		t.Fatalf("expected outer hidden branch, got %q", outerHiddenContent)
+	}
+	if strings.Contains(outerHiddenContent, "Middle prefix") || strings.Contains(outerHiddenContent, "VIP") || strings.Contains(outerHiddenContent, "STD") {
+		t.Fatalf("did not expect nested content when outer branch is hidden, got %q", outerHiddenContent)
+	}
+}
+
+func TestDOCXNestedIncludedFragmentWithNestedIfAndForLoopAndBraceSplitEnd(t *testing.T) {
+	mainDoc := createDOCXWithParagraphs(t, []string{
+		`{{include "outer"}}`,
+	})
+	outerDoc := createDOCXWithParagraphs(t, []string{
+		`{{if showOuter}}{{include "middle"}}{{else}}Outer hidden{{end}}`,
+	})
+	middleDoc := createDOCXWithParagraphs(t, []string{
+		`{{unless hideMiddle}}{{include "inner"}}{{else}}Middle hidden{{end}}`,
+	})
+	innerDoc := createDOCXWithBodyXML(t, `
+    <w:p>
+      <w:r>
+        <w:t>{{if showInner}}{{unless muted}}{{end}}{{for _ in emptyInner}}</w:t>
+      </w:r>
+      <w:r>
+        <w:rPr><w:b/></w:rPr>
+        <w:t>{</w:t>
+      </w:r>
+      <w:r>
+        <w:rPr><w:i/></w:rPr>
+        <w:t>{end}}</w:t>
+      </w:r>
+    </w:p>
+    <w:p>
+      <w:r>
+        <w:t>Lead: {{for i, item in items}}{{if i &gt; 0}}; {{end}}{{if item.active}}{{item.label}}{{else}}skip{{end}}{{end}}{{if showTail}}{{if urgent}} / HOT{{else}} / tail{{end}}{{end}}</w:t>
+      </w:r>
+    </w:p>
+    <w:p>
+      <w:r>
+        <w:t>{{else}}</w:t>
+      </w:r>
+    </w:p>
+    <w:p>
+      <w:r>
+        <w:t>Inner hidden</w:t>
+      </w:r>
+    </w:p>
+    <w:p>
+      <w:r>
+        <w:t>{{end}}</w:t>
+      </w:r>
+    </w:p>`)
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("outer", outerDoc); err != nil {
+		t.Fatalf("failed to add outer fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("middle", middleDoc); err != nil {
+		t.Fatalf("failed to add middle fragment: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("inner", innerDoc); err != nil {
+		t.Fatalf("failed to add inner fragment: %v", err)
+	}
+
+	renderedVisible, err := tmpl.RenderToBytes(TemplateData{
+		"showOuter":  true,
+		"hideMiddle": false,
+		"showInner":  true,
+		"muted":      true,
+		"emptyInner": []interface{}{},
+		"showTail":   true,
+		"urgent":     false,
+		"items": []interface{}{
+			map[string]interface{}{"label": "A", "active": true},
+			map[string]interface{}{"label": "B", "active": false},
+			map[string]interface{}{"label": "C", "active": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering visible nested if/for fragment chain: %v", err)
+	}
+
+	visibleContent := extractTextFromDOCX(t, renderedVisible)
+	if !strings.Contains(visibleContent, "Lead: A; skip; C / tail") {
+		t.Fatalf("expected nested if/for content in visible output, got %q", visibleContent)
+	}
+	if strings.Contains(visibleContent, "Outer hidden") || strings.Contains(visibleContent, "Middle hidden") {
+		t.Fatalf("did not expect hidden branches in visible output, got %q", visibleContent)
+	}
+
+	renderedMiddleHidden, err := tmpl.RenderToBytes(TemplateData{
+		"showOuter":  true,
+		"hideMiddle": true,
+		"showInner":  true,
+		"muted":      true,
+		"emptyInner": []interface{}{},
+		"showTail":   true,
+		"urgent":     true,
+		"items": []interface{}{
+			map[string]interface{}{"label": "A", "active": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering middle hidden nested if/for fragment chain: %v", err)
+	}
+
+	middleHiddenContent := extractTextFromDOCX(t, renderedMiddleHidden)
+	if !strings.Contains(middleHiddenContent, "Middle hidden") {
+		t.Fatalf("expected middle hidden branch, got %q", middleHiddenContent)
+	}
+	if strings.Contains(middleHiddenContent, "Lead:") {
+		t.Fatalf("did not expect inner loop content when middle branch is hidden, got %q", middleHiddenContent)
+	}
+
+	renderedOuterHidden, err := tmpl.RenderToBytes(TemplateData{
+		"showOuter":  false,
+		"hideMiddle": false,
+		"showInner":  true,
+		"muted":      true,
+		"emptyInner": []interface{}{},
+		"showTail":   true,
+		"urgent":     true,
+		"items": []interface{}{
+			map[string]interface{}{"label": "A", "active": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error rendering outer hidden nested if/for fragment chain: %v", err)
+	}
+
+	outerHiddenContent := extractTextFromDOCX(t, renderedOuterHidden)
+	if !strings.Contains(outerHiddenContent, "Outer hidden") {
+		t.Fatalf("expected outer hidden branch, got %q", outerHiddenContent)
+	}
+	if strings.Contains(outerHiddenContent, "Lead:") || strings.Contains(outerHiddenContent, "Middle hidden") {
+		t.Fatalf("did not expect nested content when outer branch is hidden, got %q", outerHiddenContent)
+	}
+}
+
 func TestDOCXFragmentPreservesLiteralTextAroundIncludeInSameParagraph(t *testing.T) {
 	mainDoc := createDOCXWithParagraphs(t, []string{
 		`Before {{include "frag"}} After`,

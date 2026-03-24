@@ -3,7 +3,6 @@ package render
 import (
 	stdxml "encoding/xml"
 	"reflect"
-	"strings"
 
 	"github.com/benjaminschreck/go-stencil/pkg/stencil/xml"
 )
@@ -268,44 +267,59 @@ func mergeTemplateExpressionRuns(runs []xml.Run) []xml.Run {
 
 	for i < len(runs) {
 		run := runs[i]
-
-		// Check if this run's text contains an unclosed {{ template marker
-		if run.Text != nil && hasUnclosedTemplateMarker(run.Text.Content) {
-			// Merge subsequent runs until we find the closing }}
-			mergedText := run.Text.Content
-			j := i + 1
-			for j < len(runs) {
-				if runs[j].Text != nil {
-					mergedText += runs[j].Text.Content
-				}
-				if strings.Contains(mergedText, "}}") {
-					// Found the closing marker, check if all template expressions are closed
-					if !hasUnclosedTemplateMarker(mergedText) {
-						break
-					}
-				}
-				j++
-			}
-
-			// If we actually merged additional runs, create a combined run
-			if j > i {
-				combinedRun := xml.Run{
-					Properties: run.Properties, // Use formatting from the first run
-					Attrs:      run.Attrs,
-					Text: &xml.Text{
-						XMLName: run.Text.XMLName,
-						Space:   "preserve", // Preserve spaces in merged content
-						Content: mergedText,
-					},
-				}
-				result = append(result, combinedRun)
-				i = j + 1
-			} else {
-				result = append(result, run)
-				i++
-			}
-		} else {
+		if run.Text == nil {
 			result = append(result, run)
+			i++
+			continue
+		}
+
+		state := newTemplateMarkerState()
+		state.scan(run.Text.Content)
+		if !state.needsMergeLookahead() {
+			result = append(result, run)
+			i++
+			continue
+		}
+
+		mergedText := run.Text.Content
+		j := i
+		merged := false
+		for j+1 < len(runs) {
+			nextRun := runs[j+1]
+			if nextRun.Text != nil {
+				mergedText += nextRun.Text.Content
+				state.scan(nextRun.Text.Content)
+			}
+
+			j++
+			if !state.sawTemplate && !state.needsMergeLookahead() {
+				break
+			}
+			if state.sawTemplate && state.isBalanced() {
+				merged = true
+				break
+			}
+		}
+
+		if !state.sawTemplate {
+			result = append(result, run)
+			i++
+			continue
+		}
+
+		combinedRun := xml.Run{
+			Properties: run.Properties, // Use formatting from the first run
+			Attrs:      run.Attrs,
+			Text: &xml.Text{
+				XMLName: run.Text.XMLName,
+				Space:   "preserve", // Preserve spaces in merged content
+				Content: mergedText,
+			},
+		}
+		result = append(result, combinedRun)
+		if merged || j > i {
+			i = j + 1
+		} else {
 			i++
 		}
 	}
@@ -327,4 +341,57 @@ func hasUnclosedTemplateMarker(s string) bool {
 		}
 	}
 	return depth > 0
+}
+
+type templateMarkerState struct {
+	depth             int
+	sawTemplate       bool
+	pendingOpenBrace  bool
+	pendingCloseBrace bool
+}
+
+func newTemplateMarkerState() *templateMarkerState {
+	return &templateMarkerState{}
+}
+
+func (s *templateMarkerState) scan(text string) {
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+
+		if s.pendingOpenBrace {
+			s.pendingOpenBrace = false
+			if ch == '{' {
+				s.depth++
+				s.sawTemplate = true
+				continue
+			}
+		}
+
+		if s.pendingCloseBrace {
+			s.pendingCloseBrace = false
+			if ch == '}' {
+				if s.depth > 0 {
+					s.depth--
+				}
+				continue
+			}
+		}
+
+		switch ch {
+		case '{':
+			s.pendingOpenBrace = true
+		case '}':
+			if s.depth > 0 {
+				s.pendingCloseBrace = true
+			}
+		}
+	}
+}
+
+func (s *templateMarkerState) needsMergeLookahead() bool {
+	return s.depth > 0 || s.pendingOpenBrace || s.pendingCloseBrace
+}
+
+func (s *templateMarkerState) isBalanced() bool {
+	return s.sawTemplate && s.depth == 0 && !s.pendingOpenBrace && !s.pendingCloseBrace
 }
