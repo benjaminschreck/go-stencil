@@ -19,6 +19,9 @@ type Paragraph struct {
 	Properties *ParagraphProperties `xml:"pPr"`
 	// Attrs preserves paragraph-level attributes (e.g. w14:paraId, w:rsidR).
 	Attrs []xml.Attr `xml:"-"`
+	// SourceParagraphID groups split control-segment paragraphs so rendered output
+	// can be merged back into the original paragraph shape.
+	SourceParagraphID string `xml:"-"`
 	// Content maintains the order of runs and hyperlinks
 	Content []ParagraphContent `xml:"-"`
 	// Legacy fields for backward compatibility during transition

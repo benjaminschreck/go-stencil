@@ -186,8 +186,9 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 
 				// Create a new paragraph with the rendered text
 				rendered := &Paragraph{
-					Properties: para.Properties,
-					Attrs:      para.Attrs,
+					Properties:        para.Properties,
+					Attrs:             para.Attrs,
+					SourceParagraphID: para.SourceParagraphID,
 				}
 
 				// Convert the rendered text into runs, preserving line breaks
@@ -238,8 +239,9 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 
 	// Otherwise, render normally
 	rendered := &Paragraph{
-		Properties: para.Properties,
-		Attrs:      para.Attrs,
+		Properties:        para.Properties,
+		Attrs:             para.Attrs,
+		SourceParagraphID: para.SourceParagraphID,
 	}
 
 	// Use Content if available to preserve order of runs and hyperlinks.
@@ -368,9 +370,10 @@ func tryRenderInlineControlParagraph(para *Paragraph, data TemplateData, ctx *re
 	}
 
 	rendered := &Paragraph{
-		Properties: para.Properties,
-		Attrs:      para.Attrs,
-		Runs:       renderedRuns,
+		Properties:        para.Properties,
+		Attrs:             para.Attrs,
+		Runs:              renderedRuns,
+		SourceParagraphID: para.SourceParagraphID,
 	}
 
 	if len(para.Content) > 0 && !useLegacyRunRendering {
@@ -468,6 +471,14 @@ func renderInlineControlRuns(runs []Run, startIdx int, data TemplateData, ctx *r
 				result = append(result, rendered...)
 				i = nextIdx
 				continue
+			case "for":
+				rendered, nextIdx, err := renderInlineForRuns(runs, i, tagValue, data, ctx)
+				if err != nil {
+					return nil, i, err
+				}
+				result = append(result, rendered...)
+				i = nextIdx
+				continue
 			case "include":
 				rendered, err := renderInlineIncludeRun(runs[i], tagValue, data, ctx)
 				if err != nil {
@@ -498,6 +509,49 @@ func renderInlineControlRuns(runs []Run, startIdx int, data TemplateData, ctx *r
 	}
 
 	return result, i, nil
+}
+
+func renderInlineForRuns(runs []Run, startIdx int, loopExpr string, data TemplateData, ctx *renderContext) ([]Run, int, error) {
+	endIdx, err := findInlineForEndInRuns(runs, startIdx)
+	if err != nil {
+		return nil, startIdx, err
+	}
+
+	forNode, err := parseForSyntax(loopExpr)
+	if err != nil {
+		return nil, startIdx, fmt.Errorf("invalid inline for syntax: %w", err)
+	}
+
+	collection, err := forNode.Collection.Evaluate(data)
+	if err != nil {
+		return nil, startIdx, fmt.Errorf("failed to evaluate inline for collection: %w", err)
+	}
+
+	items, err := toSlice(collection)
+	if err != nil {
+		return nil, startIdx, fmt.Errorf("failed to convert inline for collection to slice: %w", err)
+	}
+
+	result := make([]Run, 0)
+	loopBody := runs[startIdx+1 : endIdx]
+	for idx, item := range items {
+		loopData := make(TemplateData)
+		for k, v := range data {
+			loopData[k] = v
+		}
+		loopData[forNode.Variable] = item
+		if forNode.IndexVar != "" {
+			loopData[forNode.IndexVar] = idx
+		}
+
+		rendered, _, err := renderInlineControlRuns(loopBody, 0, loopData, ctx)
+		if err != nil {
+			return nil, startIdx, err
+		}
+		result = append(result, rendered...)
+	}
+
+	return result, endIdx + 1, nil
 }
 
 func renderInlineIfRuns(runs []Run, startIdx int, condition string, invert bool, data TemplateData, ctx *renderContext) ([]Run, int, error) {
@@ -560,6 +614,29 @@ func renderInlineIfRuns(runs []Run, startIdx int, condition string, invert bool,
 	return nil, endIdx + 1, nil
 }
 
+func findInlineForEndInRuns(runs []Run, startIdx int) (int, error) {
+	depth := 1
+
+	for i := startIdx + 1; i < len(runs); i++ {
+		tagType, _, isControlTag := parseInlineControlTag(runs[i])
+		if !isControlTag {
+			continue
+		}
+
+		switch tagType {
+		case "if", "unless", "for":
+			depth++
+		case "end":
+			depth--
+			if depth == 0 {
+				return i, nil
+			}
+		}
+	}
+
+	return -1, fmt.Errorf("no matching {{end}} found for inline for loop")
+}
+
 func findInlineIfBranchesInRuns(runs []Run, startIdx int) ([]inlineRunBranch, int, error) {
 	depth := 1
 	branches := make([]inlineRunBranch, 0)
@@ -587,7 +664,7 @@ func findInlineIfBranchesInRuns(runs []Run, startIdx int) ([]inlineRunBranch, in
 		}
 
 		switch tagType {
-		case "if", "unless":
+		case "if", "unless", "for":
 			depth++
 		case "end":
 			depth--
@@ -614,6 +691,8 @@ func parseInlineControlTag(run Run) (string, string, bool) {
 	switch {
 	case strings.HasPrefix(inner, "if "):
 		return "if", strings.TrimSpace(inner[3:]), true
+	case strings.HasPrefix(inner, "for "):
+		return "for", strings.TrimSpace(inner[4:]), true
 	case strings.HasPrefix(inner, "unless "):
 		return "unless", strings.TrimSpace(inner[7:]), true
 	case inner == "else":

@@ -12,29 +12,7 @@ import (
 // renderElementsWithContext renders a slice of elements with the given context
 // This function DOES process control structures to support nested loops and conditionals
 func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *renderContext) ([]BodyElement, error) {
-	// First, merge runs in all paragraphs to handle split template variables
-	// This is critical for detecting control structures in fragments where markers may be split
-	for i, elem := range elements {
-		switch el := elem.(type) {
-		case *Paragraph:
-			p := *el // Create a copy
-			render.MergeConsecutiveRuns(&p)
-			elements[i] = &p // Update the element with merged runs
-		case *Table:
-			// Also merge runs in table cells
-			t := *el // Create a copy
-			for rowIdx, row := range t.Rows {
-				for cellIdx, cell := range row.Cells {
-					for paraIdx, para := range cell.Paragraphs {
-						p := para // Create a copy
-						render.MergeConsecutiveRuns(&p)
-						t.Rows[rowIdx].Cells[cellIdx].Paragraphs[paraIdx] = p
-					}
-				}
-			}
-			elements[i] = &t // Update the element with merged runs
-		}
-	}
+	elements = normalizeBodyElementsForControlRendering(elements)
 
 	result := make([]BodyElement, 0, len(elements))
 
@@ -63,6 +41,8 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 				i++
 
 			case "for":
+				prefixRuns := extractPrefixRunsBeforeControlMarker(para.Runs, "{{for ")
+
 				// Handle block-level for loop - find matching end
 				endIdx, err := render.FindMatchingEndInElements(elements, i)
 				if err != nil {
@@ -90,6 +70,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 					return nil, fmt.Errorf("failed to convert collection to slice: %w", err)
 				}
 
+				loopResult := make([]BodyElement, 0)
 				for idx, item := range items {
 					// Create new data context for loop iteration
 					loopData := make(TemplateData)
@@ -106,13 +87,17 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 					if err != nil {
 						return nil, err
 					}
-					result = append(result, loopRendered...)
+					loopResult = append(loopResult, loopRendered...)
 				}
+
+				result = append(result, prependPrefixRuns(&para, prefixRuns, loopResult)...)
 
 				// Skip to after the end marker
 				i = endIdx + 1
 
 			case "if":
+				prefixRuns := extractPrefixRunsBeforeControlMarker(para.Runs, "{{if ")
+
 				// Handle if statement - find matching else/elsif/end
 				endIdx, elseBranches, err := render.FindIfStructureInElements(elements, i)
 				if err != nil {
@@ -145,7 +130,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 					if err != nil {
 						return nil, err
 					}
-					result = append(result, branchElements...)
+					result = append(result, prependPrefixRuns(&para, prefixRuns, branchElements)...)
 				} else {
 					// Check elsif branches
 					branchRendered := false
@@ -175,7 +160,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 								if err != nil {
 									return nil, err
 								}
-								result = append(result, branchElements...)
+								result = append(result, prependPrefixRuns(&para, prefixRuns, branchElements)...)
 								branchRendered = true
 								break
 							}
@@ -186,9 +171,14 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 							if err != nil {
 								return nil, err
 							}
-							result = append(result, branchElements...)
+							result = append(result, prependPrefixRuns(&para, prefixRuns, branchElements)...)
+							branchRendered = true
 							break
 						}
+					}
+
+					if !branchRendered && len(prefixRuns) > 0 {
+						result = append(result, prependPrefixRuns(&para, prefixRuns, nil)...)
 					}
 				}
 
@@ -196,6 +186,8 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 				i = endIdx + 1
 
 			case "unless":
+				prefixRuns := extractPrefixRunsBeforeControlMarker(para.Runs, "{{unless ")
+
 				// Handle unless statement (similar to if but inverted)
 				endIdx, elseBranches, err := render.FindIfStructureInElements(elements, i)
 				if err != nil {
@@ -229,7 +221,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 					if err != nil {
 						return nil, err
 					}
-					result = append(result, branchElements...)
+					result = append(result, prependPrefixRuns(&para, prefixRuns, branchElements)...)
 				} else if len(elseBranches) > 0 && elseBranches[0].BranchType == "else" {
 					// Render else branch
 					branchBody := elements[elseBranches[0].Index+1 : endIdx]
@@ -237,7 +229,9 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 					if err != nil {
 						return nil, err
 					}
-					result = append(result, branchElements...)
+					result = append(result, prependPrefixRuns(&para, prefixRuns, branchElements)...)
+				} else if len(prefixRuns) > 0 {
+					result = append(result, prependPrefixRuns(&para, prefixRuns, nil)...)
 				}
 
 				// Skip to after the end marker
@@ -282,7 +276,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 		}
 	}
 
-	return result, nil
+	return mergeAdjacentSourceParagraphs(result), nil
 }
 
 // getFragmentKeys returns the keys of fragments in the context for debugging
@@ -411,9 +405,10 @@ func newParagraphWithRunsLike(base *Paragraph, runs []Run) *Paragraph {
 	}
 
 	para := &Paragraph{
-		Properties: base.Properties,
-		Attrs:      base.Attrs,
-		Runs:       cloneRunsForLegacyRendering(runs),
+		Properties:        base.Properties,
+		Attrs:             base.Attrs,
+		Runs:              cloneRunsForLegacyRendering(runs),
+		SourceParagraphID: base.SourceParagraphID,
 	}
 	return para
 }
@@ -427,6 +422,18 @@ func extractRunsBetweenTextOffsets(runs []Run, start, end int) []Run {
 	textPos := 0
 
 	for _, run := range runs {
+		if run.Break != nil {
+			runStart := textPos
+			runEnd := textPos + 1
+			textPos = runEnd
+
+			if !(end <= runStart || start >= runEnd) {
+				clonedRun := *cloneRun(&run)
+				clonedRun.Text = nil
+				extracted = append(extracted, clonedRun)
+			}
+		}
+
 		if run.Text == nil {
 			continue
 		}
@@ -455,6 +462,265 @@ func extractRunsBetweenTextOffsets(runs []Run, start, end int) []Run {
 	return extracted
 }
 
+type paragraphControlSegment struct {
+	start     int
+	end       int
+	isControl bool
+}
+
+func normalizeBodyElementsForControlRendering(elements []BodyElement) []BodyElement {
+	normalized := make([]BodyElement, 0, len(elements))
+
+	for _, elem := range elements {
+		switch el := elem.(type) {
+		case *Paragraph:
+			p := *el
+			render.MergeConsecutiveRuns(&p)
+			normalized = append(normalized, splitParagraphByTopLevelControlMarkers(&p)...)
+		case *Table:
+			t := *el
+			for rowIdx, row := range t.Rows {
+				for cellIdx, cell := range row.Cells {
+					for paraIdx, para := range cell.Paragraphs {
+						p := para
+						render.MergeConsecutiveRuns(&p)
+						t.Rows[rowIdx].Cells[cellIdx].Paragraphs[paraIdx] = p
+					}
+				}
+			}
+			normalized = append(normalized, &t)
+		default:
+			normalized = append(normalized, elem)
+		}
+	}
+
+	return normalized
+}
+
+func getParagraphTextWithBreaks(runs []Run) string {
+	var fullText strings.Builder
+	for _, run := range runs {
+		if run.Break != nil {
+			fullText.WriteByte('\n')
+		}
+		if run.Text != nil {
+			fullText.WriteString(run.Text.Content)
+		}
+	}
+	return fullText.String()
+}
+
+func prependPrefixRuns(basePara *Paragraph, prefixRuns []Run, elements []BodyElement) []BodyElement {
+	if len(prefixRuns) == 0 {
+		return elements
+	}
+
+	if len(elements) > 0 {
+		if firstPara, ok := elements[0].(*Paragraph); ok {
+			newPara := &Paragraph{
+				Properties:        firstPara.Properties,
+				Attrs:             firstPara.Attrs,
+				SourceParagraphID: basePara.SourceParagraphID,
+			}
+			newPara.Runs = append(newPara.Runs, cloneRunsForLegacyRendering(prefixRuns)...)
+			newPara.Runs = append(newPara.Runs, cloneRunsForLegacyRendering(firstPara.Runs)...)
+			elements[0] = newPara
+			return elements
+		}
+	}
+
+	prefixPara := &Paragraph{
+		Properties:        basePara.Properties,
+		Attrs:             basePara.Attrs,
+		Runs:              cloneRunsForLegacyRendering(prefixRuns),
+		SourceParagraphID: basePara.SourceParagraphID,
+	}
+	return append([]BodyElement{prefixPara}, elements...)
+}
+
+func splitParagraphByTopLevelControlMarkers(para *Paragraph) []BodyElement {
+	if para == nil || len(para.Runs) == 0 || len(para.Hyperlinks) > 0 {
+		if para == nil {
+			return nil
+		}
+		return []BodyElement{para}
+	}
+
+	fullText := getParagraphTextWithBreaks(para.Runs)
+	if fullText == "" {
+		return []BodyElement{para}
+	}
+
+	matches := tokenRegex.FindAllStringSubmatchIndex(fullText, -1)
+	if len(matches) == 0 {
+		return []BodyElement{para}
+	}
+
+	initialDepth := 0
+	firstContent := strings.TrimSpace(fullText[matches[0][2]:matches[0][3]])
+	firstToken := parseToken(firstContent)
+	if strings.TrimSpace(fullText[:matches[0][0]]) == "" {
+		switch firstToken.Type {
+		case TokenElsif, TokenElse, TokenEnd:
+			initialDepth = 1
+		}
+	}
+	if initialDepth == 0 {
+		controlType, _ := render.DetectControlStructure(para)
+		if controlType == "" || controlType == "inline-for" {
+			return []BodyElement{para}
+		}
+	}
+
+	segments := make([]paragraphControlSegment, 0, len(matches)*2+1)
+	currentTextStart := 0
+	localDepth := initialDepth
+	splitPerformed := false
+
+	appendText := func(end int) {
+		if currentTextStart >= end {
+			return
+		}
+		segments = append(segments, paragraphControlSegment{
+			start: currentTextStart,
+			end:   end,
+		})
+	}
+
+	for _, match := range matches {
+		content := strings.TrimSpace(fullText[match[2]:match[3]])
+		token := parseToken(content)
+
+		switch token.Type {
+		case TokenIf, TokenFor, TokenUnless:
+			if localDepth == 0 {
+				segments = append(segments, paragraphControlSegment{
+					start:     currentTextStart,
+					end:       match[1],
+					isControl: true,
+				})
+				currentTextStart = match[1]
+				splitPerformed = true
+			}
+			localDepth++
+
+		case TokenElsif, TokenElse:
+			if localDepth <= 1 {
+				appendText(match[0])
+				segments = append(segments, paragraphControlSegment{
+					start:     match[0],
+					end:       match[1],
+					isControl: true,
+				})
+				currentTextStart = match[1]
+				splitPerformed = true
+			}
+
+		case TokenEnd:
+			if localDepth <= 1 {
+				appendText(match[0])
+				segments = append(segments, paragraphControlSegment{
+					start:     match[0],
+					end:       match[1],
+					isControl: true,
+				})
+				currentTextStart = match[1]
+				splitPerformed = true
+			}
+			if localDepth > 0 {
+				localDepth--
+			}
+		}
+	}
+
+	if currentTextStart < len(fullText) {
+		segments = append(segments, paragraphControlSegment{
+			start: currentTextStart,
+			end:   len(fullText),
+		})
+	}
+
+	if !splitPerformed {
+		return []BodyElement{para}
+	}
+
+	sourceID := para.SourceParagraphID
+	if sourceID == "" {
+		sourceID = fmt.Sprintf("%p", para)
+	}
+
+	result := make([]BodyElement, 0, len(segments))
+	for _, segment := range segments {
+		runs := extractRunsBetweenTextOffsets(para.Runs, segment.start, segment.end)
+		if len(runs) == 0 {
+			continue
+		}
+
+		segPara := &Paragraph{
+			Properties:        para.Properties,
+			Attrs:             para.Attrs,
+			Runs:              cloneRunsForLegacyRendering(runs),
+			SourceParagraphID: sourceID,
+		}
+		result = append(result, segPara)
+	}
+
+	if len(result) == 0 {
+		return []BodyElement{para}
+	}
+
+	return result
+}
+
+func mergeAdjacentSourceParagraphs(elements []BodyElement) []BodyElement {
+	if len(elements) <= 1 {
+		return elements
+	}
+
+	merged := make([]BodyElement, 0, len(elements))
+
+	for _, elem := range elements {
+		para, ok := elem.(*Paragraph)
+		if !ok || para.SourceParagraphID == "" {
+			merged = append(merged, elem)
+			continue
+		}
+		if isSyntheticEmptyParagraph(para) {
+			continue
+		}
+
+		if len(merged) > 0 {
+			if prev, ok := merged[len(merged)-1].(*Paragraph); ok && prev.SourceParagraphID != "" && prev.SourceParagraphID == para.SourceParagraphID {
+				prev.Content = nil
+				prev.Runs = append(prev.Runs, cloneRunsForLegacyRendering(para.Runs)...)
+				continue
+			}
+		}
+
+		merged = append(merged, para)
+	}
+
+	return merged
+}
+
+func isSyntheticEmptyParagraph(para *Paragraph) bool {
+	if para == nil {
+		return true
+	}
+	if len(para.Hyperlinks) > 0 {
+		return false
+	}
+	for _, run := range para.Runs {
+		if run.Break != nil {
+			return false
+		}
+		if run.Text != nil && run.Text.Content != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // RenderBodyWithControlStructures renders a document body handling control structures
 func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
 	rendered, err := renderBodyWithElementOrder(body, data, ctx)
@@ -462,6 +728,7 @@ func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderC
 		return nil, err
 	}
 
+	rendered.Elements = mergeAdjacentSourceParagraphs(rendered.Elements)
 	// Apply table merging to fix split tables from for loops outside tables
 	rendered.Elements = MergeConsecutiveTables(rendered.Elements)
 
@@ -470,28 +737,7 @@ func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderC
 
 // renderBodyWithElementOrder renders using the new Elements field that preserves order
 func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
-	// First, merge runs in all paragraphs to handle split template variables
-	for i, elem := range body.Elements {
-		switch el := elem.(type) {
-		case *Paragraph:
-			p := *el // Create a copy
-			render.MergeConsecutiveRuns(&p)
-			body.Elements[i] = &p // Update the element with merged runs
-		case *Table:
-			// Also merge runs in table cells
-			t := *el // Create a copy
-			for rowIdx, row := range t.Rows {
-				for cellIdx, cell := range row.Cells {
-					for paraIdx, para := range cell.Paragraphs {
-						p := para // Create a copy
-						render.MergeConsecutiveRuns(&p)
-						t.Rows[rowIdx].Cells[cellIdx].Paragraphs[paraIdx] = p
-					}
-				}
-			}
-			body.Elements[i] = &t // Update the element with merged runs
-		}
-	}
+	elements := normalizeBodyElementsForControlRendering(body.Elements)
 
 	rendered := &Body{
 		Elements:          make([]BodyElement, 0),
@@ -500,9 +746,9 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 
 	// Process elements in order
 	i := 0
-	for i < len(body.Elements) {
+	for i < len(elements) {
 
-		elem := body.Elements[i]
+		elem := elements[i]
 
 		switch el := elem.(type) {
 		case *Paragraph:
@@ -524,8 +770,10 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				i++
 
 			case "for":
+				prefixRuns := extractPrefixRunsBeforeControlMarker(para.Runs, "{{for ")
+
 				// Handle for loop
-				endIdx, err := render.FindMatchingEndInElements(body.Elements, i)
+				endIdx, err := render.FindMatchingEndInElements(elements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{for}} at element %d", i)
 				}
@@ -537,7 +785,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				}
 
 				// Get the loop body (elements between for and end)
-				loopBody := body.Elements[i+1 : endIdx]
+				loopBody := elements[i+1 : endIdx]
 
 				// Evaluate the collection
 				collection, err := forNode.Collection.Evaluate(data)
@@ -551,6 +799,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					return nil, fmt.Errorf("failed to convert collection to slice: %w", err)
 				}
 
+				loopResult := make([]BodyElement, 0)
 				for idx, item := range items {
 					// Create new data context for loop iteration
 					loopData := make(TemplateData)
@@ -567,11 +816,13 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					if err != nil {
 						return nil, err
 					}
-					rendered.Elements = append(rendered.Elements, loopRendered...)
+					loopResult = append(loopResult, loopRendered...)
 				}
 
+				rendered.Elements = append(rendered.Elements, prependPrefixRuns(&para, prefixRuns, loopResult)...)
+
 				// Skip to after the end marker
-				if endIdx >= 0 && endIdx < len(body.Elements) {
+				if endIdx >= 0 && endIdx < len(elements) {
 					i = endIdx + 1
 				} else {
 					// This should not happen if findMatchingEndInElements worked correctly
@@ -584,7 +835,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				prefixRuns := extractPrefixRunsBeforeControlMarker(para.Runs, "{{if ")
 
 				// Handle if statement
-				endIdx, elseBranches, err := render.FindIfStructureInElements(body.Elements, i)
+				endIdx, elseBranches, err := render.FindIfStructureInElements(elements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{if}} at element %d: %w", i, err)
 				}
@@ -612,40 +863,13 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 						branchEnd = endIdx
 					}
 
-					branchBody := body.Elements[i+1 : branchEnd]
+					branchBody := elements[i+1 : branchEnd]
 					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
 					if err != nil {
 						return nil, err
 					}
 
-					// If there were runs before the {{if}}, prepend them to the first element
-					if len(prefixRuns) > 0 && len(branchElements) > 0 {
-						if firstPara, ok := branchElements[0].(*Paragraph); ok {
-							// Create a new paragraph with the prefix runs
-							newPara := &Paragraph{
-								Properties: firstPara.Properties,
-							}
-
-							// Add all prefix runs (including any line breaks)
-							newPara.Runs = append(newPara.Runs, prefixRuns...)
-
-							// Add all runs from the first paragraph
-							newPara.Runs = append(newPara.Runs, firstPara.Runs...)
-
-							// Replace the first element
-							branchElements[0] = newPara
-						} else if len(prefixRuns) > 0 {
-							// If the first element is not a paragraph, create a new paragraph with the prefix
-							prefixPara := &Paragraph{
-								Properties: para.Properties,
-								Runs:       prefixRuns,
-							}
-							// Insert the prefix paragraph at the beginning
-							branchElements = append([]BodyElement{prefixPara}, branchElements...)
-						}
-					}
-
-					rendered.Elements = append(rendered.Elements, branchElements...)
+					rendered.Elements = append(rendered.Elements, prependPrefixRuns(&para, prefixRuns, branchElements)...)
 					branchRendered = true
 				} else {
 					// Check elsif branches
@@ -670,86 +894,37 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 									branchEnd = endIdx
 								}
 
-								branchBody := body.Elements[branch.Index+1 : branchEnd]
+								branchBody := elements[branch.Index+1 : branchEnd]
 								branchElements, err := renderElementsWithContext(branchBody, data, ctx)
 								if err != nil {
 									return nil, err
 								}
 
-								// If there were runs before the {{if}}, prepend them to the first element
-								if len(prefixRuns) > 0 && len(branchElements) > 0 {
-									if firstPara, ok := branchElements[0].(*Paragraph); ok {
-										// Create a new paragraph with the prefix runs
-										newPara := &Paragraph{
-											Properties: firstPara.Properties,
-										}
-
-										// Add all prefix runs (including any line breaks)
-										newPara.Runs = append(newPara.Runs, prefixRuns...)
-
-										// Add all runs from the first paragraph
-										newPara.Runs = append(newPara.Runs, firstPara.Runs...)
-
-										// Replace the first element
-										branchElements[0] = newPara
-									} else if len(prefixRuns) > 0 {
-										// If the first element is not a paragraph, create a new paragraph with the prefix
-										prefixPara := &Paragraph{
-											Properties: para.Properties,
-											Runs:       prefixRuns,
-										}
-										// Insert the prefix paragraph at the beginning
-										branchElements = append([]BodyElement{prefixPara}, branchElements...)
-									}
-								}
-
-								rendered.Elements = append(rendered.Elements, branchElements...)
+								rendered.Elements = append(rendered.Elements, prependPrefixRuns(&para, prefixRuns, branchElements)...)
 								branchRendered = true
 								break
 							}
 						} else if branch.BranchType == "else" && !branchRendered {
 							// Render else branch
-							branchBody := body.Elements[branch.Index+1 : endIdx]
+							branchBody := elements[branch.Index+1 : endIdx]
 							branchElements, err := renderElementsWithContext(branchBody, data, ctx)
 							if err != nil {
 								return nil, err
 							}
 
-							// If there were runs before the {{if}}, prepend them to the first element
-							if len(prefixRuns) > 0 && len(branchElements) > 0 {
-								if firstPara, ok := branchElements[0].(*Paragraph); ok {
-									// Create a new paragraph with the prefix runs
-									newPara := &Paragraph{
-										Properties: firstPara.Properties,
-									}
-
-									// Add all prefix runs (including any line breaks)
-									newPara.Runs = append(newPara.Runs, prefixRuns...)
-
-									// Add all runs from the first paragraph
-									newPara.Runs = append(newPara.Runs, firstPara.Runs...)
-
-									// Replace the first element
-									branchElements[0] = newPara
-								} else if len(prefixRuns) > 0 {
-									// If the first element is not a paragraph, create a new paragraph with the prefix
-									prefixPara := &Paragraph{
-										Properties: para.Properties,
-										Runs:       prefixRuns,
-									}
-									// Insert the prefix paragraph at the beginning
-									branchElements = append([]BodyElement{prefixPara}, branchElements...)
-								}
-							}
-
-							rendered.Elements = append(rendered.Elements, branchElements...)
+							rendered.Elements = append(rendered.Elements, prependPrefixRuns(&para, prefixRuns, branchElements)...)
+							branchRendered = true
 							break
 						}
+					}
+
+					if !branchRendered && len(prefixRuns) > 0 {
+						rendered.Elements = append(rendered.Elements, prependPrefixRuns(&para, prefixRuns, nil)...)
 					}
 				}
 
 				// Skip to after the end marker
-				if endIdx >= 0 && endIdx < len(body.Elements) {
+				if endIdx >= 0 && endIdx < len(elements) {
 					i = endIdx + 1
 				} else {
 					// This should not happen if findIfStructureInElements worked correctly
@@ -757,8 +932,10 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				}
 
 			case "unless":
+				prefixRuns := extractPrefixRunsBeforeControlMarker(para.Runs, "{{unless ")
+
 				// Handle unless statement (similar to if but inverted)
-				endIdx, elseBranches, err := render.FindIfStructureInElements(body.Elements, i)
+				endIdx, elseBranches, err := render.FindIfStructureInElements(elements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{unless}} at element %d", i)
 				}
@@ -785,24 +962,26 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 						branchEnd = endIdx
 					}
 
-					branchBody := body.Elements[i+1 : branchEnd]
+					branchBody := elements[i+1 : branchEnd]
 					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
 					if err != nil {
 						return nil, err
 					}
-					rendered.Elements = append(rendered.Elements, branchElements...)
+					rendered.Elements = append(rendered.Elements, prependPrefixRuns(&para, prefixRuns, branchElements)...)
 				} else if len(elseBranches) > 0 && elseBranches[0].BranchType == "else" {
 					// Render else branch
-					branchBody := body.Elements[elseBranches[0].Index+1 : endIdx]
+					branchBody := elements[elseBranches[0].Index+1 : endIdx]
 					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
 					if err != nil {
 						return nil, err
 					}
-					rendered.Elements = append(rendered.Elements, branchElements...)
+					rendered.Elements = append(rendered.Elements, prependPrefixRuns(&para, prefixRuns, branchElements)...)
+				} else if len(prefixRuns) > 0 {
+					rendered.Elements = append(rendered.Elements, prependPrefixRuns(&para, prefixRuns, nil)...)
 				}
 
 				// Skip to after the end marker
-				if endIdx >= 0 && endIdx < len(body.Elements) {
+				if endIdx >= 0 && endIdx < len(elements) {
 					i = endIdx + 1
 				} else {
 					// This should not happen if findIfStructureInElements worked correctly
@@ -1172,7 +1351,8 @@ func renderInlineForLoop(para *Paragraph, loopText string, data TemplateData, _ 
 
 	// Create new paragraph with processed text
 	resultPara := &Paragraph{
-		Properties: para.Properties,
+		Properties:        para.Properties,
+		SourceParagraphID: para.SourceParagraphID,
 	}
 
 	// Create a new run with the processed text
