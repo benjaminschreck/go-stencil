@@ -314,6 +314,15 @@ func updateDocumentRelationshipIDs(doc *Document, idMap map[string]string) {
 	updateBodyRelationshipIDs(doc.Body, idMap)
 }
 
+// updateDocumentNumberingIDs updates all numbering IDs in a document.
+func updateDocumentNumberingIDs(doc *Document, numIDMap map[string]string) {
+	if doc == nil || doc.Body == nil {
+		return
+	}
+
+	updateBodyNumberingIDs(doc.Body, numIDMap)
+}
+
 // updateBodyRelationshipIDs updates relationship IDs in a body
 func updateBodyRelationshipIDs(body *Body, idMap map[string]string) {
 	if body == nil {
@@ -326,6 +335,21 @@ func updateBodyRelationshipIDs(body *Body, idMap map[string]string) {
 			updateParagraphRelationshipIDs(e, idMap)
 		case *Table:
 			updateTableRelationshipIDs(e, idMap)
+		}
+	}
+}
+
+func updateBodyNumberingIDs(body *Body, numIDMap map[string]string) {
+	if body == nil {
+		return
+	}
+
+	for _, elem := range body.Elements {
+		switch e := elem.(type) {
+		case *Paragraph:
+			updateParagraphNumberingIDs(e, numIDMap)
+		case *Table:
+			updateTableNumberingIDs(e, numIDMap)
 		}
 	}
 }
@@ -354,6 +378,16 @@ func updateParagraphRelationshipIDs(para *Paragraph, idMap map[string]string) {
 	// Update in legacy Hyperlinks
 	for i := range para.Hyperlinks {
 		updateHyperlinkRelationshipIDs(&para.Hyperlinks[i], idMap)
+	}
+}
+
+func updateParagraphNumberingIDs(para *Paragraph, numIDMap map[string]string) {
+	if para == nil || para.Properties == nil {
+		return
+	}
+
+	for i := range para.Properties.RawXML {
+		updateRawXMLNumberingIDs(&para.Properties.RawXML[i], numIDMap)
 	}
 }
 
@@ -407,6 +441,26 @@ func updateRawXMLRelationshipIDs(raw *RawXMLElement, idMap map[string]string) {
 	raw.Content = []byte(content)
 }
 
+func updateRawXMLNumberingIDs(raw *RawXMLElement, numIDMap map[string]string) {
+	if raw == nil || len(raw.Content) == 0 {
+		return
+	}
+
+	content := string(raw.Content)
+	wordNS := "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+	for oldID, newID := range numIDMap {
+		content = strings.ReplaceAll(content,
+			fmt.Sprintf(`w:numId w:val="%s"`, oldID),
+			fmt.Sprintf(`w:numId w:val="%s"`, newID))
+		content = strings.ReplaceAll(content,
+			fmt.Sprintf(`%s:numId %s:val="%s"`, wordNS, wordNS, oldID),
+			fmt.Sprintf(`%s:numId %s:val="%s"`, wordNS, wordNS, newID))
+	}
+
+	raw.Content = []byte(content)
+}
+
 // updateHyperlinkRelationshipIDs updates relationship IDs in a hyperlink
 func updateHyperlinkRelationshipIDs(link *Hyperlink, idMap map[string]string) {
 	if link == nil {
@@ -435,6 +489,16 @@ func updateTableRelationshipIDs(table *Table, idMap map[string]string) {
 	}
 }
 
+func updateTableNumberingIDs(table *Table, numIDMap map[string]string) {
+	if table == nil {
+		return
+	}
+
+	for i := range table.Rows {
+		updateTableRowNumberingIDs(&table.Rows[i], numIDMap)
+	}
+}
+
 // updateTableRowRelationshipIDs updates relationship IDs in a table row
 func updateTableRowRelationshipIDs(row *TableRow, idMap map[string]string) {
 	if row == nil {
@@ -443,6 +507,16 @@ func updateTableRowRelationshipIDs(row *TableRow, idMap map[string]string) {
 
 	for i := range row.Cells {
 		updateTableCellRelationshipIDs(&row.Cells[i], idMap)
+	}
+}
+
+func updateTableRowNumberingIDs(row *TableRow, numIDMap map[string]string) {
+	if row == nil {
+		return
+	}
+
+	for i := range row.Cells {
+		updateTableCellNumberingIDs(&row.Cells[i], numIDMap)
 	}
 }
 
@@ -455,6 +529,16 @@ func updateTableCellRelationshipIDs(cell *TableCell, idMap map[string]string) {
 	// Update paragraphs in cell
 	for i := range cell.Paragraphs {
 		updateParagraphRelationshipIDs(&cell.Paragraphs[i], idMap)
+	}
+}
+
+func updateTableCellNumberingIDs(cell *TableCell, numIDMap map[string]string) {
+	if cell == nil {
+		return
+	}
+
+	for i := range cell.Paragraphs {
+		updateParagraphNumberingIDs(&cell.Paragraphs[i], numIDMap)
 	}
 }
 

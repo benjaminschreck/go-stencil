@@ -120,8 +120,9 @@ func (t *TestTemplate) AddFragmentFromBytes(name string, docxBytes []byte) error
 		return fmt.Errorf("failed to parse fragment document: %w", err)
 	}
 
-	// Extract styles.xml from fragment if it exists
+	// Extract styles.xml and numbering.xml from fragment if they exist
 	var stylesXML []byte
+	var numberingXML []byte
 	zipReader, err := zip.NewReader(bytes.NewReader(docxBytes), int64(len(docxBytes)))
 	if err == nil {
 		for _, file := range zipReader.File {
@@ -131,7 +132,12 @@ func (t *TestTemplate) AddFragmentFromBytes(name string, docxBytes []byte) error
 					stylesXML, _ = io.ReadAll(rc)
 					rc.Close()
 				}
-				break
+			} else if file.Name == "word/numbering.xml" {
+				rc, _ := file.Open()
+				if rc != nil {
+					numberingXML, _ = io.ReadAll(rc)
+					rc.Close()
+				}
 			}
 		}
 	}
@@ -141,6 +147,7 @@ func (t *TestTemplate) AddFragmentFromBytes(name string, docxBytes []byte) error
 		parsed:    doc,
 		isDocx:    true,
 		docxData:  docxBytes,
+		numberingXML: numberingXML,
 		stylesXML: stylesXML,
 	}
 

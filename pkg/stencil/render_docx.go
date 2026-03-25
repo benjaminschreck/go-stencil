@@ -962,6 +962,17 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 						updateDocumentRelationshipIDs(tempDoc, idMap)
 					}
 
+					if frag.isDocx && ctx.numbering != nil && len(frag.numberingXML) > 0 {
+						numMap, err := ctx.numbering.ensureFragmentDefinitions(fragmentName, frag.numberingXML, frag.stylesXML)
+						if err != nil {
+							return nil, fmt.Errorf("failed to merge numbering for fragment %s: %w", fragmentName, err)
+						}
+						if len(numMap) > 0 {
+							tempDoc := &Document{Body: renderedBody}
+							updateDocumentNumberingIDs(tempDoc, numMap)
+						}
+					}
+
 					// Append the rendered (and ID-updated) fragment elements
 					rendered.Elements = append(rendered.Elements, renderedBody.Elements...)
 				}

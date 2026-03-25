@@ -1,0 +1,233 @@
+package stencil
+
+import (
+	"archive/zip"
+	"bytes"
+	"io"
+	"strings"
+	"testing"
+)
+
+func TestDOCXFragmentPreservesNumberingDefinitions(t *testing.T) {
+	templateDoc := createDOCXWithOptionalNumbering(t,
+		`<w:p><w:r><w:t>{{include "roman"}}</w:t></w:r></w:p>`,
+		decimalNumberingXML(),
+		true,
+	)
+	fragmentDoc := createDOCXWithOptionalNumbering(t,
+		`<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Roman item</w:t></w:r></w:p>`,
+		upperRomanNumberingXML(),
+		true,
+	)
+
+	tmpl, err := ParseBytes(templateDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("roman", fragmentDoc); err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(nil)
+	if err != nil {
+		t.Fatalf("failed to render template: %v", err)
+	}
+
+	documentXML := readDOCXPart(t, rendered, "word/document.xml")
+	numberingXML := readDOCXPart(t, rendered, "word/numbering.xml")
+
+	if !strings.Contains(numberingXML, `w:numFmt w:val="upperRoman"`) {
+		t.Fatalf("expected merged numbering.xml to contain upperRoman format, got:\n%s", numberingXML)
+	}
+	if strings.Contains(documentXML, `<w:numId w:val="1"/>`) {
+		t.Fatalf("expected fragment numbering to be remapped away from template numId=1, got:\n%s", documentXML)
+	}
+	if !strings.Contains(documentXML, `<w:numId w:val="2"></w:numId>`) && !strings.Contains(documentXML, `<w:numId w:val="2"/>`) {
+		t.Fatalf("expected rendered fragment paragraph to reference remapped numId=2, got:\n%s", documentXML)
+	}
+}
+
+func TestDOCXFragmentAddsNumberingPartWhenTemplateHasNone(t *testing.T) {
+	templateDoc := createDOCXWithOptionalNumbering(t,
+		`<w:p><w:r><w:t>{{include "roman"}}</w:t></w:r></w:p>`,
+		"",
+		false,
+	)
+	fragmentDoc := createDOCXWithOptionalNumbering(t,
+		`<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Roman item</w:t></w:r></w:p>`,
+		lowerRomanNumberingXML(),
+		true,
+	)
+
+	tmpl, err := ParseBytes(templateDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("roman", fragmentDoc); err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(nil)
+	if err != nil {
+		t.Fatalf("failed to render template: %v", err)
+	}
+
+	numberingXML := readDOCXPart(t, rendered, "word/numbering.xml")
+	relsXML := readDOCXPart(t, rendered, "word/_rels/document.xml.rels")
+	contentTypesXML := readDOCXPart(t, rendered, "[Content_Types].xml")
+
+	if !strings.Contains(numberingXML, `w:numFmt w:val="lowerRoman"`) {
+		t.Fatalf("expected generated numbering.xml to contain lowerRoman format, got:\n%s", numberingXML)
+	}
+	if !strings.Contains(relsXML, numberingRelationType) {
+		t.Fatalf("expected document relationships to include numbering relationship, got:\n%s", relsXML)
+	}
+	if !strings.Contains(contentTypesXML, numberingContentType) {
+		t.Fatalf("expected content types to include numbering override, got:\n%s", contentTypesXML)
+	}
+}
+
+func createDOCXWithOptionalNumbering(t *testing.T, bodyXML, numberingXML string, includeNumberingRelationship bool) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+
+	rels, err := w.Create("_rels/.rels")
+	if err != nil {
+		t.Fatalf("failed to create _rels/.rels: %v", err)
+	}
+	io.WriteString(rels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`)
+
+	wordRels, err := w.Create("word/_rels/document.xml.rels")
+	if err != nil {
+		t.Fatalf("failed to create word/_rels/document.xml.rels: %v", err)
+	}
+	io.WriteString(wordRels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`)
+	if includeNumberingRelationship && numberingXML != "" {
+		io.WriteString(wordRels, `
+  <Relationship Id="rId1" Type="`+numberingRelationType+`" Target="numbering.xml"/>`)
+	}
+	io.WriteString(wordRels, `
+</Relationships>`)
+
+	doc, err := w.Create("word/document.xml")
+	if err != nil {
+		t.Fatalf("failed to create word/document.xml: %v", err)
+	}
+	io.WriteString(doc, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>`+bodyXML+`
+  </w:body>
+</w:document>`)
+
+	if numberingXML != "" {
+		numberingPart, err := w.Create("word/numbering.xml")
+		if err != nil {
+			t.Fatalf("failed to create word/numbering.xml: %v", err)
+		}
+		io.WriteString(numberingPart, numberingXML)
+	}
+
+	contentTypes, err := w.Create("[Content_Types].xml")
+	if err != nil {
+		t.Fatalf("failed to create [Content_Types].xml: %v", err)
+	}
+	io.WriteString(contentTypes, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>`)
+	if numberingXML != "" {
+		io.WriteString(contentTypes, `
+  <Override PartName="/word/numbering.xml" ContentType="`+numberingContentType+`"/>`)
+	}
+	io.WriteString(contentTypes, `
+</Types>`)
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close zip writer: %v", err)
+	}
+
+	return buf.Bytes()
+}
+
+func readDOCXPart(t *testing.T, docxBytes []byte, partName string) string {
+	t.Helper()
+
+	r, err := zip.NewReader(bytes.NewReader(docxBytes), int64(len(docxBytes)))
+	if err != nil {
+		t.Fatalf("failed to read rendered DOCX: %v", err)
+	}
+
+	for _, file := range r.File {
+		if file.Name != partName {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			t.Fatalf("failed to open %s: %v", partName, err)
+		}
+		data, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", partName, err)
+		}
+		return string(data)
+	}
+
+	t.Fatalf("part %s not found in rendered DOCX", partName)
+	return ""
+}
+
+func decimalNumberingXML() string {
+	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="1">
+    <w:lvl w:ilvl="0">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="decimal"/>
+      <w:lvlText w:val="%1."/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="1">
+    <w:abstractNumId w:val="1"/>
+  </w:num>
+</w:numbering>`
+}
+
+func upperRomanNumberingXML() string {
+	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="1">
+    <w:lvl w:ilvl="0">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="upperRoman"/>
+      <w:lvlText w:val="%1."/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="1">
+    <w:abstractNumId w:val="1"/>
+  </w:num>
+</w:numbering>`
+}
+
+func lowerRomanNumberingXML() string {
+	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="1">
+    <w:lvl w:ilvl="0">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="lowerRoman"/>
+      <w:lvlText w:val="%1."/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="1">
+    <w:abstractNumId w:val="1"/>
+  </w:num>
+</w:numbering>`
+}

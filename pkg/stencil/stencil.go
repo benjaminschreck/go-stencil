@@ -38,6 +38,7 @@ type fragment struct {
 	docxData      []byte
 	mediaFiles    map[string][]byte // filename -> content
 	relationships []Relationship    // from word/_rels/document.xml.rels
+	numberingXML  []byte            // from word/numbering.xml
 	stylesXML     []byte            // from word/styles.xml
 	namespaces    map[string]string // prefix -> URI, extracted from fragment document
 }
@@ -56,6 +57,7 @@ type renderContext struct {
 	fragmentIDAllocations  map[string]int    // fragment name -> allocated range start
 	nextFragmentIDRange    int               // next available range start
 	fragmentResourcesAdded map[string]bool   // fragment name -> already added
+	numbering              *numberingContext
 
 	// Namespace collection
 	collectedNamespaces map[string]string // prefix -> URI, collected from all fragments
@@ -379,6 +381,11 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	}
 
 	// Create render context
+	numberingCtx, err := newNumberingContext(pt.template.docxReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize numbering context: %w", err)
+	}
+
 	renderCtx := &renderContext{
 		linkMarkers:            make(map[string]*LinkReplacementMarker),
 		fragments:              pt.template.fragments,
@@ -390,6 +397,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		fragmentIDAllocations:  make(map[string]int),
 		nextFragmentIDRange:    FragmentIDRangeStart,
 		fragmentResourcesAdded: make(map[string]bool),
+		numbering:              numberingCtx,
 		collectedNamespaces:    make(map[string]string),
 	}
 
@@ -434,6 +442,9 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	// Process link replacements and fragment relationships
 	var updatedRelationships []Relationship
 	needsRelationshipUpdate := len(renderCtx.linkMarkers) > 0 || len(renderCtx.fragmentRelationships) > 0
+	if renderCtx.numbering != nil && renderCtx.numbering.needsRelationship() {
+		needsRelationshipUpdate = true
+	}
 
 	if needsRelationshipUpdate {
 		// Get current relationships
@@ -457,6 +468,14 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		if len(renderCtx.fragmentRelationships) > 0 {
 			updatedRelationships = append(updatedRelationships, renderCtx.fragmentRelationships...)
 		}
+
+		if renderCtx.numbering != nil && renderCtx.numbering.needsRelationship() {
+			updatedRelationships = append(updatedRelationships, Relationship{
+				ID:     generateNewRelationshipID(updatedRelationships),
+				Type:   numberingRelationType,
+				Target: "numbering.xml",
+			})
+		}
 	}
 
 	// Create a new DOCX with the rendered content
@@ -473,6 +492,11 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	// Track if we need to update Content Types for fragment media
 	var contentTypes *ContentTypes
 	hasFragmentMedia := len(renderCtx.fragmentMedia) > 0
+	needsNumberingPartWrite := renderCtx.numbering != nil && renderCtx.numbering.modified
+	needsContentTypesUpdate := hasFragmentMedia
+	if renderCtx.numbering != nil && renderCtx.numbering.needsContentTypeOverride() {
+		needsContentTypesUpdate = true
+	}
 
 	for _, file := range zipReader.File {
 		// Special handling for document.xml
@@ -581,9 +605,15 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 
 			// Collect fragment styles
 			var fragmentStyles [][]byte
-			for _, frag := range pt.template.fragments {
+			for name, frag := range pt.template.fragments {
 				if frag.isDocx && len(frag.stylesXML) > 0 {
-					fragmentStyles = append(fragmentStyles, frag.stylesXML)
+					stylesXML := frag.stylesXML
+					if renderCtx.numbering != nil {
+						if remappedStyles, ok := renderCtx.numbering.fragmentStylesXML[name]; ok {
+							stylesXML = remappedStyles
+						}
+					}
+					fragmentStyles = append(fragmentStyles, stylesXML)
 				}
 			}
 
@@ -606,7 +636,16 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
-		} else if file.Name == "[Content_Types].xml" && hasFragmentMedia {
+		} else if file.Name == "word/numbering.xml" && needsNumberingPartWrite {
+			fw, err := w.Create(file.Name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create %s: %w", file.Name, err)
+			}
+			_, err = fw.Write(renderCtx.numbering.partXML())
+			if err != nil {
+				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
+			}
+		} else if file.Name == "[Content_Types].xml" && needsContentTypesUpdate {
 			// Parse Content Types to potentially update it
 			fr, err := file.Open()
 			if err != nil {
@@ -717,6 +756,17 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		}
 	}
 
+	if needsNumberingPartWrite && renderCtx.numbering != nil && !renderCtx.numbering.existsInTemplate {
+		fw, err := w.Create("word/numbering.xml")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create word/numbering.xml: %w", err)
+		}
+		_, err = fw.Write(renderCtx.numbering.partXML())
+		if err != nil {
+			return nil, fmt.Errorf("failed to write word/numbering.xml: %w", err)
+		}
+	}
+
 	// Write updated Content Types if we added fragment media
 	if contentTypes != nil {
 		// Collect all extensions from fragment media
@@ -759,6 +809,22 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 				contentTypes.Defaults = append(contentTypes.Defaults, ContentTypeDefault{
 					Extension:   ext,
 					ContentType: contentType,
+				})
+			}
+		}
+
+		if renderCtx.numbering != nil && renderCtx.numbering.needsContentTypeOverride() {
+			alreadyRegistered := false
+			for _, override := range contentTypes.Overrides {
+				if override.PartName == "/word/numbering.xml" {
+					alreadyRegistered = true
+					break
+				}
+			}
+			if !alreadyRegistered {
+				contentTypes.Overrides = append(contentTypes.Overrides, ContentTypeOverride{
+					PartName:    "/word/numbering.xml",
+					ContentType: numberingContentType,
 				})
 			}
 		}
@@ -935,9 +1001,10 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 		}
 	}
 
-	// Extract relationships and styles
+	// Extract relationships, styles, and numbering definitions
 	var relationships []Relationship
 	var stylesXML []byte
+	var numberingXML []byte
 	for _, file := range zipReader.File {
 		if file.Name == "word/_rels/document.xml.rels" {
 			rc, err := file.Open()
@@ -969,6 +1036,17 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 			if err != nil {
 				stylesXML = nil
 			}
+		} else if file.Name == "word/numbering.xml" {
+			rc, err := file.Open()
+			if err != nil {
+				continue // numbering.xml is optional
+			}
+
+			numberingXML, err = io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				numberingXML = nil
+			}
 		}
 	}
 
@@ -979,6 +1057,7 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 		docxData:      docxBytes,
 		mediaFiles:    mediaFiles,
 		relationships: relationships,
+		numberingXML:  numberingXML,
 		stylesXML:     stylesXML,
 		namespaces:    namespaces,
 	}
