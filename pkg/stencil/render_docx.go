@@ -962,23 +962,8 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 						updateDocumentRelationshipIDs(tempDoc, idMap)
 					}
 
-					fragmentStylesXML := frag.stylesXML
-					fragmentNumberingXML := frag.numberingXML
-					if frag.isDocx && ctx.styles != nil && len(frag.stylesXML) > 0 {
-						styleMap, remappedStylesXML, remappedNumberingXML, err := ctx.styles.ensureFragmentStyles(fragmentName, frag.stylesXML, frag.numberingXML)
-						if err != nil {
-							return nil, fmt.Errorf("failed to remap styles for fragment %s: %w", fragmentName, err)
-						}
-						fragmentStylesXML = remappedStylesXML
-						fragmentNumberingXML = remappedNumberingXML
-						if len(styleMap) > 0 {
-							tempDoc := &Document{Body: renderedBody}
-							updateDocumentStyleIDs(tempDoc, styleMap)
-						}
-					}
-
-					if frag.isDocx && ctx.numbering != nil && len(fragmentNumberingXML) > 0 {
-						numMap, err := ctx.numbering.ensureFragmentDefinitions(fragmentName, fragmentNumberingXML, fragmentStylesXML)
+					if frag.isDocx && ctx.numbering != nil && len(frag.numberingXML) > 0 {
+						numMap, err := ctx.numbering.ensureFragmentDefinitions(fragmentName, frag.numberingXML, frag.stylesXML)
 						if err != nil {
 							return nil, fmt.Errorf("failed to merge numbering for fragment %s: %w", fragmentName, err)
 						}

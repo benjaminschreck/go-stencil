@@ -58,7 +58,6 @@ type renderContext struct {
 	nextFragmentIDRange    int               // next available range start
 	fragmentResourcesAdded map[string]bool   // fragment name -> already added
 	numbering              *numberingContext
-	styles                 *styleContext
 
 	// Namespace collection
 	collectedNamespaces map[string]string // prefix -> URI, collected from all fragments
@@ -386,10 +385,6 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize numbering context: %w", err)
 	}
-	styleCtx, err := newStyleContext(pt.template.docxReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize style context: %w", err)
-	}
 
 	renderCtx := &renderContext{
 		linkMarkers:            make(map[string]*LinkReplacementMarker),
@@ -403,7 +398,6 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		nextFragmentIDRange:    FragmentIDRangeStart,
 		fragmentResourcesAdded: make(map[string]bool),
 		numbering:              numberingCtx,
-		styles:                 styleCtx,
 		collectedNamespaces:    make(map[string]string),
 	}
 
@@ -614,11 +608,6 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 			for name, frag := range pt.template.fragments {
 				if frag.isDocx && len(frag.stylesXML) > 0 {
 					stylesXML := frag.stylesXML
-					if renderCtx.styles != nil {
-						if remappedStyles, ok := renderCtx.styles.fragmentStylesXML[name]; ok {
-							stylesXML = remappedStyles
-						}
-					}
 					if renderCtx.numbering != nil {
 						if remappedStyles, ok := renderCtx.numbering.fragmentStylesXML[name]; ok {
 							stylesXML = remappedStyles
