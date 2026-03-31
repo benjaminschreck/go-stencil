@@ -234,7 +234,11 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 				}
 
 				fragmentElements, handled, err := expandDOCXFragmentParagraph(renderedPara, data, ctx, func(fragment *fragment) ([]BodyElement, error) {
-					return renderElementsWithContext(fragment.parsed.Body.Elements, data, ctx)
+					fragmentCtx, err := renderContextWithFragmentStyles(ctx, fragment)
+					if err != nil {
+						return nil, err
+					}
+					return renderElementsWithContext(fragment.parsed.Body.Elements, data, fragmentCtx)
 				})
 				if err != nil {
 					return nil, err
@@ -406,6 +410,21 @@ func expandDOCXFragmentParagraph(
 	}
 
 	return result, true, nil
+}
+
+func renderContextWithFragmentStyles(ctx *renderContext, frag *fragment) (*renderContext, error) {
+	if ctx == nil || ctx.styles == nil || frag == nil || len(frag.stylesXML) == 0 {
+		return ctx, nil
+	}
+
+	fragmentStyles, err := ctx.styles.withRenderingStyles(frag.stylesXML)
+	if err != nil {
+		return nil, err
+	}
+
+	child := *ctx
+	child.styles = fragmentStyles
+	return &child, nil
 }
 
 func newParagraphWithRunsLike(base *Paragraph, runs []Run) *Paragraph {
@@ -882,7 +901,11 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 						defer func() {
 							ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
 						}()
-						return RenderBodyWithControlStructures(frag.parsed.Body, data, ctx)
+						fragmentCtx, err := renderContextWithFragmentStyles(ctx, frag)
+						if err != nil {
+							return nil, err
+						}
+						return RenderBodyWithControlStructures(frag.parsed.Body, data, fragmentCtx)
 					}()
 					if err != nil {
 						return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
@@ -1005,7 +1028,11 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				}
 
 				fragmentElements, handled, err := expandDOCXFragmentParagraph(renderedPara, data, ctx, func(fragment *fragment) ([]BodyElement, error) {
-					fragmentBody, err := RenderBodyWithControlStructures(fragment.parsed.Body, data, ctx)
+					fragmentCtx, err := renderContextWithFragmentStyles(ctx, fragment)
+					if err != nil {
+						return nil, err
+					}
+					fragmentBody, err := RenderBodyWithControlStructures(fragment.parsed.Body, data, fragmentCtx)
 					if err != nil {
 						return nil, err
 					}
@@ -1108,7 +1135,7 @@ func extractPrefixRunsBeforeControlMarker(runs []Run, marker string) []Run {
 }
 
 // renderInlineForLoop handles loops that are entirely within one paragraph
-func renderInlineForLoop(para *Paragraph, loopText string, data TemplateData, _ *renderContext) ([]Paragraph, error) {
+func renderInlineForLoop(para *Paragraph, loopText string, data TemplateData, ctx *renderContext) ([]Paragraph, error) {
 	// Extract the for syntax and body
 	// Format: "{{for item in items}} content {{end}}"
 	forStart := strings.Index(loopText, "{{for ")
@@ -1210,7 +1237,7 @@ func renderInlineForLoop(para *Paragraph, loopText string, data TemplateData, _ 
 		resultPara.Runs = append(resultPara.Runs, *run)
 	}
 
-	return []Paragraph{*resultPara}, nil
+	return []Paragraph{*finalizeRenderedParagraph(resultPara, ctx)}, nil
 }
 
 // processTemplateText processes template variables and control structures in text

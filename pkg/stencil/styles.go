@@ -7,18 +7,21 @@ import (
 
 // Styles represents the w:styles element in styles.xml
 type Styles struct {
-	XMLName      xml.Name        `xml:"styles"`
-	Namespace    string          `xml:"xmlns:w,attr"`
-	Styles       []DocumentStyle `xml:"style"`
-	RawXML       []byte          `xml:",innerxml"` // Store the raw XML
+	XMLName   xml.Name        `xml:"styles"`
+	Namespace string          `xml:"xmlns:w,attr"`
+	Styles    []DocumentStyle `xml:"style"`
+	RawXML    []byte          `xml:",innerxml"` // Store the raw XML
 }
 
 // DocumentStyle represents a single w:style element (renamed to avoid conflict with table style)
 type DocumentStyle struct {
-	XMLName  xml.Name `xml:"style"`
-	Type     string   `xml:"type,attr"`
-	StyleID  string   `xml:"styleId,attr"`
-	RawXML   []byte   `xml:",innerxml"` // Store the entire style definition as raw XML
+	XMLName             xml.Name             `xml:"style"`
+	Type                string               `xml:"type,attr"`
+	StyleID             string               `xml:"styleId,attr"`
+	BasedOn             *Style               `xml:"basedOn"`
+	ParagraphProperties *ParagraphProperties `xml:"pPr"`
+	RunProperties       *RunProperties       `xml:"rPr"`
+	RawXML              []byte               `xml:",innerxml"` // Store the entire style definition as raw XML
 }
 
 // parseStyles parses a styles.xml file
