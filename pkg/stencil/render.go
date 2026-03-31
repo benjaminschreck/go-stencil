@@ -52,7 +52,7 @@ func RenderParagraph(para *Paragraph, data TemplateData) (*Paragraph, error) {
 func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderContext) (*Paragraph, error) {
 	fullText := buildParagraphRenderText(para)
 	if !strings.Contains(fullText, "{{") {
-		return finalizeRenderedParagraph(cloneParagraph(para), ctx), nil
+		return cloneParagraph(para), nil
 	}
 
 	// Proofing markers (w:proofErr) can split template tokens across runs.
@@ -132,7 +132,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 					return nil, err
 				}
 				if handled {
-					return finalizeRenderedParagraph(inlineRendered, ctx), nil
+					return inlineRendered, nil
 				}
 
 				// This should not be reached for simple variable substitution
@@ -189,7 +189,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 					}
 				}
 
-				return finalizeRenderedParagraph(rendered, ctx), nil
+				return rendered, nil
 			}
 		}
 	}
@@ -274,16 +274,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 		}
 	}
 
-	return finalizeRenderedParagraph(rendered, ctx), nil
-}
-
-func finalizeRenderedParagraph(para *Paragraph, ctx *renderContext) *Paragraph {
-	if para == nil || ctx == nil || ctx.styles == nil {
-		return para
-	}
-
-	ctx.styles.materializeInheritedFonts(para)
-	return para
+	return rendered, nil
 }
 
 func buildParagraphRenderText(para *Paragraph) string {
