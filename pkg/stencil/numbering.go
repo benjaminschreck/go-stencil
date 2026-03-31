@@ -2,6 +2,7 @@ package stencil
 
 import (
 	"fmt"
+	"hash/fnv"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,11 +17,15 @@ const (
 var (
 	numberingStartTagRegex      = regexp.MustCompile(`(?s)<w:numbering\b[^>]*>`)
 	numberingAttrRegex          = regexp.MustCompile(`\s+([A-Za-z_:][A-Za-z0-9_.:-]*)="([^"]*)"`)
+	numberingNumPicBlockRegex   = regexp.MustCompile(`(?s)<w:numPicBullet\b.*?</w:numPicBullet>`)
 	numberingAbstractBlockRegex = regexp.MustCompile(`(?s)<w:abstractNum\b.*?</w:abstractNum>`)
 	numberingNumBlockRegex      = regexp.MustCompile(`(?s)<w:num\b.*?</w:num>`)
+	numberingCleanupRegex       = regexp.MustCompile(`(?s)<w:numIdMacAtCleanup\b[^>]*/?>`)
 	numberingAbstractIDRegex    = regexp.MustCompile(`\bw:abstractNumId="(\d+)"`)
 	numberingNumIDRegex         = regexp.MustCompile(`<w:num\b[^>]*\bw:numId="(\d+)"`)
 	numberingNumRefRegex        = regexp.MustCompile(`<w:abstractNumId\b[^>]*\bw:val="(\d+)"\s*/?>`)
+	numberingNSIDRegex          = regexp.MustCompile(`<w:nsid\b[^>]*\bw:val="([0-9A-Fa-f]{8})"\s*/?>`)
+	numberingTmplRegex          = regexp.MustCompile(`<w:tmpl\b[^>]*\bw:val="([0-9A-Fa-f]{8})"\s*/?>`)
 	numberingCloseTag           = "</w:numbering>"
 )
 
@@ -33,6 +38,7 @@ type numberingContext struct {
 	nextNumID          int
 	fragmentNumMaps    map[string]map[string]string
 	fragmentStylesXML  map[string][]byte
+	usedSignatures     map[string]bool
 }
 
 func newNumberingContext(docxReader *DocxReader) (*numberingContext, error) {
@@ -42,6 +48,7 @@ func newNumberingContext(docxReader *DocxReader) (*numberingContext, error) {
 		nextNumID:         1,
 		fragmentNumMaps:   make(map[string]map[string]string),
 		fragmentStylesXML: make(map[string][]byte),
+		usedSignatures:    make(map[string]bool),
 	}
 
 	if docxReader == nil {
@@ -53,6 +60,7 @@ func newNumberingContext(docxReader *DocxReader) (*numberingContext, error) {
 		ctx.existsInTemplate = true
 		ctx.nextAbstractNumID = maxNumberingID(numberingXML, numberingAbstractIDRegex) + 1
 		ctx.nextNumID = maxNumberingID(numberingXML, regexp.MustCompile(`\bw:numId="(\d+)"`)) + 1
+		ctx.collectExistingSignatures(ctx.xml)
 	}
 
 	rels, err := docxReader.GetRelationships("word/document.xml")
@@ -88,7 +96,8 @@ func (ctx *numberingContext) ensureFragmentDefinitions(fragmentName string, numb
 	}
 
 	abstractMap := make(map[string]string)
-	appendedBlocks := make([]string, 0, len(abstractBlocks)+len(numBlocks))
+	remappedAbstractBlocks := make([]string, 0, len(abstractBlocks))
+	remappedNumBlocks := make([]string, 0, len(numBlocks))
 
 	for _, block := range abstractBlocks {
 		oldID, ok := extractNumberingMatch(block, numberingAbstractIDRegex)
@@ -98,7 +107,9 @@ func (ctx *numberingContext) ensureFragmentDefinitions(fragmentName string, numb
 		newID := strconv.Itoa(ctx.nextAbstractNumID)
 		ctx.nextAbstractNumID++
 		abstractMap[oldID] = newID
-		appendedBlocks = append(appendedBlocks, numberingAbstractIDRegex.ReplaceAllString(block, `w:abstractNumId="`+newID+`"`))
+		remappedBlock := numberingAbstractIDRegex.ReplaceAllString(block, `w:abstractNumId="`+newID+`"`)
+		remappedBlock = ctx.ensureUniqueAbstractSignature(fragmentName, newID, remappedBlock)
+		remappedAbstractBlocks = append(remappedAbstractBlocks, remappedBlock)
 	}
 
 	numMap := make(map[string]string)
@@ -117,11 +128,11 @@ func (ctx *numberingContext) ensureFragmentDefinitions(fragmentName string, numb
 			}
 		}
 
-		appendedBlocks = append(appendedBlocks, remapped)
+		remappedNumBlocks = append(remappedNumBlocks, remapped)
 		numMap[oldNumID] = newNumID
 	}
 
-	ctx.xml = insertNumberingBlocks(ctx.xml, appendedBlocks)
+	ctx.xml = insertNumberingDefinitions(ctx.xml, remappedAbstractBlocks, remappedNumBlocks)
 	ctx.modified = true
 	ctx.fragmentNumMaps[fragmentName] = numMap
 	if len(stylesXML) > 0 && len(numMap) > 0 {
@@ -140,7 +151,7 @@ func (ctx *numberingContext) needsContentTypeOverride() bool {
 }
 
 func (ctx *numberingContext) partXML() []byte {
-	return []byte(ctx.xml)
+	return []byte(normalizeNumberingXML(ctx.xml))
 }
 
 func defaultNumberingXML() string {
@@ -171,16 +182,43 @@ func extractNumberingMatch(content string, re *regexp.Regexp) (string, bool) {
 	return match[1], true
 }
 
-func insertNumberingBlocks(xmlContent string, blocks []string) string {
-	if len(blocks) == 0 {
+func insertNumberingDefinitions(xmlContent string, abstractBlocks, numBlocks []string) string {
+	if len(abstractBlocks) == 0 && len(numBlocks) == 0 {
 		return xmlContent
 	}
-	closingIdx := strings.LastIndex(xmlContent, numberingCloseTag)
-	if closingIdx == -1 {
+
+	withAbstracts := insertNumberingAbstractBlocks(xmlContent, abstractBlocks)
+	return insertNumberingNumBlocks(withAbstracts, numBlocks)
+}
+
+func insertNumberingAbstractBlocks(xmlContent string, blocks []string) string {
+	if len(blocks) == 0 {
 		return xmlContent
 	}
 
 	inserted := strings.Join(blocks, "\n")
+	firstNumIdx := strings.Index(xmlContent, "<w:num ")
+	if firstNumIdx != -1 {
+		return xmlContent[:firstNumIdx] + inserted + "\n" + xmlContent[firstNumIdx:]
+	}
+
+	closingIdx := strings.LastIndex(xmlContent, numberingCloseTag)
+	if closingIdx == -1 {
+		return xmlContent
+	}
+	return xmlContent[:closingIdx] + inserted + xmlContent[closingIdx:]
+}
+
+func insertNumberingNumBlocks(xmlContent string, blocks []string) string {
+	if len(blocks) == 0 {
+		return xmlContent
+	}
+
+	inserted := strings.Join(blocks, "\n")
+	closingIdx := strings.LastIndex(xmlContent, numberingCloseTag)
+	if closingIdx == -1 {
+		return xmlContent
+	}
 	return xmlContent[:closingIdx] + inserted + xmlContent[closingIdx:]
 }
 
@@ -218,4 +256,119 @@ func remapStylesNumberingIDs(stylesXML []byte, numMap map[string]string) []byte 
 		remapped = strings.ReplaceAll(remapped, `w:numId w:val="`+oldID+`"`, `w:numId w:val="`+newID+`"`)
 	}
 	return []byte(remapped)
+}
+
+func normalizeNumberingXML(xmlContent string) string {
+	startTag := numberingStartTagRegex.FindString(xmlContent)
+	if startTag == "" {
+		return xmlContent
+	}
+
+	startIdx := strings.Index(xmlContent, startTag)
+	if startIdx == -1 {
+		return xmlContent
+	}
+	innerStart := startIdx + len(startTag)
+	closingIdx := strings.LastIndex(xmlContent, numberingCloseTag)
+	if closingIdx == -1 || closingIdx < innerStart {
+		return xmlContent
+	}
+
+	inner := xmlContent[innerStart:closingIdx]
+	numPicBlocks := numberingNumPicBlockRegex.FindAllString(inner, -1)
+	abstractBlocks := numberingAbstractBlockRegex.FindAllString(inner, -1)
+	numBlocks := numberingNumBlockRegex.FindAllString(inner, -1)
+	cleanupBlocks := numberingCleanupRegex.FindAllString(inner, -1)
+
+	remaining := inner
+	for _, re := range []*regexp.Regexp{
+		numberingNumPicBlockRegex,
+		numberingAbstractBlockRegex,
+		numberingNumBlockRegex,
+		numberingCleanupRegex,
+	} {
+		remaining = re.ReplaceAllString(remaining, "")
+	}
+	remaining = strings.TrimSpace(remaining)
+
+	var ordered []string
+	ordered = append(ordered, numPicBlocks...)
+	ordered = append(ordered, abstractBlocks...)
+	ordered = append(ordered, numBlocks...)
+	ordered = append(ordered, cleanupBlocks...)
+	if remaining != "" {
+		ordered = append(ordered, remaining)
+	}
+
+	body := strings.Join(ordered, "\n")
+	if body != "" {
+		body = "\n" + body
+	}
+	return xmlContent[:innerStart] + body + xmlContent[closingIdx:]
+}
+
+func (ctx *numberingContext) collectExistingSignatures(xmlContent string) {
+	abstractBlocks := numberingAbstractBlockRegex.FindAllString(xmlContent, -1)
+	for _, block := range abstractBlocks {
+		nsid, okNSID := extractNumberingMatch(block, numberingNSIDRegex)
+		tmpl, okTmpl := extractNumberingMatch(block, numberingTmplRegex)
+		if !okNSID || !okTmpl {
+			continue
+		}
+		ctx.usedSignatures[numberingSignatureKey(nsid, tmpl)] = true
+	}
+}
+
+func (ctx *numberingContext) ensureUniqueAbstractSignature(fragmentName, abstractID, block string) string {
+	nsid, okNSID := extractNumberingMatch(block, numberingNSIDRegex)
+	tmpl, okTmpl := extractNumberingMatch(block, numberingTmplRegex)
+	if okNSID && okTmpl {
+		key := numberingSignatureKey(strings.ToUpper(nsid), strings.ToUpper(tmpl))
+		if !ctx.usedSignatures[key] {
+			ctx.usedSignatures[key] = true
+			return block
+		}
+	}
+
+	for salt := 0; ; salt++ {
+		newNSID := numberedHexSignature(fragmentName, abstractID, "nsid", salt)
+		newTmpl := numberedHexSignature(fragmentName, abstractID, "tmpl", salt)
+		key := numberingSignatureKey(newNSID, newTmpl)
+		if ctx.usedSignatures[key] {
+			continue
+		}
+		ctx.usedSignatures[key] = true
+		block = replaceOrInsertNumberingTag(block, "nsid", newNSID, numberingNSIDRegex)
+		block = replaceOrInsertNumberingTag(block, "tmpl", newTmpl, numberingTmplRegex)
+		return block
+	}
+}
+
+func numberingSignatureKey(nsid, tmpl string) string {
+	return nsid + ":" + tmpl
+}
+
+func numberedHexSignature(fragmentName, abstractID, kind string, salt int) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(fragmentName))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(abstractID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(kind))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strconv.Itoa(salt)))
+	return strings.ToUpper(fmt.Sprintf("%08X", h.Sum32()))
+}
+
+func replaceOrInsertNumberingTag(block, tag, value string, re *regexp.Regexp) string {
+	replacement := `<w:` + tag + ` w:val="` + value + `"/>`
+	if re.MatchString(block) {
+		return re.ReplaceAllString(block, replacement)
+	}
+	insertAfter := strings.Index(block, ">")
+	if insertAfter == -1 {
+		return block
+	}
+	insertAfter++
+	return block[:insertAfter] + replacement + block[insertAfter:]
 }

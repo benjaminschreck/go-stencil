@@ -323,6 +323,14 @@ func updateDocumentNumberingIDs(doc *Document, numIDMap map[string]string) {
 	updateBodyNumberingIDs(doc.Body, numIDMap)
 }
 
+func updateDocumentStyleIDs(doc *Document, styleMap map[string]string) {
+	if doc == nil || doc.Body == nil {
+		return
+	}
+
+	updateBodyStyleIDs(doc.Body, styleMap)
+}
+
 // updateBodyRelationshipIDs updates relationship IDs in a body
 func updateBodyRelationshipIDs(body *Body, idMap map[string]string) {
 	if body == nil {
@@ -350,6 +358,21 @@ func updateBodyNumberingIDs(body *Body, numIDMap map[string]string) {
 			updateParagraphNumberingIDs(e, numIDMap)
 		case *Table:
 			updateTableNumberingIDs(e, numIDMap)
+		}
+	}
+}
+
+func updateBodyStyleIDs(body *Body, styleMap map[string]string) {
+	if body == nil {
+		return
+	}
+
+	for _, elem := range body.Elements {
+		switch e := elem.(type) {
+		case *Paragraph:
+			updateParagraphStyleIDs(e, styleMap)
+		case *Table:
+			updateTableStyleIDs(e, styleMap)
 		}
 	}
 }
@@ -391,6 +414,35 @@ func updateParagraphNumberingIDs(para *Paragraph, numIDMap map[string]string) {
 	}
 }
 
+func updateParagraphStyleIDs(para *Paragraph, styleMap map[string]string) {
+	if para == nil {
+		return
+	}
+
+	if para.Properties != nil && para.Properties.Style != nil {
+		if newID, ok := styleMap[para.Properties.Style.Val]; ok {
+			para.Properties.Style.Val = newID
+		}
+	}
+
+	for _, item := range para.Content {
+		switch c := item.(type) {
+		case *Run:
+			updateRunStyleIDs(c, styleMap)
+		case *Hyperlink:
+			updateHyperlinkStyleIDs(c, styleMap)
+		}
+	}
+
+	for i := range para.Runs {
+		updateRunStyleIDs(&para.Runs[i], styleMap)
+	}
+
+	for i := range para.Hyperlinks {
+		updateHyperlinkStyleIDs(&para.Hyperlinks[i], styleMap)
+	}
+}
+
 // updateRunRelationshipIDs updates relationship IDs in a run
 func updateRunRelationshipIDs(run *Run, idMap map[string]string) {
 	if run == nil {
@@ -400,6 +452,16 @@ func updateRunRelationshipIDs(run *Run, idMap map[string]string) {
 	// Update RawXML elements (contains images!)
 	for i := range run.RawXML {
 		updateRawXMLRelationshipIDs(&run.RawXML[i], idMap)
+	}
+}
+
+func updateRunStyleIDs(run *Run, styleMap map[string]string) {
+	if run == nil || run.Properties == nil || run.Properties.Style == nil {
+		return
+	}
+
+	if newID, ok := styleMap[run.Properties.Style.Val]; ok {
+		run.Properties.Style.Val = newID
 	}
 }
 
@@ -478,6 +540,16 @@ func updateHyperlinkRelationshipIDs(link *Hyperlink, idMap map[string]string) {
 	}
 }
 
+func updateHyperlinkStyleIDs(link *Hyperlink, styleMap map[string]string) {
+	if link == nil {
+		return
+	}
+
+	for i := range link.Runs {
+		updateRunStyleIDs(&link.Runs[i], styleMap)
+	}
+}
+
 // updateTableRelationshipIDs updates relationship IDs in a table
 func updateTableRelationshipIDs(table *Table, idMap map[string]string) {
 	if table == nil {
@@ -496,6 +568,22 @@ func updateTableNumberingIDs(table *Table, numIDMap map[string]string) {
 
 	for i := range table.Rows {
 		updateTableRowNumberingIDs(&table.Rows[i], numIDMap)
+	}
+}
+
+func updateTableStyleIDs(table *Table, styleMap map[string]string) {
+	if table == nil {
+		return
+	}
+
+	if table.Properties != nil && table.Properties.Style != nil {
+		if newID, ok := styleMap[table.Properties.Style.Val]; ok {
+			table.Properties.Style.Val = newID
+		}
+	}
+
+	for i := range table.Rows {
+		updateTableRowStyleIDs(&table.Rows[i], styleMap)
 	}
 }
 
@@ -520,6 +608,16 @@ func updateTableRowNumberingIDs(row *TableRow, numIDMap map[string]string) {
 	}
 }
 
+func updateTableRowStyleIDs(row *TableRow, styleMap map[string]string) {
+	if row == nil {
+		return
+	}
+
+	for i := range row.Cells {
+		updateTableCellStyleIDs(&row.Cells[i], styleMap)
+	}
+}
+
 // updateTableCellRelationshipIDs updates relationship IDs in a table cell
 func updateTableCellRelationshipIDs(cell *TableCell, idMap map[string]string) {
 	if cell == nil {
@@ -539,6 +637,16 @@ func updateTableCellNumberingIDs(cell *TableCell, numIDMap map[string]string) {
 
 	for i := range cell.Paragraphs {
 		updateParagraphNumberingIDs(&cell.Paragraphs[i], numIDMap)
+	}
+}
+
+func updateTableCellStyleIDs(cell *TableCell, styleMap map[string]string) {
+	if cell == nil {
+		return
+	}
+
+	for i := range cell.Paragraphs {
+		updateParagraphStyleIDs(&cell.Paragraphs[i], styleMap)
 	}
 }
 
