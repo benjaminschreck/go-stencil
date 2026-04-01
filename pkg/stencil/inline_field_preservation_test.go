@@ -1,22 +1,30 @@
 package stencil
 
 import (
-	"bytes"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestRenderDocumentWithContext_PreservesFieldRunsInInlineIfParagraph(t *testing.T) {
-	docxPath := filepath.Join("..", "..", "examples", "klage", "fragments", "vorlage.docx")
-
-	docXML := mustReadDocxPart(t, docxPath, "word/document.xml")
-	doc, err := ParseDocument(bytes.NewReader(docXML))
-	if err != nil {
-		t.Fatalf("ParseDocument failed: %v", err)
+	source := &Paragraph{
+		Runs: []Run{
+			textRun("Bestätigung der Aktivlegitimation der "),
+			textRun("{{if length(aktivseite) >= 2}}"),
+			textRun("Klägerparteien"),
+			textRun("{{else}}"),
+			textRun("Klagepartei"),
+			textRun("{{end}}"),
+			textRun(" durch die Finanzierungsbank "),
+			textRun("{{leasingFinanzierung.vornameName}}"),
+			textRun(" – Anlage K"),
+			rawRun(`<w:fldChar w:fldCharType="begin"/>`),
+			rawRun(`<w:instrText xml:space="preserve"> SEQ Anlage \* ARABIC </w:instrText>`),
+			rawRun(`<w:fldChar w:fldCharType="separate"/>`),
+			textRun("1"),
+			rawRun(`<w:fldChar w:fldCharType="end"/>`),
+		},
 	}
 
-	source := findFieldParagraphByText(t, doc, "Bestätigung der Aktivlegitimation der")
 	renderedDoc, err := RenderDocumentWithContext(&Document{
 		Body: &Body{
 			Elements: []BodyElement{cloneParagraph(source)},
@@ -62,27 +70,19 @@ func TestRenderDocumentWithContext_PreservesFieldRunsInInlineIfParagraph(t *test
 	}
 }
 
-func findFieldParagraphByText(t *testing.T, doc *Document, needle string) *Paragraph {
-	t.Helper()
-
-	if doc == nil || doc.Body == nil {
-		t.Fatal("document body is nil")
+func textRun(text string) Run {
+	return Run{
+		Text: &Text{
+			Content: text,
+			Space:   "preserve",
+		},
 	}
+}
 
-	for _, elem := range doc.Body.Elements {
-		para, ok := elem.(*Paragraph)
-		if !ok {
-			continue
-		}
-		if !strings.Contains(para.GetText(), needle) {
-			continue
-		}
-		if countRawRunElementMatches(para, "<w:fldChar") == 0 {
-			continue
-		}
-		return para
+func rawRun(raw string) Run {
+	return Run{
+		RawXML: []RawXMLElement{
+			{Content: []byte(raw)},
+		},
 	}
-
-	t.Fatalf("field paragraph containing %q not found", needle)
-	return nil
 }
