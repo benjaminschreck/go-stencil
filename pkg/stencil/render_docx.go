@@ -350,6 +350,7 @@ func expandDOCXFragmentParagraph(
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
 		}
+		applyFragmentFontOverrides(fragmentElements, fragmentName, ctx)
 
 		if len(fragmentElements) > 0 {
 			mergedIntoAttachedPara := currentParaAttached && currentPara != nil
@@ -887,6 +888,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					if err != nil {
 						return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
 					}
+					applyFragmentFontOverrides(renderedBody.Elements, fragmentName, ctx)
 
 					// Handle fragment resources (media files and relationships) AFTER rendering
 					if frag.isDocx && len(frag.relationships) > 0 {

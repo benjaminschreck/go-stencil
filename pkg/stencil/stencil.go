@@ -59,6 +59,7 @@ type renderContext struct {
 	nextFragmentIDRange    int               // next available range start
 	fragmentResourcesAdded map[string]bool   // fragment name -> already added
 	numbering              *numberingContext
+	fragmentFontOverrides  map[string]fragmentFontOverrides
 
 	// Namespace collection
 	collectedNamespaces map[string]string // prefix -> URI, collected from all fragments
@@ -476,6 +477,10 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize numbering context: %w", err)
 	}
+	var fragmentFontOverrides map[string]fragmentFontOverrides
+	if mainStylesXML, err := pt.template.docxReader.GetPart("word/styles.xml"); err == nil {
+		fragmentFontOverrides = buildFragmentFontOverrideMap(mainStylesXML, pt.template.fragments)
+	}
 
 	renderCtx := &renderContext{
 		linkMarkers:            make(map[string]*LinkReplacementMarker),
@@ -489,6 +494,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		nextFragmentIDRange:    FragmentIDRangeStart,
 		fragmentResourcesAdded: make(map[string]bool),
 		numbering:              numberingCtx,
+		fragmentFontOverrides:  fragmentFontOverrides,
 		collectedNamespaces:    make(map[string]string),
 	}
 
