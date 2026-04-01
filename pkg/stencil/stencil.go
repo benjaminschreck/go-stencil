@@ -14,9 +14,10 @@ import (
 
 const (
 	// ID ranges for relationship management
-	MainTemplateIDRange  = 999  // Main template uses rId1 - rId999
-	FragmentIDRangeSize  = 100  // Each fragment gets 100 IDs
-	FragmentIDRangeStart = 1000 // Fragments start at rId1000
+	MainTemplateIDRange     = 999  // Main template uses rId1 - rId999
+	FragmentIDRangeSize     = 100  // Each fragment gets 100 IDs
+	FragmentIDRangeStart    = 1000 // Fragments start at rId1000
+	numberedParagraphAnchor = "\u200B"
 )
 
 // template represents a parsed template document (internal use)
@@ -186,6 +187,104 @@ func cleanEmptyRuns(para *Paragraph) {
 	para.Runs = nonEmptyRuns
 }
 
+func hasDirectParagraphNumbering(para *Paragraph) bool {
+	if para == nil || para.Properties == nil {
+		return false
+	}
+
+	for _, raw := range para.Properties.RawXML {
+		if raw.XMLName.Local == "numPr" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func paragraphHasInlineContent(para *Paragraph) bool {
+	if para == nil {
+		return false
+	}
+
+	for _, run := range para.Runs {
+		if run.Text != nil && run.Text.Content != "" {
+			return true
+		}
+		if run.Break != nil || len(run.RawXML) > 0 {
+			return true
+		}
+	}
+
+	if len(para.Hyperlinks) > 0 {
+		return true
+	}
+
+	for _, item := range para.Content {
+		switch c := item.(type) {
+		case *Run:
+			if c.Text != nil && c.Text.Content != "" {
+				return true
+			}
+			if c.Break != nil || len(c.RawXML) > 0 {
+				return true
+			}
+		case *Hyperlink:
+			return true
+		}
+	}
+
+	return false
+}
+
+func ensureNumberedParagraphAnchor(para *Paragraph) {
+	if !hasDirectParagraphNumbering(para) || paragraphHasInlineContent(para) {
+		return
+	}
+
+	anchor := Run{
+		Text: &Text{Content: numberedParagraphAnchor},
+	}
+	if para.Properties != nil && para.Properties.RunProperties != nil {
+		anchor.Properties = para.Properties.RunProperties
+	}
+
+	para.Runs = append(para.Runs, anchor)
+	if para.Content != nil {
+		anchorCopy := anchor
+		para.Content = append(para.Content, &anchorCopy)
+	}
+}
+
+func normalizeRenderedParagraph(para *Paragraph) {
+	cleanEmptyRuns(para)
+	ensureNumberedParagraphAnchor(para)
+}
+
+func normalizeRenderedTable(table *Table) {
+	if table == nil {
+		return
+	}
+
+	for i := range table.Rows {
+		for j := range table.Rows[i].Cells {
+			for k := range table.Rows[i].Cells[j].Paragraphs {
+				normalizeRenderedParagraph(&table.Rows[i].Cells[j].Paragraphs[k])
+			}
+		}
+	}
+}
+
+func normalizeRenderedBodyElements(elements []BodyElement) {
+	for _, elem := range elements {
+		switch e := elem.(type) {
+		case *Paragraph:
+			normalizeRenderedParagraph(e)
+		case *Table:
+			normalizeRenderedTable(e)
+		}
+	}
+}
+
 // renderHeaderOrFooter processes a header or footer XML file with template rendering
 func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext) ([]byte, error) {
 	// Read the original header/footer XML
@@ -247,20 +346,12 @@ func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext)
 		}
 	}
 
-	// Clean empty runs from paragraphs to avoid Word corruption issues
+	// Normalize rendered paragraphs so empty Word list items still render reliably.
 	for _, p := range renderedParas {
-		cleanEmptyRuns(p)
+		normalizeRenderedParagraph(p)
 	}
-
-	// Also clean empty runs from table cells
 	for _, t := range renderedTables {
-		for i := range t.Rows {
-			for j := range t.Rows[i].Cells {
-				for k := range t.Rows[i].Cells[j].Paragraphs {
-					cleanEmptyRuns(&t.Rows[i].Cells[j].Paragraphs[k])
-				}
-			}
-		}
+		normalizeRenderedTable(t)
 	}
 
 	headerFooter.Paragraphs = renderedParas
@@ -413,6 +504,9 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	renderedDoc, err := RenderDocumentWithContext(pt.template.document, renderData, renderCtx)
 	if err != nil {
 		return nil, WithContext(err, "rendering document", map[string]interface{}{"hasData": data != nil})
+	}
+	if renderedDoc != nil && renderedDoc.Body != nil {
+		normalizeRenderedBodyElements(renderedDoc.Body.Elements)
 	}
 
 	// Process table row markers (hideRow() functions)

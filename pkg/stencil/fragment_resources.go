@@ -449,14 +449,12 @@ func updateRawXMLNumberingIDs(raw *RawXMLElement, numIDMap map[string]string) {
 	content := string(raw.Content)
 	wordNS := "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
-	for oldID, newID := range numIDMap {
-		content = strings.ReplaceAll(content,
-			fmt.Sprintf(`w:numId w:val="%s"`, oldID),
-			fmt.Sprintf(`w:numId w:val="%s"`, newID))
-		content = strings.ReplaceAll(content,
-			fmt.Sprintf(`%s:numId %s:val="%s"`, wordNS, wordNS, oldID),
-			fmt.Sprintf(`%s:numId %s:val="%s"`, wordNS, wordNS, newID))
-	}
+	content = replaceNumberingIDReferences(content, func(id string) string {
+		return fmt.Sprintf(`w:numId w:val="%s"`, id)
+	}, numIDMap)
+	content = replaceNumberingIDReferences(content, func(id string) string {
+		return fmt.Sprintf(`%s:numId %s:val="%s"`, wordNS, wordNS, id)
+	}, numIDMap)
 
 	raw.Content = []byte(content)
 }

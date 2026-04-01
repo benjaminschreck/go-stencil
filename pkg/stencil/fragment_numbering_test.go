@@ -87,6 +87,66 @@ func TestDOCXFragmentAddsNumberingPartWhenTemplateHasNone(t *testing.T) {
 	}
 }
 
+func TestDOCXFragmentPreservesBlankNumberedParagraphsForWord(t *testing.T) {
+	templateDoc := createDOCXWithOptionalNumbering(t,
+		`<w:p><w:r><w:t>{{include "antraege"}}</w:t></w:r></w:p>`,
+		"",
+		false,
+	)
+	fragmentDoc := createDOCXWithOptionalNumbering(t,
+		`<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr></w:p>`+
+			`<w:p><w:r><w:t>First entry</w:t></w:r></w:p>`+
+			`<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr></w:p>`+
+			`<w:p><w:r><w:t>Second entry</w:t></w:r></w:p>`,
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="1">
+    <w:lvl w:ilvl="0">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="upperRoman"/>
+      <w:lvlText w:val="%1."/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="2">
+    <w:lvl w:ilvl="0">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="•"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="1">
+    <w:abstractNumId w:val="1"/>
+  </w:num>
+  <w:num w:numId="2">
+    <w:abstractNumId w:val="2"/>
+  </w:num>
+</w:numbering>`,
+		true,
+	)
+
+	tmpl, err := ParseBytes(templateDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("antraege", fragmentDoc); err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(nil)
+	if err != nil {
+		t.Fatalf("failed to render template: %v", err)
+	}
+
+	documentXML := readDOCXPart(t, rendered, "word/document.xml")
+
+	if !strings.Contains(documentXML, numberedParagraphAnchor) {
+		t.Fatalf("expected rendered numbered paragraph to contain invisible anchor for Word, got:\n%s", documentXML)
+	}
+	if !strings.Contains(documentXML, "First entry") || !strings.Contains(documentXML, "Second entry") {
+		t.Fatalf("expected rendered document to keep fragment text paragraphs, got:\n%s", documentXML)
+	}
+}
+
 func createDOCXWithOptionalNumbering(t *testing.T, bodyXML, numberingXML string, includeNumberingRelationship bool) []byte {
 	t.Helper()
 

@@ -3,6 +3,7 @@ package stencil
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -214,8 +215,55 @@ func mergeNumberingRootAttributes(baseXML, fragmentXML string) string {
 
 func remapStylesNumberingIDs(stylesXML []byte, numMap map[string]string) []byte {
 	remapped := string(stylesXML)
-	for oldID, newID := range numMap {
-		remapped = strings.ReplaceAll(remapped, `w:numId w:val="`+oldID+`"`, `w:numId w:val="`+newID+`"`)
-	}
+	remapped = replaceNumberingIDReferences(remapped, func(id string) string {
+		return `w:numId w:val="` + id + `"`
+	}, numMap)
 	return []byte(remapped)
+}
+
+func replaceNumberingIDReferences(content string, pattern func(string) string, numIDMap map[string]string) string {
+	if len(numIDMap) == 0 || content == "" {
+		return content
+	}
+
+	type numberedReplacement struct {
+		oldID       string
+		newID       string
+		oldPattern  string
+		newPattern  string
+		placeholder string
+	}
+
+	keys := make([]string, 0, len(numIDMap))
+	for oldID := range numIDMap {
+		keys = append(keys, oldID)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if len(keys[i]) == len(keys[j]) {
+			return keys[i] < keys[j]
+		}
+		return len(keys[i]) > len(keys[j])
+	})
+
+	replacements := make([]numberedReplacement, 0, len(keys))
+	for idx, oldID := range keys {
+		newID := numIDMap[oldID]
+		replacements = append(replacements, numberedReplacement{
+			oldID:       oldID,
+			newID:       newID,
+			oldPattern:  pattern(oldID),
+			newPattern:  pattern(newID),
+			placeholder: fmt.Sprintf("__GO_STENCIL_NUM_%d__", idx),
+		})
+	}
+
+	remapped := content
+	for _, replacement := range replacements {
+		remapped = strings.ReplaceAll(remapped, replacement.oldPattern, replacement.placeholder)
+	}
+	for _, replacement := range replacements {
+		remapped = strings.ReplaceAll(remapped, replacement.placeholder, replacement.newPattern)
+	}
+
+	return remapped
 }
