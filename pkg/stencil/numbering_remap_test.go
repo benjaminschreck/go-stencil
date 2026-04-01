@@ -39,3 +39,32 @@ func TestRemapStylesNumberingIDsDoesNotCascadeIntoNewIDs(t *testing.T) {
 		t.Fatalf("expected remapped styles XML not to cascade into numId=49, got %s", got)
 	}
 }
+
+func TestSanitizeAbstractNumberingMetadataRemovesWordIdentityFields(t *testing.T) {
+	block := `<w:abstractNum w:abstractNumId="7"><w:nsid w:val="3A120F1C"/><w:multiLevelType w:val="hybridMultilevel"/><w:tmpl w:val="9BA0E964"/><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum>`
+
+	got := sanitizeAbstractNumberingMetadata(block)
+
+	if strings.Contains(got, `<w:nsid`) {
+		t.Fatalf("expected sanitized abstract numbering block to remove w:nsid, got %s", got)
+	}
+	if strings.Contains(got, `<w:tmpl`) {
+		t.Fatalf("expected sanitized abstract numbering block to remove w:tmpl, got %s", got)
+	}
+	if !strings.Contains(got, `<w:multiLevelType`) || !strings.Contains(got, `<w:numFmt w:val="bullet"`) {
+		t.Fatalf("expected sanitized abstract numbering block to keep list definition, got %s", got)
+	}
+}
+
+func TestSanitizeNumberingInstanceMetadataRemovesDurableID(t *testing.T) {
+	block := `<w:num w:numId="12" w16cid:durableId="591595714"><w:abstractNumId w:val="7"/></w:num>`
+
+	got := sanitizeNumberingInstanceMetadata(block)
+
+	if strings.Contains(got, `w16cid:durableId=`) {
+		t.Fatalf("expected sanitized numbering instance block to remove durableId, got %s", got)
+	}
+	if !strings.Contains(got, `<w:abstractNumId w:val="7"/>`) {
+		t.Fatalf("expected sanitized numbering instance block to keep abstractNum reference, got %s", got)
+	}
+}

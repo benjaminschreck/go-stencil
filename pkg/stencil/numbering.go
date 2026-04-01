@@ -12,6 +12,10 @@ const (
 	numberingRelationType = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering"
 	numberingContentType  = "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"
 	numberingMainNS       = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+	// Keep remapped fragment numbering IDs in a high reserved range so nested
+	// fragments cannot accidentally collide with low fragment-local IDs from an
+	// outer fragment that are still waiting to be remapped.
+	fragmentNumberingIDFloor = 1024
 )
 
 var (
@@ -22,6 +26,9 @@ var (
 	numberingAbstractIDRegex    = regexp.MustCompile(`\bw:abstractNumId="(\d+)"`)
 	numberingNumIDRegex         = regexp.MustCompile(`<w:num\b[^>]*\bw:numId="(\d+)"`)
 	numberingNumRefRegex        = regexp.MustCompile(`<w:abstractNumId\b[^>]*\bw:val="(\d+)"\s*/?>`)
+	numberingNSIDRegex          = regexp.MustCompile(`(?s)<w:nsid\b[^>]*/>`)
+	numberingTemplateRegex      = regexp.MustCompile(`(?s)<w:tmpl\b[^>]*/>`)
+	numberingDurableIDRegex     = regexp.MustCompile(`\s+w16cid:durableId="[^"]*"`)
 	numberingCloseTag           = "</w:numbering>"
 )
 
@@ -54,6 +61,13 @@ func newNumberingContext(docxReader *DocxReader) (*numberingContext, error) {
 		ctx.existsInTemplate = true
 		ctx.nextAbstractNumID = maxNumberingID(numberingXML, numberingAbstractIDRegex) + 1
 		ctx.nextNumID = maxNumberingID(numberingXML, regexp.MustCompile(`\bw:numId="(\d+)"`)) + 1
+	}
+
+	if ctx.nextAbstractNumID < fragmentNumberingIDFloor {
+		ctx.nextAbstractNumID = fragmentNumberingIDFloor
+	}
+	if ctx.nextNumID < fragmentNumberingIDFloor {
+		ctx.nextNumID = fragmentNumberingIDFloor
 	}
 
 	rels, err := docxReader.GetRelationships("word/document.xml")
@@ -89,7 +103,8 @@ func (ctx *numberingContext) ensureFragmentDefinitions(fragmentName string, numb
 	}
 
 	abstractMap := make(map[string]string)
-	appendedBlocks := make([]string, 0, len(abstractBlocks)+len(numBlocks))
+	appendedAbstracts := make([]string, 0, len(abstractBlocks))
+	appendedNums := make([]string, 0, len(numBlocks))
 
 	for _, block := range abstractBlocks {
 		oldID, ok := extractNumberingMatch(block, numberingAbstractIDRegex)
@@ -99,7 +114,10 @@ func (ctx *numberingContext) ensureFragmentDefinitions(fragmentName string, numb
 		newID := strconv.Itoa(ctx.nextAbstractNumID)
 		ctx.nextAbstractNumID++
 		abstractMap[oldID] = newID
-		appendedBlocks = append(appendedBlocks, numberingAbstractIDRegex.ReplaceAllString(block, `w:abstractNumId="`+newID+`"`))
+
+		remapped := numberingAbstractIDRegex.ReplaceAllString(block, `w:abstractNumId="`+newID+`"`)
+		remapped = sanitizeAbstractNumberingMetadata(remapped)
+		appendedAbstracts = append(appendedAbstracts, remapped)
 	}
 
 	numMap := make(map[string]string)
@@ -112,17 +130,18 @@ func (ctx *numberingContext) ensureFragmentDefinitions(fragmentName string, numb
 		ctx.nextNumID++
 
 		remapped := numberingNumIDRegex.ReplaceAllString(block, `<w:num w:numId="`+newNumID+`"`)
+		remapped = sanitizeNumberingInstanceMetadata(remapped)
 		if oldAbstractID, ok := extractNumberingMatch(remapped, numberingNumRefRegex); ok {
 			if newAbstractID, exists := abstractMap[oldAbstractID]; exists {
 				remapped = numberingNumRefRegex.ReplaceAllString(remapped, `<w:abstractNumId w:val="`+newAbstractID+`"/>`)
 			}
 		}
 
-		appendedBlocks = append(appendedBlocks, remapped)
+		appendedNums = append(appendedNums, remapped)
 		numMap[oldNumID] = newNumID
 	}
 
-	ctx.xml = insertNumberingBlocks(ctx.xml, appendedBlocks)
+	ctx.xml = insertNumberingBlocks(ctx.xml, appendedAbstracts, appendedNums)
 	ctx.modified = true
 	ctx.fragmentNumMaps[fragmentName] = numMap
 	if len(stylesXML) > 0 && len(numMap) > 0 {
@@ -172,17 +191,76 @@ func extractNumberingMatch(content string, re *regexp.Regexp) (string, bool) {
 	return match[1], true
 }
 
-func insertNumberingBlocks(xmlContent string, blocks []string) string {
-	if len(blocks) == 0 {
+func insertNumberingBlocks(xmlContent string, abstractBlocks, numBlocks []string) string {
+	if len(abstractBlocks) == 0 && len(numBlocks) == 0 {
 		return xmlContent
 	}
+
 	closingIdx := strings.LastIndex(xmlContent, numberingCloseTag)
 	if closingIdx == -1 {
 		return xmlContent
 	}
 
-	inserted := strings.Join(blocks, "\n")
-	return xmlContent[:closingIdx] + inserted + xmlContent[closingIdx:]
+	startTag := numberingStartTagRegex.FindString(xmlContent)
+	if startTag == "" {
+		return xmlContent
+	}
+	startIdx := strings.Index(xmlContent, startTag)
+	if startIdx == -1 {
+		return xmlContent
+	}
+
+	innerStart := startIdx + len(startTag)
+	if innerStart > closingIdx {
+		return xmlContent
+	}
+
+	inner := xmlContent[innerStart:closingIdx]
+	existingAbstracts := numberingAbstractBlockRegex.FindAllString(inner, -1)
+	existingNums := numberingNumBlockRegex.FindAllString(inner, -1)
+
+	firstBlockStart := len(inner)
+	lastBlockEnd := 0
+	for _, loc := range numberingAbstractBlockRegex.FindAllStringIndex(inner, -1) {
+		if loc[0] < firstBlockStart {
+			firstBlockStart = loc[0]
+		}
+		if loc[1] > lastBlockEnd {
+			lastBlockEnd = loc[1]
+		}
+	}
+	for _, loc := range numberingNumBlockRegex.FindAllStringIndex(inner, -1) {
+		if loc[0] < firstBlockStart {
+			firstBlockStart = loc[0]
+		}
+		if loc[1] > lastBlockEnd {
+			lastBlockEnd = loc[1]
+		}
+	}
+
+	leading := inner
+	trailing := ""
+	if firstBlockStart != len(inner) {
+		leading = inner[:firstBlockStart]
+		trailing = inner[lastBlockEnd:]
+	}
+
+	ordered := make([]string, 0, len(existingAbstracts)+len(abstractBlocks)+len(existingNums)+len(numBlocks))
+	ordered = append(ordered, existingAbstracts...)
+	ordered = append(ordered, abstractBlocks...)
+	ordered = append(ordered, existingNums...)
+	ordered = append(ordered, numBlocks...)
+
+	var rebuilt strings.Builder
+	rebuilt.Grow(len(xmlContent) + 128*len(ordered))
+	rebuilt.WriteString(xmlContent[:innerStart])
+	rebuilt.WriteString(leading)
+	if len(ordered) > 0 {
+		rebuilt.WriteString(strings.Join(ordered, "\n"))
+	}
+	rebuilt.WriteString(trailing)
+	rebuilt.WriteString(xmlContent[closingIdx:])
+	return rebuilt.String()
 }
 
 func mergeNumberingRootAttributes(baseXML, fragmentXML string) string {
@@ -266,4 +344,14 @@ func replaceNumberingIDReferences(content string, pattern func(string) string, n
 	}
 
 	return remapped
+}
+
+func sanitizeAbstractNumberingMetadata(block string) string {
+	block = numberingNSIDRegex.ReplaceAllString(block, "")
+	block = numberingTemplateRegex.ReplaceAllString(block, "")
+	return block
+}
+
+func sanitizeNumberingInstanceMetadata(block string) string {
+	return numberingDurableIDRegex.ReplaceAllString(block, "")
 }
