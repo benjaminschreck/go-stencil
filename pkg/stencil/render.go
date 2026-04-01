@@ -391,11 +391,17 @@ func splitRunsAroundTemplateMarkers(runs []Run) ([]Run, bool) {
 	split := make([]Run, 0, len(runs))
 
 	for _, run := range runs {
-		if len(run.RawXML) > 0 {
-			return nil, false
-		}
 		if run.Break != nil && run.Text != nil {
 			return nil, false
+		}
+		if len(run.RawXML) > 0 {
+			// Preserve field-code and other raw OOXML runs as-is as long as we do not
+			// need to split template text inside the same run.
+			if run.Text != nil && strings.Contains(run.Text.Content, "{{") {
+				return nil, false
+			}
+			split = append(split, run)
+			continue
 		}
 		if run.Text == nil || !strings.Contains(run.Text.Content, "{{") {
 			split = append(split, run)
