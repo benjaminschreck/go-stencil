@@ -3,6 +3,7 @@ package render
 import (
 	stdxml "encoding/xml"
 	"reflect"
+	"strings"
 
 	"github.com/benjaminschreck/go-stencil/pkg/stencil/xml"
 )
@@ -307,11 +308,12 @@ func mergeTemplateExpressionRuns(runs []xml.Run) []xml.Run {
 			continue
 		}
 
+		formatRun := selectTemplateExpressionFormatRun(runs[i : j+1])
 		combinedRun := xml.Run{
-			Properties: run.Properties, // Use formatting from the first run
-			Attrs:      run.Attrs,
+			Properties: formatRun.Properties,
+			Attrs:      formatRun.Attrs,
 			Text: &xml.Text{
-				XMLName: run.Text.XMLName,
+				XMLName: formatRun.Text.XMLName,
 				Space:   "preserve", // Preserve spaces in merged content
 				Content: mergedText,
 			},
@@ -325,6 +327,30 @@ func mergeTemplateExpressionRuns(runs []xml.Run) []xml.Run {
 	}
 
 	return result
+}
+
+func selectTemplateExpressionFormatRun(runs []xml.Run) xml.Run {
+	if len(runs) == 0 {
+		return xml.Run{}
+	}
+
+	for _, run := range runs {
+		if run.Text == nil {
+			continue
+		}
+		if isTemplateExpressionFormattingCarrier(run.Text.Content) {
+			return run
+		}
+	}
+
+	return runs[0]
+}
+
+func isTemplateExpressionFormattingCarrier(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	trimmed = strings.Trim(trimmed, "{}")
+	trimmed = strings.TrimSpace(trimmed)
+	return trimmed != ""
 }
 
 // hasUnclosedTemplateMarker checks if a string contains a {{ that doesn't have

@@ -61,6 +61,43 @@ func TestMergeConsecutiveRunsWithContent_PreservesProofErr(t *testing.T) {
 	}
 }
 
+func TestMergeConsecutiveRuns_PrefersFieldNameFormattingOverOpeningBraces(t *testing.T) {
+	para := &Paragraph{
+		Runs: []Run{
+			{
+				Properties: &RunProperties{Bold: &Empty{}},
+				Text:       &Text{Content: "{{"},
+			},
+			{
+				Properties: &RunProperties{BoldCs: &Empty{}},
+				Text:       &Text{Content: "aktivpartei.strasse"},
+			},
+			{
+				Properties: &RunProperties{BoldCs: &Empty{}},
+				Text:       &Text{Content: "}}"},
+			},
+		},
+	}
+
+	render.MergeConsecutiveRuns(para)
+
+	if len(para.Runs) != 1 {
+		t.Fatalf("expected 1 merged run, got %d", len(para.Runs))
+	}
+	if got := para.Runs[0].Text.Content; got != "{{aktivpartei.strasse}}" {
+		t.Fatalf("unexpected merged text %q", got)
+	}
+	if para.Runs[0].Properties == nil {
+		t.Fatal("expected merged run properties")
+	}
+	if para.Runs[0].Properties.Bold != nil {
+		t.Fatalf("expected merged run to drop opening-brace bold, got %+v", para.Runs[0].Properties)
+	}
+	if para.Runs[0].Properties.BoldCs == nil {
+		t.Fatalf("expected merged run to preserve field-name formatting, got %+v", para.Runs[0].Properties)
+	}
+}
+
 func TestCloneParagraph_PreservesAndCopiesAttrs(t *testing.T) {
 	original := &Paragraph{
 		Attrs: []xml.Attr{

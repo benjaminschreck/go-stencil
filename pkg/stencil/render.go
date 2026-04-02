@@ -477,6 +477,14 @@ func renderInlineControlRuns(runs []Run, startIdx int, data TemplateData, ctx *r
 				result = append(result, rendered...)
 				i = nextIdx
 				continue
+			case "for":
+				rendered, nextIdx, err := renderInlineForRuns(runs, i, tagValue, data, ctx)
+				if err != nil {
+					return nil, i, err
+				}
+				result = append(result, rendered...)
+				i = nextIdx
+				continue
 			case "include":
 				rendered, err := renderInlineIncludeRun(runs[i], tagValue, data, ctx)
 				if err != nil {
@@ -507,6 +515,52 @@ func renderInlineControlRuns(runs []Run, startIdx int, data TemplateData, ctx *r
 	}
 
 	return result, i, nil
+}
+
+func renderInlineForRuns(runs []Run, startIdx int, loopExpr string, data TemplateData, ctx *renderContext) ([]Run, int, error) {
+	endIdx, err := findInlineBlockEndInRuns(runs, startIdx)
+	if err != nil {
+		return nil, startIdx, err
+	}
+
+	forNode, err := parseForSyntax(loopExpr)
+	if err != nil {
+		return nil, startIdx, fmt.Errorf("failed to parse inline for syntax: %w", err)
+	}
+
+	collectionValue, err := forNode.Collection.Evaluate(data)
+	if err != nil {
+		return nil, startIdx, fmt.Errorf("failed to evaluate inline collection: %w", err)
+	}
+
+	items, err := toSlice(collectionValue)
+	if err != nil {
+		return nil, startIdx, fmt.Errorf("failed to iterate over inline collection: %w", err)
+	}
+
+	bodyRuns := runs[startIdx+1 : endIdx]
+	rendered := make([]Run, 0, len(bodyRuns)*len(items))
+	for idx, item := range items {
+		loopData := make(TemplateData, len(data)+2)
+		for k, v := range data {
+			loopData[k] = v
+		}
+		loopData[forNode.Variable] = item
+		if forNode.IndexVar != "" {
+			loopData[forNode.IndexVar] = idx
+		}
+
+		bodyRendered, nextIdx, err := renderInlineControlRuns(bodyRuns, 0, loopData, ctx)
+		if err != nil {
+			return nil, startIdx, err
+		}
+		if nextIdx != len(bodyRuns) {
+			return nil, startIdx, fmt.Errorf("inline for body terminated early at run %d", nextIdx)
+		}
+		rendered = append(rendered, bodyRendered...)
+	}
+
+	return rendered, endIdx + 1, nil
 }
 
 func renderInlineIfRuns(runs []Run, startIdx int, condition string, invert bool, data TemplateData, ctx *renderContext) ([]Run, int, error) {
@@ -596,7 +650,7 @@ func findInlineIfBranchesInRuns(runs []Run, startIdx int) ([]inlineRunBranch, in
 		}
 
 		switch tagType {
-		case "if", "unless":
+		case "if", "unless", "for":
 			depth++
 		case "end":
 			depth--
@@ -607,6 +661,29 @@ func findInlineIfBranchesInRuns(runs []Run, startIdx int) ([]inlineRunBranch, in
 	}
 
 	return nil, -1, fmt.Errorf("no matching {{end}} found for inline control structure")
+}
+
+func findInlineBlockEndInRuns(runs []Run, startIdx int) (int, error) {
+	depth := 1
+
+	for i := startIdx + 1; i < len(runs); i++ {
+		tagType, _, isControlTag := parseInlineControlTag(runs[i])
+		if !isControlTag {
+			continue
+		}
+
+		switch tagType {
+		case "if", "unless", "for":
+			depth++
+		case "end":
+			depth--
+			if depth == 0 {
+				return i, nil
+			}
+		}
+	}
+
+	return -1, fmt.Errorf("no matching {{end}} found for inline control structure")
 }
 
 func parseInlineControlTag(run Run) (string, string, bool) {
@@ -625,6 +702,8 @@ func parseInlineControlTag(run Run) (string, string, bool) {
 		return "if", strings.TrimSpace(inner[3:]), true
 	case strings.HasPrefix(inner, "unless "):
 		return "unless", strings.TrimSpace(inner[7:]), true
+	case strings.HasPrefix(inner, "for "):
+		return "for", strings.TrimSpace(inner[4:]), true
 	case inner == "else":
 		return "else", "", true
 	case strings.HasPrefix(inner, "elsif "):

@@ -207,3 +207,49 @@ func TestRenderParagraphWithContext_InlineIfWithBraceSplitEndPreservesBranchForm
 		t.Fatalf("rendered hidden text = %q, want empty", got)
 	}
 }
+
+func TestRenderParagraphWithContext_ProofErrInlineForPreservesBoldBodyFormatting(t *testing.T) {
+	bold := &RunProperties{
+		Bold:   &Empty{},
+		BoldCs: &Empty{},
+	}
+
+	para := &Paragraph{
+		Runs: []Run{
+			{Text: &Text{Content: "{{for party in aktivseite}}"}},
+			{
+				Properties: bold,
+				Text:       &Text{Content: "{{party.vornameName}}, {{party.strasse}}"},
+			},
+			{Text: &Text{Content: "{{end}}"}},
+		},
+	}
+
+	rendered, err := RenderParagraphWithContext(para, TemplateData{
+		"aktivseite": []any{
+			map[string]any{
+				"vornameName": "Bolt",
+				"strasse":     "Hauptstrasse 1",
+			},
+		},
+	}, &renderContext{})
+	if err != nil {
+		t.Fatalf("RenderParagraphWithContext returned error: %v", err)
+	}
+
+	if got := rendered.GetText(); got != "Bolt, Hauptstrasse 1" {
+		t.Fatalf("rendered text = %q, want %q", got, "Bolt, Hauptstrasse 1")
+	}
+	if len(rendered.Runs) == 0 {
+		t.Fatal("expected rendered runs, got none")
+	}
+
+	for i, run := range rendered.Runs {
+		if run.Text == nil || run.Text.Content == "" {
+			continue
+		}
+		if run.Properties == nil || run.Properties.Bold == nil {
+			t.Fatalf("expected bold formatting on rendered run %d, got %+v", i, run.Properties)
+		}
+	}
+}
