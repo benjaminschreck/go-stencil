@@ -36,65 +36,52 @@ type styleRunPropsXML struct {
 	Font *Font `xml:"rFonts"`
 }
 
-func buildFragmentFontOverrideMap(mainStylesXML []byte, fragments map[string]*fragment) map[string]fragmentFontOverrides {
-	if len(mainStylesXML) == 0 || len(fragments) == 0 {
-		return nil
+func buildFragmentFontOverride(mainStylesXML, fragmentStylesXML []byte) (fragmentFontOverrides, bool) {
+	if len(mainStylesXML) == 0 || len(fragmentStylesXML) == 0 {
+		return fragmentFontOverrides{}, false
 	}
-
 	mainCatalog, err := parseStyleFontCatalog(mainStylesXML)
 	if err != nil {
-		return nil
+		return fragmentFontOverrides{}, false
+	}
+	fragmentCatalog, err := parseStyleFontCatalog(fragmentStylesXML)
+	if err != nil {
+		return fragmentFontOverrides{}, false
 	}
 
-	overrides := make(map[string]fragmentFontOverrides)
-	for name, frag := range fragments {
-		if frag == nil || !frag.isDocx || len(frag.stylesXML) == 0 {
+	conflict := fragmentFontOverrides{
+		paragraphStyles: make(map[string]Font),
+		runStyles:       make(map[string]Font),
+	}
+
+	for styleID, fragmentStyle := range fragmentCatalog.styles {
+		mainStyle, exists := mainCatalog.styles[styleID]
+		if !exists || mainStyle.Type != fragmentStyle.Type {
 			continue
 		}
 
-		fragmentCatalog, err := parseStyleFontCatalog(frag.stylesXML)
-		if err != nil {
+		fragmentFont := fragmentCatalog.effectiveFont(styleID)
+		if fragmentFont == nil {
 			continue
 		}
 
-		conflict := fragmentFontOverrides{
-			paragraphStyles: make(map[string]Font),
-			runStyles:       make(map[string]Font),
+		mainFont := mainCatalog.effectiveFont(styleID)
+		if fontsEqual(mainFont, fragmentFont) {
+			continue
 		}
 
-		for styleID, fragmentStyle := range fragmentCatalog.styles {
-			mainStyle, exists := mainCatalog.styles[styleID]
-			if !exists || mainStyle.Type != fragmentStyle.Type {
-				continue
-			}
-
-			fragmentFont := fragmentCatalog.effectiveFont(styleID)
-			if fragmentFont == nil {
-				continue
-			}
-
-			mainFont := mainCatalog.effectiveFont(styleID)
-			if fontsEqual(mainFont, fragmentFont) {
-				continue
-			}
-
-			switch fragmentStyle.Type {
-			case "paragraph":
-				conflict.paragraphStyles[styleID] = *cloneFont(fragmentFont)
-			case "character":
-				conflict.runStyles[styleID] = *cloneFont(fragmentFont)
-			}
-		}
-
-		if len(conflict.paragraphStyles) > 0 || len(conflict.runStyles) > 0 {
-			overrides[name] = conflict
+		switch fragmentStyle.Type {
+		case "paragraph":
+			conflict.paragraphStyles[styleID] = *cloneFont(fragmentFont)
+		case "character":
+			conflict.runStyles[styleID] = *cloneFont(fragmentFont)
 		}
 	}
 
-	if len(overrides) == 0 {
-		return nil
+	if len(conflict.paragraphStyles) == 0 && len(conflict.runStyles) == 0 {
+		return fragmentFontOverrides{}, false
 	}
-	return overrides
+	return conflict, true
 }
 
 func parseStyleFontCatalog(stylesXML []byte) (*styleFontCatalog, error) {

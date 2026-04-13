@@ -155,9 +155,11 @@ func (n *IncludeNode) RenderWithContext(data TemplateData, ctx *renderContext) (
 		}
 	}
 
-	// Find the fragment
-	fragment, exists := ctx.fragments[fragmentName]
-	if !exists {
+	fragment, err := resolveFragmentByName(fragmentName, ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve fragment %s: %w", fragmentName, err)
+	}
+	if fragment == nil {
 		return "", fmt.Errorf("fragment not found: %s", fragmentName)
 	}
 

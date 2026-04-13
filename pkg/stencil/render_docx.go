@@ -34,7 +34,7 @@ func expandDOCXFragmentParagraph(
 	renderedPara *Paragraph,
 	data TemplateData,
 	ctx *renderContext,
-	renderFragment func(*fragment) ([]BodyElement, error),
+	renderFragment func(string, *fragment) ([]BodyElement, error),
 ) ([]BodyElement, bool, error) {
 	if renderedPara == nil {
 		return nil, false, nil
@@ -70,18 +70,11 @@ func expandDOCXFragmentParagraph(
 		if !ok {
 			return nil, false, fmt.Errorf("fragment marker %s resolved to unexpected type %T", fragmentName, fragValue)
 		}
-		if ctx != nil && frag.isDocx {
-			ctx.usedDocxFragments[fragmentName] = true
-		}
-		if frag.parsed == nil || frag.parsed.Body == nil {
-			return nil, false, fmt.Errorf("fragment %s has no parsed body", fragmentName)
-		}
 
-		fragmentElements, err := renderFragment(frag)
+		fragmentElements, err := renderFragment(fragmentName, frag)
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
 		}
-		applyFragmentFontOverrides(fragmentElements, fragmentName, ctx)
 
 		if len(fragmentElements) > 0 {
 			mergedIntoAttachedPara := currentParaAttached && currentPara != nil
@@ -407,8 +400,11 @@ func renderBodyElementRange(body *Body, plan *bodyRenderPlan, start, end int, da
 					return nil, fmt.Errorf("fragment name must be a string, got %T", fragmentNameValue)
 				}
 
-				frag, exists := ctx.fragments[fragmentName]
-				if !exists {
+				frag, err := resolveFragmentByName(fragmentName, ctx)
+				if err != nil {
+					return nil, fmt.Errorf("failed to resolve fragment %s: %w", fragmentName, err)
+				}
+				if frag == nil {
 					return nil, fmt.Errorf("fragment not found: %s", fragmentName)
 				}
 
@@ -428,12 +424,8 @@ func renderBodyElementRange(body *Body, plan *bodyRenderPlan, start, end int, da
 					return nil, err
 				}
 
-				fragmentElements, handled, err := expandDOCXFragmentParagraph(renderedPara, data, ctx, func(fragment *fragment) ([]BodyElement, error) {
-					fragmentBody, err := RenderBodyWithControlStructures(fragment.parsed.Body, data, ctx)
-					if err != nil {
-						return nil, err
-					}
-					return fragmentBody.Elements, nil
+				fragmentElements, handled, err := expandDOCXFragmentParagraph(renderedPara, data, ctx, func(fragmentName string, fragment *fragment) ([]BodyElement, error) {
+					return renderIncludedFragment(fragmentName, fragment, data, ctx)
 				})
 				if err != nil {
 					return nil, err
@@ -556,6 +548,10 @@ func renderIncludedFragment(fragmentName string, frag *fragment, data TemplateDa
 	if frag == nil {
 		return nil, fmt.Errorf("fragment not found: %s", fragmentName)
 	}
+	if err := frag.ensurePrepared(ctx.mainStylesXML); err != nil {
+		return nil, fmt.Errorf("failed to prepare fragment %s: %w", fragmentName, err)
+	}
+	installFragmentRenderPlans(ctx, frag)
 
 	if frag.namespaces != nil {
 		for prefix, uri := range frag.namespaces {
@@ -587,24 +583,31 @@ func renderIncludedFragment(fragmentName string, frag *fragment, data TemplateDa
 		}
 	}
 
-	ctx.fragmentStack = append(ctx.fragmentStack, fragmentName)
-	maxDepth := 10
-	if ctx.renderDepth > 0 {
-		maxDepth = ctx.renderDepth
+	config := GetGlobalConfig()
+	if ctx.renderDepth >= config.MaxRenderDepth {
+		return nil, fmt.Errorf("maximum render depth exceeded: %d", config.MaxRenderDepth)
 	}
-	if len(ctx.fragmentStack) > maxDepth {
+
+	ctx.fragmentStack = append(ctx.fragmentStack, fragmentName)
+	ctx.renderDepth++
+	if len(ctx.fragmentStack) > config.MaxRenderDepth {
 		ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
+		ctx.renderDepth--
 		return nil, fmt.Errorf("maximum render depth exceeded")
 	}
 
 	renderedBody, err := func() (*Body, error) {
 		defer func() {
 			ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
+			ctx.renderDepth--
 		}()
 		return RenderBodyWithControlStructures(frag.parsed.Body, data, ctx)
 	}()
 	if err != nil {
 		return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
+	}
+	if frag.hasFontOverride {
+		ctx.fragmentFontOverrides[fragmentName] = frag.fontOverride
 	}
 	applyFragmentFontOverrides(renderedBody.Elements, fragmentName, ctx)
 

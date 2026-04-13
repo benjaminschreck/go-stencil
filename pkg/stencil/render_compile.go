@@ -24,21 +24,18 @@ type paragraphRenderPlan struct {
 	controlStructures     []ControlStructure
 }
 
-func buildTemplateParagraphPlans(doc *Document, fragments map[string]*fragment) map[*Paragraph]*paragraphRenderPlan {
+func buildTemplateParagraphPlans(doc *Document) map[*Paragraph]*paragraphRenderPlan {
 	plans := make(map[*Paragraph]*paragraphRenderPlan)
 
 	if doc != nil && doc.Body != nil {
 		collectParagraphPlansFromBody(doc.Body, plans)
 	}
 
-	for _, frag := range fragments {
-		if frag == nil || frag.parsed == nil || frag.parsed.Body == nil {
-			continue
-		}
-		collectParagraphPlansFromBody(frag.parsed.Body, plans)
-	}
-
 	return plans
+}
+
+func buildDocumentParagraphPlans(doc *Document) map[*Paragraph]*paragraphRenderPlan {
+	return buildTemplateParagraphPlans(doc)
 }
 
 func collectParagraphPlansFromBody(body *Body, plans map[*Paragraph]*paragraphRenderPlan) {

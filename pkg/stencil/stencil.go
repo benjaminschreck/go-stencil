@@ -23,45 +23,56 @@ const (
 
 // template represents a parsed template document (internal use)
 type template struct {
-	docxReader      *DocxReader
-	document        *Document
-	source          []byte
-	fragments       map[string]*fragment
-	renderResources *templateRenderResources
-	closed          bool
-	mu              sync.RWMutex
+	docxReader       *DocxReader
+	document         *Document
+	source           []byte
+	fragments        map[string]*fragment
+	fragmentResolver FragmentResolver
+	resolverMisses   map[string]bool
+	renderResources  *templateRenderResources
+	closed           bool
+	mu               sync.RWMutex
 }
 
 type templateRenderResources struct {
-	mainNamespaces        map[string]string
-	mainStylesXML         []byte
-	baseNumbering         *numberingContext
-	fragmentFontOverrides map[string]fragmentFontOverrides
-	mergedStylesCache     map[string][]byte
-	bodyPlans             map[*Body]*bodyRenderPlan
-	paragraphPlans        map[*Paragraph]*paragraphRenderPlan
-	cacheMu               sync.RWMutex
+	mainNamespaces    map[string]string
+	mainStylesXML     []byte
+	baseNumbering     *numberingContext
+	staticParts       map[string][]byte
+	dynamicParts      map[string]bool
+	mergedStylesCache map[string][]byte
+	bodyPlans         map[*Body]*bodyRenderPlan
+	paragraphPlans    map[*Paragraph]*paragraphRenderPlan
+	cacheMu           sync.RWMutex
 }
 
 // fragment represents a reusable template fragment (internal use)
 type fragment struct {
-	name          string
-	content       string
-	parsed        *Document
-	isDocx        bool
-	docxData      []byte
-	mediaFiles    map[string][]byte // filename -> content
-	relationships []Relationship    // from word/_rels/document.xml.rels
-	numberingXML  []byte            // from word/numbering.xml
-	stylesXML     []byte            // from word/styles.xml
-	namespaces    map[string]string // prefix -> URI, extracted from fragment document
-	compiled      *compiledFragmentMetadata
+	name               string
+	content            string
+	resolvedByResolver bool
+	parsed             *Document
+	isDocx             bool
+	docxData           []byte
+	mediaFiles         map[string][]byte // filename -> content
+	relationships      []Relationship    // from word/_rels/document.xml.rels
+	numberingXML       []byte            // from word/numbering.xml
+	stylesXML          []byte            // from word/styles.xml
+	namespaces         map[string]string // prefix -> URI, extracted from fragment document
+	compiled           *compiledFragmentMetadata
+	bodyPlan           *bodyRenderPlan
+	paragraphPlans     map[*Paragraph]*paragraphRenderPlan
+	fontOverride       fragmentFontOverrides
+	hasFontOverride    bool
+	prepareOnce        sync.Once
+	prepareErr         error
 }
 
 // renderContext holds the context during rendering (internal use)
 type renderContext struct {
 	linkMarkers    map[string]*LinkReplacementMarker
 	fragments      map[string]*fragment
+	template       *template
 	fragmentStack  []string               // Track fragment inclusion stack for circular reference detection
 	renderDepth    int                    // Track render depth to prevent excessive nesting
 	ooxmlFragments map[string]interface{} // Store OOXML fragments for later processing
@@ -75,6 +86,7 @@ type renderContext struct {
 	usedDocxFragments      map[string]bool   // docx fragments included during this render
 	numbering              *numberingContext
 	fragmentFontOverrides  map[string]fragmentFontOverrides
+	mainStylesXML          []byte
 
 	// Namespace collection
 	collectedNamespaces map[string]string // prefix -> URI, collected from all fragments
@@ -191,10 +203,11 @@ func prepare(r io.Reader) (*PreparedTemplate, error) {
 	}
 
 	tmpl := &template{
-		docxReader: docxReader,
-		document:   doc,
-		source:     source,
-		fragments:  make(map[string]*fragment),
+		docxReader:     docxReader,
+		document:       doc,
+		source:         source,
+		fragments:      make(map[string]*fragment),
+		resolverMisses: make(map[string]bool),
 	}
 
 	if _, err := tmpl.ensureRenderResources(); err != nil {
@@ -376,8 +389,7 @@ func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext)
 
 	// Check if this header/footer contains any template markers
 	// If not, return it as-is to preserve all XML structure and namespaces
-	originalContent := string(content)
-	if !strings.Contains(originalContent, "{{") && !strings.Contains(originalContent, "}}") {
+	if !partHasPotentialTemplateMarkers(file.Name, content) {
 		return content, nil
 	}
 
@@ -541,7 +553,8 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 
 	renderCtx := &renderContext{
 		linkMarkers:            make(map[string]*LinkReplacementMarker),
-		fragments:              tmpl.fragments,
+		fragments:              tmpl.snapshotFragments(),
+		template:               tmpl,
 		fragmentStack:          make([]string, 0),
 		renderDepth:            0,
 		ooxmlFragments:         make(map[string]interface{}),
@@ -552,10 +565,11 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		fragmentResourcesAdded: make(map[string]bool),
 		usedDocxFragments:      make(map[string]bool),
 		numbering:              numberingCtx,
-		fragmentFontOverrides:  resources.fragmentFontOverrides,
+		fragmentFontOverrides:  make(map[string]fragmentFontOverrides),
+		mainStylesXML:          resources.mainStylesXML,
 		collectedNamespaces:    make(map[string]string),
-		bodyPlans:              resources.bodyPlans,
-		paragraphPlans:         resources.paragraphPlans,
+		bodyPlans:              cloneBodyPlanMap(resources.bodyPlans),
+		paragraphPlans:         cloneParagraphPlanMap(resources.paragraphPlans),
 	}
 
 	// Collect namespaces from the main template document (V5: REQUIRED)
@@ -563,37 +577,40 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		renderCtx.collectedNamespaces[prefix] = uri
 	}
 
-	// First pass: render the document with variable substitution
-	renderedDoc, err := RenderDocumentWithContext(tmpl.document, renderData, renderCtx)
-	if err != nil {
-		return nil, WithContext(err, "rendering document", map[string]interface{}{"hasData": data != nil})
-	}
-	if renderedDoc != nil && renderedDoc.Body != nil {
-		normalizeRenderedBodyElements(renderedDoc.Body.Elements)
-	}
+	renderedXML := resources.staticParts["word/document.xml"]
+	var renderedDoc *Document
+	if resources.dynamicParts["word/document.xml"] {
+		// First pass: render the document with variable substitution
+		renderedDoc, err = RenderDocumentWithContext(tmpl.document, renderData, renderCtx)
+		if err != nil {
+			return nil, WithContext(err, "rendering document", map[string]interface{}{"hasData": data != nil})
+		}
+		if renderedDoc != nil && renderedDoc.Body != nil {
+			normalizeRenderedBodyElements(renderedDoc.Body.Elements)
+		}
 
-	// Process table row markers (hideRow() functions)
-	err = ProcessTableRowMarkers(renderedDoc)
-	if err != nil {
-		return nil, WithContext(err, "processing table row markers", nil)
-	}
+		// Process table row markers (hideRow() functions)
+		err = ProcessTableRowMarkers(renderedDoc)
+		if err != nil {
+			return nil, WithContext(err, "processing table row markers", nil)
+		}
 
-	// Process table column markers (hideColumn() functions)
-	err = ProcessTableColumnMarkers(renderedDoc)
-	if err != nil {
-		return nil, WithContext(err, "processing table column markers", nil)
-	}
+		// Process table column markers (hideColumn() functions)
+		err = ProcessTableColumnMarkers(renderedDoc)
+		if err != nil {
+			return nil, WithContext(err, "processing table column markers", nil)
+		}
 
-	// V5: Merge collected namespaces from fragments into main document
-	if len(renderCtx.collectedNamespaces) > 0 {
-		renderedDoc.MergeNamespaces(renderCtx.collectedNamespaces)
-	}
+		// V5: Merge collected namespaces from fragments into main document
+		if len(renderCtx.collectedNamespaces) > 0 {
+			renderedDoc.MergeNamespaces(renderCtx.collectedNamespaces)
+		}
 
-	// Convert the rendered document back to XML with proper namespaces
-	// NOTE: This uses the existing marshalDocumentWithNamespaces which writes doc.Attrs!
-	renderedXML, err := marshalDocumentWithNamespaces(renderedDoc)
-	if err != nil {
-		return nil, NewDocumentError("marshal", "rendered document", err)
+		// Convert the rendered document back to XML with proper namespaces
+		renderedXML, err = marshalDocumentWithNamespaces(renderedDoc)
+		if err != nil {
+			return nil, NewDocumentError("marshal", "rendered document", err)
+		}
 	}
 
 	// Process link replacements and fragment relationships
@@ -652,6 +669,10 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	renderedHeaderFooterParts := make(map[string][]byte)
 	for _, file := range zipReader.File {
 		if !isHeaderPartName(file.Name) && !isFooterPartName(file.Name) {
+			continue
+		}
+		if staticPart, ok := resources.staticParts[file.Name]; ok {
+			renderedHeaderFooterParts[file.Name] = staticPart
 			continue
 		}
 
@@ -763,7 +784,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
 		} else if file.Name == "word/styles.xml" {
-			mergedStyles := resources.stylesXMLForRender(renderCtx.numbering, tmpl.fragments, renderCtx.usedDocxFragments)
+			mergedStyles := resources.stylesXMLForRender(renderCtx.numbering, renderCtx.fragments, renderCtx.usedDocxFragments)
 
 			// Write merged styles
 			fw, err := w.Create(file.Name)
@@ -1074,29 +1095,20 @@ func (pt *PreparedTemplate) AddFragment(name string, content string) error {
 		return fmt.Errorf("template is closed")
 	}
 
-	// Lazy initialize fragments map if needed
-	if pt.template.fragments == nil {
-		pt.template.fragments = make(map[string]*fragment)
-	}
-
-	// Parse the fragment content as a document
-	parsed, err := ParseDocument(strings.NewReader(wrapInDocumentXML(content)))
+	frag, err := newTextFragment(name, content)
 	if err != nil {
-		return fmt.Errorf("failed to parse fragment content: %w", err)
+		return err
 	}
 
-	frag := &fragment{
-		name:    name,
-		content: content,
-		parsed:  parsed,
-		isDocx:  false,
+	tmpl := pt.template
+	tmpl.mu.Lock()
+	defer tmpl.mu.Unlock()
+	if tmpl.fragments == nil {
+		tmpl.fragments = make(map[string]*fragment)
 	}
-	if err := compileFragmentMetadata(frag); err != nil {
-		return fmt.Errorf("failed to compile fragment metadata: %w", err)
-	}
-
-	pt.template.fragments[name] = frag
-	pt.template.invalidateRenderResources()
+	tmpl.fragments[name] = frag
+	delete(tmpl.resolverMisses, name)
+	tmpl.invalidateFragmentCachesLocked()
 	return nil
 }
 
@@ -1127,126 +1139,20 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 		return fmt.Errorf("template is closed")
 	}
 
-	// Lazy initialize fragments map if needed
-	if pt.template.fragments == nil {
-		pt.template.fragments = make(map[string]*fragment)
+	if err := validateDocxFragmentBytes(docxBytes); err != nil {
+		return err
 	}
 
-	// Parse the DOCX fragment
-	reader := bytes.NewReader(docxBytes)
-	docxReader, err := NewDocxReader(reader, int64(len(docxBytes)))
-	if err != nil {
-		return fmt.Errorf("failed to parse fragment DOCX: %w", err)
+	frag := newLazyDocxFragment(name, docxBytes)
+	tmpl := pt.template
+	tmpl.mu.Lock()
+	defer tmpl.mu.Unlock()
+	if tmpl.fragments == nil {
+		tmpl.fragments = make(map[string]*fragment)
 	}
-
-	// Get document.xml from the fragment
-	docXML, err := docxReader.GetDocumentXML()
-	if err != nil {
-		return fmt.Errorf("failed to get fragment document.xml: %w", err)
-	}
-
-	// Parse the document
-	doc, err := ParseDocument(bytes.NewReader([]byte(docXML)))
-	if err != nil {
-		return fmt.Errorf("failed to parse fragment document: %w", err)
-	}
-
-	// Extract namespaces from parsed document
-	namespaces := doc.ExtractNamespaces()
-
-	// Extract media files and relationships from fragment ZIP
-	zipReader, err := zip.NewReader(bytes.NewReader(docxBytes), int64(len(docxBytes)))
-	if err != nil {
-		return fmt.Errorf("failed to read fragment as ZIP: %w", err)
-	}
-
-	// Extract media files
-	mediaFiles := make(map[string][]byte)
-	for _, file := range zipReader.File {
-		if strings.HasPrefix(file.Name, "word/media/") {
-			rc, err := file.Open()
-			if err != nil {
-				return fmt.Errorf("failed to open media file %s: %w", file.Name, err)
-			}
-
-			content, err := io.ReadAll(rc)
-			rc.Close()
-			if err != nil {
-				return fmt.Errorf("failed to read media file %s: %w", file.Name, err)
-			}
-
-			// Store with path relative to word/ (e.g., "media/image1.png")
-			relativePath := strings.TrimPrefix(file.Name, "word/")
-			mediaFiles[relativePath] = content
-		}
-	}
-
-	// Extract relationships, styles, and numbering definitions
-	var relationships []Relationship
-	var stylesXML []byte
-	var numberingXML []byte
-	for _, file := range zipReader.File {
-		if file.Name == "word/_rels/document.xml.rels" {
-			rc, err := file.Open()
-			if err != nil {
-				return fmt.Errorf("failed to open relationships: %w", err)
-			}
-
-			relsData, err := io.ReadAll(rc)
-			rc.Close()
-			if err != nil {
-				return fmt.Errorf("failed to read relationships: %w", err)
-			}
-
-			var rels Relationships
-			err = xml.Unmarshal(relsData, &rels)
-			if err != nil {
-				return fmt.Errorf("failed to parse relationships: %w", err)
-			}
-
-			relationships = rels.Relationship
-		} else if file.Name == "word/styles.xml" {
-			rc, err := file.Open()
-			if err != nil {
-				continue // styles.xml is optional
-			}
-
-			stylesXML, err = io.ReadAll(rc)
-			rc.Close()
-			if err != nil {
-				stylesXML = nil
-			}
-		} else if file.Name == "word/numbering.xml" {
-			rc, err := file.Open()
-			if err != nil {
-				continue // numbering.xml is optional
-			}
-
-			numberingXML, err = io.ReadAll(rc)
-			rc.Close()
-			if err != nil {
-				numberingXML = nil
-			}
-		}
-	}
-
-	frag := &fragment{
-		name:          name,
-		parsed:        doc,
-		isDocx:        true,
-		docxData:      docxBytes,
-		mediaFiles:    mediaFiles,
-		relationships: relationships,
-		numberingXML:  numberingXML,
-		stylesXML:     stylesXML,
-		namespaces:    namespaces,
-	}
-	if err := compileFragmentMetadata(frag); err != nil {
-		return fmt.Errorf("failed to compile fragment metadata: %w", err)
-	}
-
-	pt.template.fragments[name] = frag
-	pt.template.invalidateRenderResources()
+	tmpl.fragments[name] = frag
+	delete(tmpl.resolverMisses, name)
+	tmpl.invalidateFragmentCachesLocked()
 	return nil
 }
 
@@ -1255,6 +1161,15 @@ func (t *template) invalidateRenderResources() {
 	defer t.mu.Unlock()
 
 	t.renderResources = nil
+}
+
+func (t *template) invalidateFragmentCachesLocked() {
+	if t == nil || t.renderResources == nil {
+		return
+	}
+	t.renderResources.cacheMu.Lock()
+	defer t.renderResources.cacheMu.Unlock()
+	t.renderResources.mergedStylesCache = make(map[string][]byte)
 }
 
 func (t *template) ensureRenderResources() (*templateRenderResources, error) {
@@ -1291,16 +1206,20 @@ func (t *template) refreshRenderResources() (*templateRenderResources, error) {
 		}
 	}
 
-	fragmentFontOverrides := buildFragmentFontOverrideMap(mainStylesXML, t.fragments)
+	staticParts, dynamicParts, err := buildStaticPartCache(t.docxReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build static part cache: %w", err)
+	}
 
 	resources := &templateRenderResources{
-		mainNamespaces:        mainNamespaces,
-		mainStylesXML:         mainStylesXML,
-		baseNumbering:         baseNumbering,
-		fragmentFontOverrides: fragmentFontOverrides,
-		mergedStylesCache:     make(map[string][]byte),
-		bodyPlans:             buildTemplateBodyPlans(t.document, t.fragments),
-		paragraphPlans:        buildTemplateParagraphPlans(t.document, t.fragments),
+		mainNamespaces:    mainNamespaces,
+		mainStylesXML:     mainStylesXML,
+		baseNumbering:     baseNumbering,
+		staticParts:       staticParts,
+		dynamicParts:      dynamicParts,
+		mergedStylesCache: make(map[string][]byte),
+		bodyPlans:         buildTemplateBodyPlans(t.document),
+		paragraphPlans:    buildTemplateParagraphPlans(t.document),
 	}
 	t.renderResources = resources
 	return resources, nil

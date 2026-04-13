@@ -29,18 +29,11 @@ type openBodyControl struct {
 	controlType string
 }
 
-func buildTemplateBodyPlans(doc *Document, fragments map[string]*fragment) map[*Body]*bodyRenderPlan {
+func buildTemplateBodyPlans(doc *Document) map[*Body]*bodyRenderPlan {
 	plans := make(map[*Body]*bodyRenderPlan)
 
 	if doc != nil && doc.Body != nil {
 		plans[doc.Body] = compileBodyRenderPlan(doc.Body)
-	}
-
-	for _, frag := range fragments {
-		if frag == nil || frag.parsed == nil || frag.parsed.Body == nil {
-			continue
-		}
-		plans[frag.parsed.Body] = compileBodyRenderPlan(frag.parsed.Body)
 	}
 
 	return plans
@@ -140,4 +133,3 @@ func compileBodyRenderPlan(body *Body) *bodyRenderPlan {
 
 	return plan
 }
-
