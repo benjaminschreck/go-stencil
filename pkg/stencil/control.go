@@ -139,15 +139,7 @@ func (n *ForNode) Render(data TemplateData) (string, error) {
 
 	// Iterate over items
 	for i, item := range items {
-		// Create new data context for this iteration
-		loopData := make(TemplateData)
-
-		// Copy existing data
-		for k, v := range data {
-			loopData[k] = v
-		}
-
-		// Add loop variables
+		loopData := newChildTemplateData(data, 2)
 		loopData[n.Variable] = item
 		if n.IndexVar != "" {
 			loopData[n.IndexVar] = i

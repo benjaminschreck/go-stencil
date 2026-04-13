@@ -13,29 +13,29 @@ func (n *IfNode) RenderWithContext(data TemplateData, ctx *renderContext) (strin
 	if err != nil {
 		return "", fmt.Errorf("failed to evaluate if condition: %w", err)
 	}
-	
+
 	// Check if condition is truthy
 	if isTruthy(condValue) {
 		return renderControlBodyWithContext(n.ThenBody, data, ctx)
 	}
-	
+
 	// Check elsif conditions
 	for _, elsif := range n.ElsIfs {
 		elsifValue, err := elsif.Condition.Evaluate(data)
 		if err != nil {
 			return "", fmt.Errorf("failed to evaluate elsif condition: %w", err)
 		}
-		
+
 		if isTruthy(elsifValue) {
 			return renderControlBodyWithContext(elsif.Body, data, ctx)
 		}
 	}
-	
+
 	// Fall back to else body
 	if len(n.ElseBody) > 0 {
 		return renderControlBodyWithContext(n.ElseBody, data, ctx)
 	}
-	
+
 	return "", nil
 }
 
@@ -45,17 +45,17 @@ func (n *UnlessNode) RenderWithContext(data TemplateData, ctx *renderContext) (s
 	if err != nil {
 		return "", fmt.Errorf("failed to evaluate unless condition: %w", err)
 	}
-	
+
 	// Unless is the opposite of if - render body if condition is falsy
 	if !isTruthy(condValue) {
 		return renderControlBodyWithContext(n.ThenBody, data, ctx)
 	}
-	
+
 	// Fall back to else body
 	if len(n.ElseBody) > 0 {
 		return renderControlBodyWithContext(n.ElseBody, data, ctx)
 	}
-	
+
 	return "", nil
 }
 
@@ -65,28 +65,22 @@ func (n *ForNode) RenderWithContext(data TemplateData, ctx *renderContext) (stri
 	if err != nil {
 		return "", fmt.Errorf("failed to evaluate collection: %w", err)
 	}
-	
+
 	// Convert to slice
 	slice, err := toSlice(collectionValue)
 	if err != nil {
 		return "", fmt.Errorf("failed to iterate over collection: %w", err)
 	}
-	
+
 	var result strings.Builder
-	
+
 	for idx, item := range slice {
-		// Create a new data context with the loop variable(s)
-		loopData := make(TemplateData)
-		for k, v := range data {
-			loopData[k] = v
-		}
-		
-		// Set the loop variable(s)
+		loopData := newChildTemplateData(data, 2)
 		loopData[n.Variable] = item
 		if n.IndexVar != "" {
 			loopData[n.IndexVar] = idx
 		}
-		
+
 		// Render the body
 		bodyResult, err := renderControlBodyWithContext(n.Body, loopData, ctx)
 		if err != nil {
@@ -94,7 +88,7 @@ func (n *ForNode) RenderWithContext(data TemplateData, ctx *renderContext) (stri
 		}
 		result.WriteString(bodyResult)
 	}
-	
+
 	return result.String(), nil
 }
 
@@ -107,7 +101,7 @@ func (n *ExpressionContentNode) RenderWithContext(data TemplateData, ctx *render
 	if err != nil {
 		return "", fmt.Errorf("failed to evaluate expression: %w", err)
 	}
-	
+
 	// Check for special marker types that need context
 	if marker, ok := value.(*TableRowMarker); ok {
 		// Handle table row markers
@@ -122,7 +116,7 @@ func (n *ExpressionContentNode) RenderWithContext(data TemplateData, ctx *render
 		ctx.linkMarkers[markerKey] = linkMarker
 		return fmt.Sprintf("{{LINK_REPLACEMENT:%s}}", markerKey), nil
 	}
-	
+
 	return FormatValue(value), nil
 }
 
@@ -205,7 +199,7 @@ func (n *IncludeNode) RenderWithContext(data TemplateData, ctx *renderContext) (
 // renderControlBodyWithContext renders a slice of control structures with context
 func renderControlBodyWithContext(body []ControlStructure, data TemplateData, ctx *renderContext) (string, error) {
 	var result strings.Builder
-	
+
 	for _, structure := range body {
 		rendered, err := structure.RenderWithContext(data, ctx)
 		if err != nil {
@@ -213,7 +207,7 @@ func renderControlBodyWithContext(body []ControlStructure, data TemplateData, ct
 		}
 		result.WriteString(rendered)
 	}
-	
+
 	return result.String(), nil
 }
 
@@ -224,7 +218,7 @@ func ProcessTemplateWithFragments(content string, data TemplateData, fragments m
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %w", err)
 	}
-	
+
 	// Create render context with fragments
 	ctx := &renderContext{
 		fragments:      fragments,
@@ -232,7 +226,7 @@ func ProcessTemplateWithFragments(content string, data TemplateData, fragments m
 		renderDepth:    0,
 		ooxmlFragments: make(map[string]interface{}),
 	}
-	
+
 	// Render with context
 	return renderControlBodyWithContext(structures, data, ctx)
 }

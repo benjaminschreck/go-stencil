@@ -3,6 +3,7 @@ package stencil
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -35,10 +36,10 @@ type template struct {
 type templateRenderResources struct {
 	mainNamespaces        map[string]string
 	mainStylesXML         []byte
-	mergedStylesXML       []byte
-	fragmentStyleNames    []string
 	baseNumbering         *numberingContext
 	fragmentFontOverrides map[string]fragmentFontOverrides
+	mergedStylesCache     map[string][]byte
+	cacheMu               sync.RWMutex
 }
 
 // fragment represents a reusable template fragment (internal use)
@@ -69,6 +70,7 @@ type renderContext struct {
 	fragmentIDAllocations  map[string]int    // fragment name -> allocated range start
 	nextFragmentIDRange    int               // next available range start
 	fragmentResourcesAdded map[string]bool   // fragment name -> already added
+	usedDocxFragments      map[string]bool   // docx fragments included during this render
 	numbering              *numberingContext
 	fragmentFontOverrides  map[string]fragmentFontOverrides
 
@@ -506,6 +508,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		fragmentIDAllocations:  make(map[string]int),
 		nextFragmentIDRange:    FragmentIDRangeStart,
 		fragmentResourcesAdded: make(map[string]bool),
+		usedDocxFragments:      make(map[string]bool),
 		numbering:              numberingCtx,
 		fragmentFontOverrides:  resources.fragmentFontOverrides,
 		collectedNamespaces:    make(map[string]string),
@@ -591,12 +594,28 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	// Create a new DOCX with the rendered content
 	buf := new(bytes.Buffer)
 	w := zip.NewWriter(buf)
+	w.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+		return flate.NewWriter(out, flate.BestSpeed)
+	})
 
 	// Copy all parts from the original DOCX
 	reader := bytes.NewReader(pt.template.source)
 	zipReader, err := zip.NewReader(reader, int64(len(pt.template.source)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read source zip: %w", err)
+	}
+
+	renderedHeaderFooterParts := make(map[string][]byte)
+	for _, file := range zipReader.File {
+		if !isHeaderPartName(file.Name) && !isFooterPartName(file.Name) {
+			continue
+		}
+
+		renderedPart, err := renderHeaderOrFooter(file, renderData, renderCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render %s: %w", file.Name, err)
+		}
+		renderedHeaderFooterParts[file.Name] = renderedPart
 	}
 
 	// Track if we need to update Content Types for fragment media
@@ -620,11 +639,10 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
-		} else if matched, _ := regexp.MatchString(`^word/header\d+\.xml$`, file.Name); matched {
-			// Process header files
-			renderedHeader, err := renderHeaderOrFooter(file, renderData, renderCtx)
-			if err != nil {
-				return nil, fmt.Errorf("failed to render %s: %w", file.Name, err)
+		} else if isHeaderPartName(file.Name) {
+			renderedHeader, ok := renderedHeaderFooterParts[file.Name]
+			if !ok {
+				return nil, fmt.Errorf("missing pre-rendered header part %s", file.Name)
 			}
 			fw, err := w.Create(file.Name)
 			if err != nil {
@@ -634,11 +652,10 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
-		} else if matched, _ := regexp.MatchString(`^word/footer\d+\.xml$`, file.Name); matched {
-			// Process footer files
-			renderedFooter, err := renderHeaderOrFooter(file, renderData, renderCtx)
-			if err != nil {
-				return nil, fmt.Errorf("failed to render %s: %w", file.Name, err)
+		} else if isFooterPartName(file.Name) {
+			renderedFooter, ok := renderedHeaderFooterParts[file.Name]
+			if !ok {
+				return nil, fmt.Errorf("missing pre-rendered footer part %s", file.Name)
 			}
 			fw, err := w.Create(file.Name)
 			if err != nil {
@@ -702,7 +719,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
 		} else if file.Name == "word/styles.xml" {
-			mergedStyles := resources.stylesXMLForRender(renderCtx.numbering, pt.template.fragments)
+			mergedStyles := resources.stylesXMLForRender(renderCtx.numbering, pt.template.fragments, renderCtx.usedDocxFragments)
 
 			// Write merged styles
 			fw, err := w.Create(file.Name)
@@ -1000,8 +1017,8 @@ func (pt *PreparedTemplate) AddFragment(name string, content string) error {
 	}
 
 	pt.template.fragments[name] = frag
-	_, err = pt.template.refreshRenderResources()
-	return err
+	pt.template.invalidateRenderResources()
+	return nil
 }
 
 // AddFragmentFromBytes adds a DOCX fragment from raw bytes.
@@ -1141,8 +1158,8 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 	}
 
 	pt.template.fragments[name] = frag
-	_, err = pt.template.refreshRenderResources()
-	return err
+	pt.template.invalidateRenderResources()
+	return nil
 }
 
 func (t *template) invalidateRenderResources() {
@@ -1186,61 +1203,134 @@ func (t *template) refreshRenderResources() (*templateRenderResources, error) {
 		}
 	}
 
-	var fragmentStyleNames []string
-	for name, frag := range t.fragments {
-		if frag != nil && frag.isDocx && len(frag.stylesXML) > 0 {
-			fragmentStyleNames = append(fragmentStyleNames, name)
-		}
-	}
-	sort.Strings(fragmentStyleNames)
-
 	fragmentFontOverrides := buildFragmentFontOverrideMap(mainStylesXML, t.fragments)
-
-	mergedStylesXML := mainStylesXML
-	if len(mainStylesXML) > 0 && len(fragmentStyleNames) > 0 {
-		fragmentStyles := make([][]byte, 0, len(fragmentStyleNames))
-		for _, name := range fragmentStyleNames {
-			fragmentStyles = append(fragmentStyles, t.fragments[name].stylesXML)
-		}
-		if merged, err := mergeStyles(mainStylesXML, fragmentStyles...); err == nil {
-			mergedStylesXML = merged
-		}
-	}
 
 	resources := &templateRenderResources{
 		mainNamespaces:        mainNamespaces,
 		mainStylesXML:         mainStylesXML,
-		mergedStylesXML:       mergedStylesXML,
-		fragmentStyleNames:    fragmentStyleNames,
 		baseNumbering:         baseNumbering,
 		fragmentFontOverrides: fragmentFontOverrides,
+		mergedStylesCache:     make(map[string][]byte),
 	}
 	t.renderResources = resources
 	return resources, nil
 }
 
-func (r *templateRenderResources) stylesXMLForRender(numbering *numberingContext, fragments map[string]*fragment) []byte {
+func (r *templateRenderResources) stylesXMLForRender(numbering *numberingContext, fragments map[string]*fragment, usedDocxFragments map[string]bool) []byte {
 	if r == nil {
 		return nil
 	}
-	if numbering == nil || len(numbering.fragmentStylesXML) == 0 || len(r.fragmentStyleNames) == 0 || len(r.mainStylesXML) == 0 {
-		return r.mergedStylesXML
+	if len(r.mainStylesXML) == 0 {
+		return nil
+	}
+	if len(usedDocxFragments) == 0 {
+		return r.mainStylesXML
 	}
 
-	fragmentStyles := make([][]byte, 0, len(r.fragmentStyleNames))
-	for _, name := range r.fragmentStyleNames {
+	names := make([]string, 0, len(usedDocxFragments))
+	for name := range usedDocxFragments {
+		frag := fragments[name]
+		if frag == nil || !frag.isDocx || len(frag.stylesXML) == 0 {
+			continue
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return r.mainStylesXML
+	}
+
+	sort.Strings(names)
+
+	cacheKey := buildMergedStylesCacheKey(names, numbering)
+	r.cacheMu.RLock()
+	if cached, ok := r.mergedStylesCache[cacheKey]; ok {
+		r.cacheMu.RUnlock()
+		return cached
+	}
+	r.cacheMu.RUnlock()
+
+	fragmentStyles := make([][]byte, 0, len(names))
+	for _, name := range names {
 		stylesXML := fragments[name].stylesXML
-		if remappedStyles, ok := numbering.fragmentStylesXML[name]; ok {
-			stylesXML = remappedStyles
+		if numbering != nil {
+			if remappedStyles, ok := numbering.fragmentStylesXML[name]; ok {
+				stylesXML = remappedStyles
+			}
+		}
+		if len(stylesXML) == 0 {
+			continue
 		}
 		fragmentStyles = append(fragmentStyles, stylesXML)
+	}
+	if len(fragmentStyles) == 0 {
+		return r.mainStylesXML
 	}
 
 	mergedStyles, err := mergeStyles(r.mainStylesXML, fragmentStyles...)
 	if err != nil {
-		return r.mergedStylesXML
+		return r.mainStylesXML
 	}
+
+	r.cacheMu.Lock()
+	if cached, ok := r.mergedStylesCache[cacheKey]; ok {
+		r.cacheMu.Unlock()
+		return cached
+	}
+	r.mergedStylesCache[cacheKey] = mergedStyles
+	r.cacheMu.Unlock()
+
 	return mergedStyles
+}
+
+func buildMergedStylesCacheKey(names []string, numbering *numberingContext) string {
+	var key strings.Builder
+	for _, name := range names {
+		key.WriteString(name)
+		if numbering != nil {
+			if numMap, ok := numbering.fragmentNumMaps[name]; ok && len(numMap) > 0 {
+				keys := make([]string, 0, len(numMap))
+				for oldID := range numMap {
+					keys = append(keys, oldID)
+				}
+				sort.Strings(keys)
+				for _, oldID := range keys {
+					key.WriteByte('|')
+					key.WriteString(oldID)
+					key.WriteByte('=')
+					key.WriteString(numMap[oldID])
+				}
+			}
+		}
+		key.WriteByte(';')
+	}
+	return key.String()
+}
+
+func isHeaderPartName(name string) bool {
+	return isNumberedWordPart(name, "header")
+}
+
+func isFooterPartName(name string) bool {
+	return isNumberedWordPart(name, "footer")
+}
+
+func isNumberedWordPart(name, prefix string) bool {
+	if !strings.HasPrefix(name, "word/"+prefix) || !strings.HasSuffix(name, ".xml") {
+		return false
+	}
+
+	digits := name[len("word/"+prefix) : len(name)-len(".xml")]
+	if digits == "" {
+		return false
+	}
+
+	for _, ch := range digits {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 // wrapInDocumentXML wraps plain text content in minimal document XML structure

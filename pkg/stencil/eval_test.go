@@ -313,6 +313,35 @@ func TestEvaluateNestedField(t *testing.T) {
 	}
 }
 
+func TestEvaluateVariableScopedParentCycleDoesNotRecurse(t *testing.T) {
+	data := TemplateData{}
+	data[parentDataKey] = data
+
+	got, err := EvaluateVariable("missing", data)
+	if err != nil {
+		t.Fatalf("EvaluateVariable() error = %v", err)
+	}
+	if got != nil {
+		t.Fatalf("EvaluateVariable() = %v, want nil", got)
+	}
+}
+
+func TestEvaluateVariablePreservesUserParentFieldAcrossScopes(t *testing.T) {
+	parent := TemplateData{
+		"__parent__": "visible user value",
+	}
+	child := newChildTemplateData(parent, 1)
+	child["item"] = "Clause"
+
+	got, err := EvaluateVariable("__parent__", child)
+	if err != nil {
+		t.Fatalf("EvaluateVariable() error = %v", err)
+	}
+	if got != "visible user value" {
+		t.Fatalf("EvaluateVariable() = %v, want %q", got, "visible user value")
+	}
+}
+
 func TestFormatValue(t *testing.T) {
 	tests := []struct {
 		name  string

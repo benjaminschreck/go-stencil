@@ -12,31 +12,24 @@ import (
 // renderElementsWithContext renders a slice of elements with the given context
 // This function DOES process control structures to support nested loops and conditionals
 func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *renderContext) ([]BodyElement, error) {
-	detectionElements := cloneElementsForControlDetection(elements)
-
 	result := make([]BodyElement, 0, len(elements))
 
 	// Process elements in order, handling control structures
 	i := 0
 	for i < len(elements) {
 		elem := elements[i]
-		detectionElem := detectionElements[i]
 
 		switch el := elem.(type) {
 		case *Paragraph:
 			para := cloneParagraph(el)
-			detectionPara, ok := detectionElem.(*Paragraph)
-			if !ok || detectionPara == nil {
-				return nil, fmt.Errorf("control detection paragraph missing at element %d", i)
-			}
 
 			// Check if this paragraph contains a control structure FIRST
-			controlType, controlContent := render.DetectControlStructure(detectionPara)
+			controlType, controlContent := render.DetectControlStructure(el)
 
 			switch controlType {
 			case "inline-for":
 				// Handle inline for loop (entire loop in one paragraph)
-				renderedParas, err := renderInlineForLoop(detectionPara, controlContent, data, ctx)
+				renderedParas, err := renderInlineForLoop(el, controlContent, data, ctx)
 				if err != nil {
 					return nil, err
 				}
@@ -47,7 +40,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 
 			case "for":
 				// Handle block-level for loop - find matching end
-				endIdx, err := render.FindMatchingEndInElements(detectionElements, i)
+				endIdx, err := render.FindMatchingEndInElements(elements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{for}} at element %d", i)
 				}
@@ -74,11 +67,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 				}
 
 				for idx, item := range items {
-					// Create new data context for loop iteration
-					loopData := make(TemplateData)
-					for k, v := range data {
-						loopData[k] = v
-					}
+					loopData := newChildTemplateData(data, 2)
 					loopData[forNode.Variable] = item
 					if forNode.IndexVar != "" {
 						loopData[forNode.IndexVar] = idx
@@ -97,7 +86,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 
 			case "if":
 				// Handle if statement - find matching else/elsif/end
-				endIdx, elseBranches, err := render.FindIfStructureInElements(detectionElements, i)
+				endIdx, elseBranches, err := render.FindIfStructureInElements(elements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{if}} at element %d: %w", i, err)
 				}
@@ -180,7 +169,7 @@ func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *r
 
 			case "unless":
 				// Handle unless statement (similar to if but inverted)
-				endIdx, elseBranches, err := render.FindIfStructureInElements(detectionElements, i)
+				endIdx, elseBranches, err := render.FindIfStructureInElements(elements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{unless}} at element %d", i)
 				}
@@ -280,26 +269,6 @@ func getFragmentKeys(ctx *renderContext) []string {
 	return keys
 }
 
-func cloneElementsForControlDetection(elements []BodyElement) []BodyElement {
-	if len(elements) == 0 {
-		return nil
-	}
-
-	cloned := make([]BodyElement, len(elements))
-	for i, elem := range elements {
-		switch el := elem.(type) {
-		case *Paragraph:
-			merged := cloneParagraph(el)
-			render.MergeConsecutiveRuns(merged)
-			cloned[i] = merged
-		default:
-			cloned[i] = elem
-		}
-	}
-
-	return cloned
-}
-
 var docxFragmentMarkerRegex = regexp.MustCompile(`__DOCX_FRAGMENT__(.+?)__`)
 
 func expandDOCXFragmentParagraph(
@@ -341,6 +310,9 @@ func expandDOCXFragmentParagraph(
 		frag, ok := fragValue.(*fragment)
 		if !ok {
 			return nil, false, fmt.Errorf("fragment marker %s resolved to unexpected type %T", fragmentName, fragValue)
+		}
+		if ctx != nil && frag.isDocx {
+			ctx.usedDocxFragments[fragmentName] = true
 		}
 		if frag.parsed == nil || frag.parsed.Body == nil {
 			return nil, false, fmt.Errorf("fragment %s has no parsed body", fragmentName)
@@ -474,8 +446,6 @@ func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderC
 
 // renderBodyWithElementOrder renders using the new Elements field that preserves order
 func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
-	detectionElements := cloneElementsForControlDetection(body.Elements)
-
 	rendered := &Body{
 		Elements:          make([]BodyElement, 0),
 		SectionProperties: body.SectionProperties, // Preserve section properties
@@ -486,23 +456,18 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 	for i < len(body.Elements) {
 
 		elem := body.Elements[i]
-		detectionElem := detectionElements[i]
 
 		switch el := elem.(type) {
 		case *Paragraph:
 			para := cloneParagraph(el)
-			detectionPara, ok := detectionElem.(*Paragraph)
-			if !ok || detectionPara == nil {
-				return nil, fmt.Errorf("control detection paragraph missing at body element %d", i)
-			}
 
 			// Check if this paragraph contains a control structure
-			controlType, controlContent := render.DetectControlStructure(detectionPara)
+			controlType, controlContent := render.DetectControlStructure(el)
 
 			switch controlType {
 			case "inline-for":
 				// Handle inline for loop (entire loop in one paragraph)
-				renderedParas, err := renderInlineForLoop(detectionPara, controlContent, data, ctx)
+				renderedParas, err := renderInlineForLoop(el, controlContent, data, ctx)
 				if err != nil {
 					return nil, err
 				}
@@ -513,7 +478,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 
 			case "for":
 				// Handle for loop
-				endIdx, err := render.FindMatchingEndInElements(detectionElements, i)
+				endIdx, err := render.FindMatchingEndInElements(body.Elements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{for}} at element %d", i)
 				}
@@ -540,11 +505,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 				}
 
 				for idx, item := range items {
-					// Create new data context for loop iteration
-					loopData := make(TemplateData)
-					for k, v := range data {
-						loopData[k] = v
-					}
+					loopData := newChildTemplateData(data, 2)
 					loopData[forNode.Variable] = item
 					if forNode.IndexVar != "" {
 						loopData[forNode.IndexVar] = idx
@@ -569,10 +530,10 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 			case "if":
 				// Preserve any literal text before "{{if " in the opening paragraph.
 				// This must work even when Word split "{{if ...}}" across multiple runs.
-				prefixRuns := extractPrefixRunsBeforeControlMarker(detectionPara.Runs, "{{if ")
+				prefixRuns := extractPrefixRunsBeforeControlMarker(el.Runs, "{{if ")
 
 				// Handle if statement
-				endIdx, elseBranches, err := render.FindIfStructureInElements(detectionElements, i)
+				endIdx, elseBranches, err := render.FindIfStructureInElements(body.Elements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{if}} at element %d: %w", i, err)
 				}
@@ -746,7 +707,7 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 
 			case "unless":
 				// Handle unless statement (similar to if but inverted)
-				endIdx, elseBranches, err := render.FindIfStructureInElements(detectionElements, i)
+				endIdx, elseBranches, err := render.FindIfStructureInElements(body.Elements, i)
 				if err != nil {
 					return nil, fmt.Errorf("no matching {{end}} for {{unless}} at element %d", i)
 				}
@@ -858,6 +819,10 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 
 				// Render the fragment content
 				if frag.parsed != nil && frag.parsed.Body != nil {
+					if ctx != nil && frag.isDocx {
+						ctx.usedDocxFragments[fragmentName] = true
+					}
+
 					// Check for circular references (same fragment already in current stack)
 					for _, f := range ctx.fragmentStack {
 						if f == fragmentName {
@@ -1145,11 +1110,7 @@ func renderInlineForLoop(para *Paragraph, loopText string, data TemplateData, _ 
 		return nil, fmt.Errorf("failed to convert collection to slice: %w", err)
 	}
 	for idx, item := range items {
-		// Create loop context
-		loopData := make(TemplateData)
-		for k, v := range data {
-			loopData[k] = v
-		}
+		loopData := newChildTemplateData(data, 2)
 		loopData[forNode.Variable] = item
 		if forNode.IndexVar != "" {
 			loopData[forNode.IndexVar] = idx
@@ -1606,10 +1567,7 @@ func processForStatement(tokens []Token, startIdx int, data TemplateData) (strin
 	// Iterate and render
 	var result strings.Builder
 	for idx, item := range items {
-		loopData := make(TemplateData)
-		for k, v := range data {
-			loopData[k] = v
-		}
+		loopData := newChildTemplateData(data, 2)
 		loopData[forNode.Variable] = item
 		if forNode.IndexVar != "" {
 			loopData[forNode.IndexVar] = idx
@@ -1819,11 +1777,7 @@ func renderTableForLoop(rows []TableRow, forExpr string, data TemplateData, ctx 
 
 	// Iterate over collection
 	for idx, item := range items {
-		// Create loop context
-		loopData := make(TemplateData)
-		for k, v := range data {
-			loopData[k] = v
-		}
+		loopData := newChildTemplateData(data, 2)
 		loopData[forNode.Variable] = item
 		if forNode.IndexVar != "" {
 			loopData[forNode.IndexVar] = idx

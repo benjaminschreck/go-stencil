@@ -541,10 +541,7 @@ func renderInlineForRuns(runs []Run, startIdx int, loopExpr string, data Templat
 	bodyRuns := runs[startIdx+1 : endIdx]
 	rendered := make([]Run, 0, len(bodyRuns)*len(items))
 	for idx, item := range items {
-		loopData := make(TemplateData, len(data)+2)
-		for k, v := range data {
-			loopData[k] = v
-		}
+		loopData := newChildTemplateData(data, 2)
 		loopData[forNode.Variable] = item
 		if forNode.IndexVar != "" {
 			loopData[forNode.IndexVar] = idx

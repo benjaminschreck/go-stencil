@@ -259,7 +259,7 @@ func TestBuiltinFunctions(t *testing.T) {
 					t.Errorf("Function %s return type mismatch = %v, want %v", tt.funcName, got, tt.want)
 					return
 				}
-				
+
 				// Special handling for slice comparison
 				if ttWantSlice, ok := tt.want.([]interface{}); ok {
 					if gotSlice, ok := got.([]interface{}); ok {
@@ -276,7 +276,7 @@ func TestBuiltinFunctions(t *testing.T) {
 						return
 					}
 				}
-				
+
 				if got != tt.want {
 					t.Errorf("Function %s = %v, want %v", tt.funcName, got, tt.want)
 				}
@@ -368,7 +368,7 @@ func TestFunctionCallInExpressions(t *testing.T) {
 						return
 					}
 				}
-				
+
 				if got != tt.want {
 					t.Errorf("Expression.Evaluate() = %v, want %v", got, tt.want)
 				}
@@ -379,12 +379,12 @@ func TestFunctionCallInExpressions(t *testing.T) {
 
 func TestCallFunction(t *testing.T) {
 	tests := []struct {
-		name    string
+		name     string
 		funcName string
-		data    TemplateData
-		args    []interface{}
-		want    interface{}
-		wantErr bool
+		data     TemplateData
+		args     []interface{}
+		want     interface{}
+		wantErr  bool
 	}{
 		{
 			name:     "call empty function",
@@ -589,12 +589,73 @@ func TestDataFunction(t *testing.T) {
 						return
 					}
 				}
-				
+
 				if got != tt.want {
 					t.Errorf("Expression.Evaluate() = %v, want %v", got, tt.want)
 				}
 			}
 		})
+	}
+}
+
+func TestDataFunctionWithScopedLoopContext(t *testing.T) {
+	parent := TemplateData{
+		"name":       "Alice",
+		"city":       "Berlin",
+		"__parent__": "visible user value",
+	}
+	child := newChildTemplateData(parent, 1)
+	child["item"] = "Clause"
+
+	expr, err := ParseExpression("data()")
+	if err != nil {
+		t.Fatalf("ParseExpression() error = %v", err)
+	}
+
+	got, err := expr.Evaluate(child)
+	if err != nil {
+		t.Fatalf("Expression.Evaluate() error = %v", err)
+	}
+
+	gotMap, ok := got.(TemplateData)
+	if !ok {
+		t.Fatalf("data() returned %T, want TemplateData", got)
+	}
+
+	if gotMap["name"] != "Alice" || gotMap["city"] != "Berlin" || gotMap["item"] != "Clause" || gotMap["__parent__"] != "visible user value" {
+		t.Fatalf("data() returned %#v, want merged scoped context", gotMap)
+	}
+	if _, exists := gotMap[parentDataKey]; exists {
+		t.Fatalf("data() leaked internal parent pointer: %#v", gotMap)
+	}
+}
+
+func TestDataFunctionWithScopedCycleDoesNotRecurse(t *testing.T) {
+	data := TemplateData{
+		"name": "Alice",
+	}
+	data[parentDataKey] = data
+
+	expr, err := ParseExpression("data()")
+	if err != nil {
+		t.Fatalf("ParseExpression() error = %v", err)
+	}
+
+	got, err := expr.Evaluate(data)
+	if err != nil {
+		t.Fatalf("Expression.Evaluate() error = %v", err)
+	}
+
+	gotMap, ok := got.(TemplateData)
+	if !ok {
+		t.Fatalf("data() returned %T, want TemplateData", got)
+	}
+
+	if gotMap["name"] != "Alice" {
+		t.Fatalf("data() returned %#v, want preserved visible fields", gotMap)
+	}
+	if _, exists := gotMap[parentDataKey]; exists {
+		t.Fatalf("data() leaked internal parent pointer: %#v", gotMap)
 	}
 }
 
@@ -715,14 +776,14 @@ func TestMapFunctionInExpressions(t *testing.T) {
 					map[string]interface{}{
 						"id": 1,
 						"product": map[string]interface{}{
-							"name": "Widget",
+							"name":  "Widget",
 							"price": 99.99,
 						},
 					},
 					map[string]interface{}{
 						"id": 2,
 						"product": map[string]interface{}{
-							"name": "Gadget",
+							"name":  "Gadget",
 							"price": 149.99,
 						},
 					},
@@ -1085,7 +1146,7 @@ func TestTypeConversionInExpressions(t *testing.T) {
 						return
 					}
 				}
-				
+
 				if got != tt.want {
 					t.Errorf("Expression.Evaluate() = %v, want %v", got, tt.want)
 				}
@@ -1385,10 +1446,10 @@ func TestMathFunctionsInExpressions(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "floor() with missing variable",
-			expr:    "floor(missing)",
-			data:    TemplateData{},
-			want:    nil, // floor(nil) = nil
+			name: "floor() with missing variable",
+			expr: "floor(missing)",
+			data: TemplateData{},
+			want: nil, // floor(nil) = nil
 		},
 		{
 			name:    "ceil() with boolean",
@@ -1740,7 +1801,7 @@ func TestAggregateFunctionsInExpressions(t *testing.T) {
 						return
 					}
 				}
-				
+
 				if got != tt.want {
 					t.Errorf("Expression.Evaluate() = %v, want %v", got, tt.want)
 				}
@@ -1751,39 +1812,39 @@ func TestAggregateFunctionsInExpressions(t *testing.T) {
 
 func TestPageBreakFunction(t *testing.T) {
 	registry := GetDefaultFunctionRegistry()
-	
+
 	// Test basic function registration and call
 	fn, exists := registry.GetFunction("pageBreak")
 	if !exists {
 		t.Errorf("pageBreak function not found in registry")
 		return
 	}
-	
+
 	// Test function call with no arguments
 	result, err := fn.Call()
 	if err != nil {
 		t.Errorf("pageBreak() call error = %v", err)
 		return
 	}
-	
+
 	// Check that it returns an OOXML fragment
 	fragment, ok := result.(*OOXMLFragment)
 	if !ok {
 		t.Errorf("pageBreak() should return *OOXMLFragment, got %T", result)
 		return
 	}
-	
+
 	// Check that the fragment contains a Break with type="page"
 	breakElement, ok := fragment.Content.(*Break)
 	if !ok {
 		t.Errorf("pageBreak() fragment should contain *Break, got %T", fragment.Content)
 		return
 	}
-	
+
 	if breakElement.Type != "page" {
 		t.Errorf("pageBreak() break type = %s, want 'page'", breakElement.Type)
 	}
-	
+
 	// Test function call with wrong number of arguments
 	_, err = fn.Call("unexpected argument")
 	if err == nil {
@@ -1810,7 +1871,7 @@ func TestPageBreakInExpressions(t *testing.T) {
 			wantErr: true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			expr, err := ParseExpression(tt.expr)
@@ -1818,13 +1879,13 @@ func TestPageBreakInExpressions(t *testing.T) {
 				t.Errorf("ParseExpression() error = %v", err)
 				return
 			}
-			
+
 			got, err := expr.Evaluate(tt.data)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Expression.Evaluate() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			if !tt.wantErr {
 				// Check that we got an OOXML fragment
 				fragment, ok := got.(*OOXMLFragment)
@@ -1832,7 +1893,7 @@ func TestPageBreakInExpressions(t *testing.T) {
 					t.Errorf("Expression should return *OOXMLFragment, got %T", got)
 					return
 				}
-				
+
 				// Check that it's a page break
 				if breakElement, ok := fragment.Content.(*Break); ok {
 					if breakElement.Type != "page" {
@@ -1848,10 +1909,10 @@ func TestPageBreakInExpressions(t *testing.T) {
 
 func TestRangeFunction(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []interface{}
-		want     []interface{}
-		wantErr  bool
+		name    string
+		args    []interface{}
+		want    []interface{}
+		wantErr bool
 	}{
 		// Basic range tests matching original Stencil behavior
 		{
@@ -1869,7 +1930,7 @@ func TestRangeFunction(t *testing.T) {
 			args: []interface{}{1, 6, 2},
 			want: []interface{}{1, 3, 5},
 		},
-		
+
 		// Edge cases
 		{
 			name: "range(0) - empty range",
@@ -1906,7 +1967,7 @@ func TestRangeFunction(t *testing.T) {
 			args: []interface{}{0, 10, 5},
 			want: []interface{}{0, 5},
 		},
-		
+
 		// Type conversions
 		{
 			name: "range with float arguments",
@@ -1918,7 +1979,7 @@ func TestRangeFunction(t *testing.T) {
 			args: []interface{}{"1", "5"},
 			want: []interface{}{1, 2, 3, 4},
 		},
-		
+
 		// Error cases
 		{
 			name:    "range() with no arguments",
@@ -1941,9 +2002,9 @@ func TestRangeFunction(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "range() with nil argument",
-			args:    []interface{}{nil},
-			want:    []interface{}{},
+			name: "range() with nil argument",
+			args: []interface{}{nil},
+			want: []interface{}{},
 		},
 	}
 
@@ -2092,7 +2153,7 @@ func TestTypeConversionEdgeCases(t *testing.T) {
 
 			got, err := fn.Call(tt.input)
 			if !tt.checkFn(got, err) {
-				t.Errorf("Function %s check failed for input %v: got %v, err %v", 
+				t.Errorf("Function %s check failed for input %v: got %v, err %v",
 					tt.funcName, tt.input, got, err)
 			}
 		})
@@ -2142,7 +2203,7 @@ func TestSwitchFunction(t *testing.T) {
 			args: []interface{}{"a", "a", 1, "b", 2, "default"},
 			want: 1,
 		},
-		
+
 		// Null handling tests
 		{
 			name: "null expression matches null case",
@@ -2164,7 +2225,7 @@ func TestSwitchFunction(t *testing.T) {
 			args: []interface{}{"a", nil, 1, "b", 2, "c", 3},
 			want: nil,
 		},
-		
+
 		// Type matching tests
 		{
 			name: "integer matches integer",
@@ -2186,7 +2247,7 @@ func TestSwitchFunction(t *testing.T) {
 			args: []interface{}{"hello", "hello", "greeting", "goodbye", "farewell"},
 			want: "greeting",
 		},
-		
+
 		// Edge cases
 		{
 			name: "empty string expression",
@@ -2203,7 +2264,7 @@ func TestSwitchFunction(t *testing.T) {
 			args: []interface{}{false, false, "false case", true, "true case"},
 			want: "false case",
 		},
-		
+
 		// Complex values
 		{
 			name: "slice case matching",
@@ -2211,18 +2272,18 @@ func TestSwitchFunction(t *testing.T) {
 			want: nil, // Slices don't match with equals, so no match
 		},
 		{
-			name: "map case matching", 
+			name: "map case matching",
 			args: []interface{}{map[string]interface{}{"a": 1}, map[string]interface{}{"a": 1}, "match", "other", "no match"},
 			want: nil, // Maps don't match with equals, so no match
 		},
-		
+
 		// First match wins
 		{
 			name: "first match wins (duplicate cases)",
 			args: []interface{}{"a", "a", "first", "a", "second", "b", "third"},
 			want: "first",
 		},
-		
+
 		// Minimum arguments validation
 		{
 			name:    "insufficient arguments (0 args)",
@@ -2239,14 +2300,14 @@ func TestSwitchFunction(t *testing.T) {
 			args:    []interface{}{"expr", "case1"},
 			wantErr: true,
 		},
-		
+
 		// Minimum valid case
 		{
 			name: "minimum valid arguments (3 args)",
 			args: []interface{}{"a", "a", "result"},
 			want: "result",
 		},
-		
+
 		// Mixed types in cases
 		{
 			name: "mixed types with string match",
@@ -2258,21 +2319,21 @@ func TestSwitchFunction(t *testing.T) {
 			args: []interface{}{42, "string", "text", 42, "number", true, "bool"},
 			want: "number",
 		},
-		
+
 		// Case sensitivity
 		{
 			name: "case sensitive string matching",
 			args: []interface{}{"Hello", "hello", "lowercase", "Hello", "correct case"},
 			want: "correct case",
 		},
-		
+
 		// Large number of cases
 		{
 			name: "many cases",
 			args: []interface{}{"f", "a", 1, "b", 2, "c", 3, "d", 4, "e", 5, "f", 6, "g", 7},
 			want: 6,
 		},
-		
+
 		// Return various types
 		{
 			name: "return integer",
@@ -2330,7 +2391,7 @@ func TestSwitchFunction(t *testing.T) {
 						return
 					}
 				}
-				
+
 				// Special handling for map comparison
 				if wantMap, ok := tt.want.(map[string]interface{}); ok {
 					if gotMap, ok := got.(map[string]interface{}); ok {
@@ -2347,7 +2408,7 @@ func TestSwitchFunction(t *testing.T) {
 						return
 					}
 				}
-				
+
 				// Regular comparison
 				if got != tt.want {
 					t.Errorf("switch(%v) = %v, want %v", tt.args, got, tt.want)
@@ -2379,7 +2440,7 @@ func (p *MockFunctionProvider) ProvideFunctions() map[string]Function {
 func TestFunctionProvider(t *testing.T) {
 	// Create a mock function provider
 	provider := NewMockFunctionProvider()
-	
+
 	// Add custom functions
 	doubleFunc := NewSimpleFunction("double", 1, 1, func(args ...interface{}) (interface{}, error) {
 		val, ok := args[0].(int)
@@ -2389,7 +2450,7 @@ func TestFunctionProvider(t *testing.T) {
 		return val * 2, nil
 	})
 	provider.AddFunction("double", doubleFunc)
-	
+
 	greetFunc := NewSimpleFunction("greet", 1, 1, func(args ...interface{}) (interface{}, error) {
 		name, ok := args[0].(string)
 		if !ok {
@@ -2398,21 +2459,21 @@ func TestFunctionProvider(t *testing.T) {
 		return "Hello, " + name + "!", nil
 	})
 	provider.AddFunction("greet", greetFunc)
-	
+
 	// Test ProvideFunctions
 	functions := provider.ProvideFunctions()
 	if len(functions) != 2 {
 		t.Errorf("Expected 2 functions, got %d", len(functions))
 	}
-	
+
 	if _, exists := functions["double"]; !exists {
 		t.Errorf("double function not found in provider")
 	}
-	
+
 	if _, exists := functions["greet"]; !exists {
 		t.Errorf("greet function not found in provider")
 	}
-	
+
 	// Test function calls
 	result, err := functions["double"].Call(5)
 	if err != nil {
@@ -2421,7 +2482,7 @@ func TestFunctionProvider(t *testing.T) {
 	if result != 10 {
 		t.Errorf("double(5) = %v, want 10", result)
 	}
-	
+
 	result, err = functions["greet"].Call("World")
 	if err != nil {
 		t.Errorf("greet function call error: %v", err)
@@ -2434,7 +2495,7 @@ func TestFunctionProvider(t *testing.T) {
 func TestRegisterFunctionsFromProvider(t *testing.T) {
 	// Create a mock function provider
 	provider := NewMockFunctionProvider()
-	
+
 	// Add custom functions
 	addFunc := NewSimpleFunction("add", 2, 2, func(args ...interface{}) (interface{}, error) {
 		a, ok1 := args[0].(int)
@@ -2445,7 +2506,7 @@ func TestRegisterFunctionsFromProvider(t *testing.T) {
 		return a + b, nil
 	})
 	provider.AddFunction("add", addFunc)
-	
+
 	maxFunc := NewSimpleFunction("max", 2, 2, func(args ...interface{}) (interface{}, error) {
 		a, ok1 := args[0].(int)
 		b, ok2 := args[1].(int)
@@ -2458,21 +2519,21 @@ func TestRegisterFunctionsFromProvider(t *testing.T) {
 		return b, nil
 	})
 	provider.AddFunction("max", maxFunc)
-	
+
 	// Register functions from provider to global registry
 	err := RegisterFunctionsFromProvider(provider)
 	if err != nil {
 		t.Errorf("RegisterFunctionsFromProvider() error = %v", err)
 	}
-	
+
 	// Test that functions are available in global registry
 	registry := GetDefaultFunctionRegistry()
-	
+
 	addFn, exists := registry.GetFunction("add")
 	if !exists {
 		t.Errorf("add function not found in global registry")
 	}
-	
+
 	result, err := addFn.Call(3, 7)
 	if err != nil {
 		t.Errorf("add function call error: %v", err)
@@ -2480,12 +2541,12 @@ func TestRegisterFunctionsFromProvider(t *testing.T) {
 	if result != 10 {
 		t.Errorf("add(3, 7) = %v, want 10", result)
 	}
-	
+
 	maxFn, exists := registry.GetFunction("max")
 	if !exists {
 		t.Errorf("max function not found in global registry")
 	}
-	
+
 	result, err = maxFn.Call(5, 3)
 	if err != nil {
 		t.Errorf("max function call error: %v", err)
@@ -2498,7 +2559,7 @@ func TestRegisterFunctionsFromProvider(t *testing.T) {
 func TestCreateRegistryWithProvider(t *testing.T) {
 	// Create a mock function provider
 	provider := NewMockFunctionProvider()
-	
+
 	// Add custom functions that might override built-ins
 	customUppercaseFunc := NewSimpleFunction("uppercase", 1, 1, func(args ...interface{}) (interface{}, error) {
 		str, ok := args[0].(string)
@@ -2508,24 +2569,24 @@ func TestCreateRegistryWithProvider(t *testing.T) {
 		return "CUSTOM_" + strings.ToUpper(str), nil
 	})
 	provider.AddFunction("uppercase", customUppercaseFunc)
-	
+
 	newFunc := NewSimpleFunction("newFunction", 1, 1, func(args ...interface{}) (interface{}, error) {
 		return "custom result: " + fmt.Sprintf("%v", args[0]), nil
 	})
 	provider.AddFunction("newFunction", newFunc)
-	
+
 	// Create registry with provider
 	registry, err := CreateRegistryWithProvider(provider)
 	if err != nil {
 		t.Errorf("CreateRegistryWithProvider() error = %v", err)
 	}
-	
+
 	// Test that built-in functions are still available
 	emptyFn, exists := registry.GetFunction("empty")
 	if !exists {
 		t.Errorf("empty function not found in registry with provider")
 	}
-	
+
 	result, err := emptyFn.Call("")
 	if err != nil {
 		t.Errorf("empty function call error: %v", err)
@@ -2533,13 +2594,13 @@ func TestCreateRegistryWithProvider(t *testing.T) {
 	if result != true {
 		t.Errorf("empty(\"\") = %v, want true", result)
 	}
-	
+
 	// Test that custom function is available
 	newFn, exists := registry.GetFunction("newFunction")
 	if !exists {
 		t.Errorf("newFunction not found in registry with provider")
 	}
-	
+
 	result, err = newFn.Call("test")
 	if err != nil {
 		t.Errorf("newFunction call error: %v", err)
@@ -2547,13 +2608,13 @@ func TestCreateRegistryWithProvider(t *testing.T) {
 	if result != "custom result: test" {
 		t.Errorf("newFunction(\"test\") = %v, want \"custom result: test\"", result)
 	}
-	
+
 	// Test that function override works (custom uppercase should override built-in)
 	uppercaseFn, exists := registry.GetFunction("uppercase")
 	if !exists {
 		t.Errorf("uppercase function not found in registry with provider")
 	}
-	
+
 	result, err = uppercaseFn.Call("hello")
 	if err != nil {
 		t.Errorf("uppercase function call error: %v", err)
@@ -2574,12 +2635,12 @@ func TestCustomFunctionInExpressions(t *testing.T) {
 		}
 		return result, nil
 	})
-	
+
 	err := RegisterGlobalFunction("concat", concatFunc)
 	if err != nil {
 		t.Errorf("RegisterGlobalFunction() error = %v", err)
 	}
-	
+
 	tests := []struct {
 		name    string
 		expr    string
@@ -2612,7 +2673,7 @@ func TestCustomFunctionInExpressions(t *testing.T) {
 			want: "Status: active",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			expr, err := ParseExpression(tt.expr)
@@ -2620,13 +2681,13 @@ func TestCustomFunctionInExpressions(t *testing.T) {
 				t.Errorf("ParseExpression() error = %v", err)
 				return
 			}
-			
+
 			got, err := expr.Evaluate(tt.data)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Expression.Evaluate() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			if !tt.wantErr && got != tt.want {
 				t.Errorf("Expression.Evaluate() = %v, want %v", got, tt.want)
 			}
@@ -2637,16 +2698,16 @@ func TestCustomFunctionInExpressions(t *testing.T) {
 func TestFunctionOverride(t *testing.T) {
 	// Create a new registry to avoid affecting global state
 	registry := NewFunctionRegistry()
-	
+
 	// Register basic functions
 	registerBasicFunctions(registry)
-	
+
 	// Test original function behavior
 	originalEmpty, exists := registry.GetFunction("empty")
 	if !exists {
 		t.Errorf("original empty function not found")
 	}
-	
+
 	result, err := originalEmpty.Call("")
 	if err != nil {
 		t.Errorf("original empty function call error: %v", err)
@@ -2654,24 +2715,24 @@ func TestFunctionOverride(t *testing.T) {
 	if result != true {
 		t.Errorf("original empty(\"\") = %v, want true", result)
 	}
-	
+
 	// Override the empty function
 	customEmptyFunc := NewSimpleFunction("empty", 1, 1, func(args ...interface{}) (interface{}, error) {
 		// Custom empty: only nil is considered empty
 		return args[0] == nil, nil
 	})
-	
+
 	err = registry.RegisterFunction(customEmptyFunc)
 	if err != nil {
 		t.Errorf("RegisterFunction() override error = %v", err)
 	}
-	
+
 	// Test overridden function behavior
 	overriddenEmpty, exists := registry.GetFunction("empty")
 	if !exists {
 		t.Errorf("overridden empty function not found")
 	}
-	
+
 	// Empty string should now return false (not empty in custom implementation)
 	result, err = overriddenEmpty.Call("")
 	if err != nil {
@@ -2680,7 +2741,7 @@ func TestFunctionOverride(t *testing.T) {
 	if result != false {
 		t.Errorf("overridden empty(\"\") = %v, want false", result)
 	}
-	
+
 	// nil should still return true
 	result, err = overriddenEmpty.Call(nil)
 	if err != nil {
@@ -2698,12 +2759,12 @@ func TestFunctionProviderErrorHandling(t *testing.T) {
 		return nil, nil
 	})
 	provider.AddFunction("emptyName", emptyNameFunc)
-	
+
 	err := RegisterFunctionsFromProvider(provider)
 	if err == nil {
 		t.Errorf("RegisterFunctionsFromProvider() should fail with empty function name")
 	}
-	
+
 	// Test CreateRegistryWithProvider with invalid function
 	registry, err := CreateRegistryWithProvider(provider)
 	if err == nil {
@@ -2717,21 +2778,21 @@ func TestFunctionProviderErrorHandling(t *testing.T) {
 func TestCustomFunctionComplexScenarios(t *testing.T) {
 	// Create a provider with multiple complex functions
 	provider := NewMockFunctionProvider()
-	
+
 	// Math function that works with both numbers and strings
 	powerFunc := NewSimpleFunction("power", 2, 2, func(args ...interface{}) (interface{}, error) {
 		base, err := toNumber(args[0])
 		if err != nil {
 			return nil, fmt.Errorf("power() first argument must be a number")
 		}
-		
+
 		exp, err := toNumber(args[1])
 		if err != nil {
 			return nil, fmt.Errorf("power() second argument must be a number")
 		}
-		
+
 		result := math.Pow(base, exp)
-		
+
 		// Return int if result is a whole number, float otherwise
 		if result == float64(int(result)) {
 			return int(result), nil
@@ -2739,29 +2800,29 @@ func TestCustomFunctionComplexScenarios(t *testing.T) {
 		return result, nil
 	})
 	provider.AddFunction("power", powerFunc)
-	
+
 	// Conditional function
 	ifElseFunc := NewSimpleFunction("ifElse", 3, 3, func(args ...interface{}) (interface{}, error) {
 		condition := args[0]
 		trueValue := args[1]
 		falseValue := args[2]
-		
+
 		// Evaluate condition using same logic as isEmpty (but inverted)
 		isTrue := !isEmpty(condition)
-		
+
 		if isTrue {
 			return trueValue, nil
 		}
 		return falseValue, nil
 	})
 	provider.AddFunction("ifElse", ifElseFunc)
-	
+
 	// Create registry with provider
 	registry, err := CreateRegistryWithProvider(provider)
 	if err != nil {
 		t.Errorf("CreateRegistryWithProvider() error = %v", err)
 	}
-	
+
 	// Test complex function interactions
 	tests := []struct {
 		name     string
@@ -2819,7 +2880,7 @@ func TestCustomFunctionComplexScenarios(t *testing.T) {
 			wantErr:  true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fn, exists := registry.GetFunction(tt.funcName)
@@ -2827,13 +2888,13 @@ func TestCustomFunctionComplexScenarios(t *testing.T) {
 				t.Errorf("Function %s not found in registry", tt.funcName)
 				return
 			}
-			
+
 			got, err := fn.Call(tt.args...)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Function %s error = %v, wantErr %v", tt.funcName, err, tt.wantErr)
 				return
 			}
-			
+
 			if !tt.wantErr {
 				// Special handling for float comparison
 				if gotFloat, ok := got.(float64); ok {
@@ -2844,7 +2905,7 @@ func TestCustomFunctionComplexScenarios(t *testing.T) {
 						return
 					}
 				}
-				
+
 				if got != tt.want {
 					t.Errorf("Function %s = %v, want %v", tt.funcName, got, tt.want)
 				}
@@ -2970,10 +3031,10 @@ func TestSwitchInExpressions(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "switch with non-existent variable",
-			expr:    "switch(missing_var, \"test\", \"result\")",
-			data:    TemplateData{},
-			want:    nil, // missing_var is nil, doesn't match "test"
+			name: "switch with non-existent variable",
+			expr: "switch(missing_var, \"test\", \"result\")",
+			data: TemplateData{},
+			want: nil, // missing_var is nil, doesn't match "test"
 		},
 	}
 

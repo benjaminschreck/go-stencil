@@ -166,12 +166,12 @@ func (n *FunctionCallNode) String() string {
 func (n *FunctionCallNode) Evaluate(data TemplateData) (interface{}, error) {
 	// Special handling for data() function
 	if n.Name == "data" && len(n.Args) == 0 {
-		return data, nil
+		return materializeTemplateData(data), nil
 	}
 
 	// Get the function registry from data context if available
 	var registry FunctionRegistry
-	if reg, ok := data["__functions__"]; ok {
+	if reg, ok := resolveSpecialContextValue(data, "__functions__"); ok {
 		if funcReg, ok := reg.(FunctionRegistry); ok {
 			registry = funcReg
 		}

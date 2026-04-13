@@ -1101,6 +1101,38 @@ func TestFragmentStyleMerging(t *testing.T) {
 	}
 }
 
+func TestFragmentStyleMergingHeaderOnlyFragment(t *testing.T) {
+	mainDoc := createDOCXWithHeaderIncludeAndStyle(t, `{{include "fragment"}}`, "MainStyle", `<w:color w:val="0000FF"/>`)
+	fragmentDoc := createDOCXWithStyle(t, "Header Fragment", "FragStyle", `<w:b/><w:color w:val="FF0000"/>`)
+
+	tmpl, err := ParseBytes(mainDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+
+	if err := tmpl.AddFragmentFromBytes("fragment", fragmentDoc); err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("failed to render template: %v", err)
+	}
+
+	styles := extractStylesFromDOCX(t, rendered)
+	if !containsStyle(styles, "MainStyle") {
+		t.Error("MainStyle not found in rendered document")
+	}
+	if !containsStyle(styles, "FragStyle") {
+		t.Error("FragStyle not found in rendered document")
+	}
+
+	headerXML := extractPartFromDOCX(t, rendered, "word/header1.xml")
+	if !strings.Contains(headerXML, "Header Fragment") {
+		t.Fatalf("rendered header does not contain fragment text, got: %s", headerXML)
+	}
+}
+
 func TestFragmentStyleMergingMultipleFragments(t *testing.T) {
 	// Create main document with a style
 	mainDoc := createDOCXWithStyle(t, "Main {{include \"frag1\"}} {{include \"frag2\"}}", "MainStyle", "<w:color w:val=\"0000FF\"/>")
@@ -1664,6 +1696,72 @@ func createDOCXWithStyle(_ *testing.T, content, styleName, styleProps string) []
 	return buf.Bytes()
 }
 
+func createDOCXWithHeaderIncludeAndStyle(_ *testing.T, headerContent, styleName, styleProps string) []byte {
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+
+	rels, _ := w.Create("_rels/.rels")
+	io.WriteString(rels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`)
+
+	doc, _ := w.Create("word/document.xml")
+	io.WriteString(doc, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:t>Body</w:t>
+      </w:r>
+    </w:p>
+    <w:sectPr>
+      <w:headerReference w:type="default" r:id="rId2"/>
+    </w:sectPr>
+  </w:body>
+</w:document>`)
+
+	wordRels, _ := w.Create("word/_rels/document.xml.rels")
+	io.WriteString(wordRels, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+</Relationships>`)
+
+	// Intentionally emit styles before the header to exercise zip-order independence.
+	styles, _ := w.Create("word/styles.xml")
+	io.WriteString(styles, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="`+styleName+`">
+    <w:name w:val="`+styleName+`"/>
+    <w:rPr>`+styleProps+`</w:rPr>
+  </w:style>
+</w:styles>`)
+
+	header, _ := w.Create("word/header1.xml")
+	io.WriteString(header, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p>
+    <w:r>
+      <w:t>`+headerContent+`</w:t>
+    </w:r>
+  </w:p>
+</w:hdr>`)
+
+	ct, _ := w.Create("[Content_Types].xml")
+	io.WriteString(ct, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+</Types>`)
+
+	w.Close()
+	return buf.Bytes()
+}
+
 func createDOCXWithTableStyle(_ *testing.T, content, styleName string) []byte {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
@@ -1759,6 +1857,15 @@ func extractStylesFromDOCX(t *testing.T, docxBytes []byte) []string {
 	return styles
 }
 
+func containsStyle(styles []string, want string) bool {
+	for _, style := range styles {
+		if style == want {
+			return true
+		}
+	}
+	return false
+}
+
 // createSimpleDOCX creates a simple DOCX file with the given content for testing
 func createSimpleDOCX(t *testing.T, content string) []byte {
 	var buf bytes.Buffer
@@ -1844,29 +1951,33 @@ func extractTextFromDOCX(t *testing.T, docxBytes []byte) string {
 }
 
 func extractDocumentXMLFromDOCX(t *testing.T, docxBytes []byte) string {
+	return extractPartFromDOCX(t, docxBytes, "word/document.xml")
+}
+
+func extractPartFromDOCX(t *testing.T, docxBytes []byte, partName string) string {
 	r, err := zip.NewReader(bytes.NewReader(docxBytes), int64(len(docxBytes)))
 	if err != nil {
 		t.Fatalf("failed to read zip: %v", err)
 	}
 
 	for _, f := range r.File {
-		if f.Name == "word/document.xml" {
+		if f.Name == partName {
 			rc, err := f.Open()
 			if err != nil {
-				t.Fatalf("failed to open document.xml: %v", err)
+				t.Fatalf("failed to open %s: %v", partName, err)
 			}
 			defer rc.Close()
 
 			content, err := io.ReadAll(rc)
 			if err != nil {
-				t.Fatalf("failed to read document.xml: %v", err)
+				t.Fatalf("failed to read %s: %v", partName, err)
 			}
 
 			return string(content)
 		}
 	}
 
-	t.Fatal("word/document.xml not found in docx")
+	t.Fatalf("%s not found in docx", partName)
 	return ""
 }
 

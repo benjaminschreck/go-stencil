@@ -175,9 +175,33 @@ func firstInlineControlType(text string) (string, int) {
 // GetParagraphText extracts all text from a paragraph
 func GetParagraphText(para *Paragraph) string {
 	var result strings.Builder
+	if len(para.Content) > 0 {
+		for _, content := range para.Content {
+			switch c := content.(type) {
+			case *Run:
+				if c.Text != nil {
+					result.WriteString(c.Text.Content)
+				} else if c.Break != nil {
+					result.WriteByte('\n')
+				}
+			case *Hyperlink:
+				for _, run := range c.Runs {
+					if run.Text != nil {
+						result.WriteString(run.Text.Content)
+					} else if run.Break != nil {
+						result.WriteByte('\n')
+					}
+				}
+			}
+		}
+		return result.String()
+	}
+
 	for _, run := range para.Runs {
 		if run.Text != nil {
 			result.WriteString(run.Text.Content)
+		} else if run.Break != nil {
+			result.WriteByte('\n')
 		}
 	}
 	return result.String()

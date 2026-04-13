@@ -2,6 +2,7 @@ package stencil
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,30 +16,32 @@ var (
 	dotRegex = regexp.MustCompile(`^\.([^.\[]+)`)
 )
 
+const parentDataKey = "\x00go_stencil_parent"
+
 // EvaluateVariable evaluates a variable expression with support for nested field access
 func EvaluateVariable(expression string, data TemplateData) (interface{}, error) {
 	// Trim whitespace
 	expression = strings.TrimSpace(expression)
-	
+
 	logger := GetLogger()
 	if logger.IsDebugMode() {
 		logger.DebugExpression(expression, data)
 	}
-	
+
 	// Handle nil or empty data
 	if data == nil {
 		return nil, nil
 	}
-	
+
 	// Parse the expression into field access parts
 	parts, err := parseFieldAccess(expression)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Start with the data and navigate through the parts
 	current := interface{}(data)
-	
+
 	for _, part := range parts {
 		switch part.Type {
 		case fieldTypeIdentifier:
@@ -48,17 +51,17 @@ func EvaluateVariable(expression string, data TemplateData) (interface{}, error)
 			// Handle bracket notation (could be array index or map key)
 			current = accessBracketField(current, part.Value)
 		}
-		
+
 		// If we hit nil at any point, return nil
 		if current == nil {
 			return nil, nil
 		}
 	}
-	
+
 	if logger.IsDebugMode() {
 		logger.WithField("result", current).Debug("Variable evaluation complete")
 	}
-	
+
 	return current, nil
 }
 
@@ -79,12 +82,12 @@ const (
 func parseFieldAccess(expression string) ([]fieldAccessPart, error) {
 	var parts []fieldAccessPart
 	remaining := expression
-	
+
 	// Parse the initial identifier
 	if remaining == "" {
 		return nil, nil
 	}
-	
+
 	// Find the first part (before any . or [)
 	idx := strings.IndexAny(remaining, ".[")
 	if idx == -1 {
@@ -95,7 +98,7 @@ func parseFieldAccess(expression string) ([]fieldAccessPart, error) {
 		})
 		return parts, nil
 	}
-	
+
 	// Add the initial identifier
 	if idx > 0 {
 		parts = append(parts, fieldAccessPart{
@@ -104,7 +107,7 @@ func parseFieldAccess(expression string) ([]fieldAccessPart, error) {
 		})
 		remaining = remaining[idx:]
 	}
-	
+
 	// Parse remaining parts
 	for remaining != "" {
 		if strings.HasPrefix(remaining, ".") {
@@ -133,7 +136,7 @@ func parseFieldAccess(expression string) ([]fieldAccessPart, error) {
 			return nil, NewEvaluationError(expression, fmt.Errorf("unexpected character"))
 		}
 	}
-	
+
 	return parts, nil
 }
 
@@ -142,10 +145,10 @@ func accessMapField(current interface{}, field string) interface{} {
 	if current == nil {
 		return nil
 	}
-	
+
 	switch v := current.(type) {
 	case TemplateData:
-		return v[field]
+		return accessScopedTemplateDataField(v, field)
 	case map[string]interface{}:
 		return v[field]
 	case map[string]string:
@@ -167,12 +170,12 @@ func accessBracketField(current interface{}, key string) interface{} {
 	if current == nil {
 		return nil
 	}
-	
+
 	// Try to parse as integer for array access
 	if idx, err := strconv.Atoi(key); err == nil {
 		return accessArrayIndex(current, idx)
 	}
-	
+
 	// Otherwise treat as string key (remove quotes if present)
 	key = strings.Trim(key, `'"`)
 	return accessMapField(current, key)
@@ -183,7 +186,7 @@ func accessArrayIndex(current interface{}, index int) interface{} {
 	if current == nil {
 		return nil
 	}
-	
+
 	switch v := current.(type) {
 	case []interface{}:
 		// Handle negative indices (Python-style)
@@ -229,9 +232,107 @@ func accessArrayIndex(current interface{}, index int) interface{} {
 			return v[index]
 		}
 	}
-	
+
 	// Not an array or out of bounds
 	return nil
+}
+
+func newChildTemplateData(parent TemplateData, extraCapacity int) TemplateData {
+	capacity := extraCapacity
+	if capacity < 1 {
+		capacity = 1
+	}
+
+	child := make(TemplateData, capacity+1)
+	if parent != nil {
+		child[parentDataKey] = parent
+	}
+
+	return child
+}
+
+func materializeTemplateData(data TemplateData) TemplateData {
+	if data == nil {
+		return nil
+	}
+
+	flattened := make(TemplateData)
+	materializeTemplateDataInto(flattened, data)
+	return flattened
+}
+
+func materializeTemplateDataInto(dst TemplateData, data TemplateData) {
+	for _, current := range collectTemplateDataChain(data) {
+		for key, value := range current {
+			if key == parentDataKey {
+				continue
+			}
+			dst[key] = value
+		}
+	}
+}
+
+func resolveSpecialContextValue(data TemplateData, key string) (interface{}, bool) {
+	for _, current := range collectTemplateDataScopes(data) {
+		if value, ok := current[key]; ok {
+			return value, true
+		}
+	}
+
+	return nil, false
+}
+
+func accessScopedTemplateDataField(data TemplateData, field string) interface{} {
+	for _, current := range collectTemplateDataScopes(data) {
+		if value, ok := current[field]; ok {
+			return value
+		}
+	}
+
+	return nil
+}
+
+func collectTemplateDataChain(data TemplateData) []TemplateData {
+	scopes := collectTemplateDataScopes(data)
+	for left, right := 0, len(scopes)-1; left < right; left, right = left+1, right-1 {
+		scopes[left], scopes[right] = scopes[right], scopes[left]
+	}
+
+	return scopes
+}
+
+func collectTemplateDataScopes(data TemplateData) []TemplateData {
+	if data == nil {
+		return nil
+	}
+
+	scopes := make([]TemplateData, 0, 4)
+	seen := make(map[uintptr]struct{}, 4)
+
+	for current := data; current != nil; {
+		id := templateDataIdentity(current)
+		if _, exists := seen[id]; exists {
+			break
+		}
+		seen[id] = struct{}{}
+		scopes = append(scopes, current)
+
+		parent, ok := current[parentDataKey].(TemplateData)
+		if !ok {
+			break
+		}
+		current = parent
+	}
+
+	return scopes
+}
+
+func templateDataIdentity(data TemplateData) uintptr {
+	if data == nil {
+		return 0
+	}
+
+	return reflect.ValueOf(data).Pointer()
 }
 
 // FormatValue converts a value to its string representation
@@ -239,7 +340,7 @@ func FormatValue(value interface{}) string {
 	if value == nil {
 		return ""
 	}
-	
+
 	switch v := value.(type) {
 	case string:
 		return v
