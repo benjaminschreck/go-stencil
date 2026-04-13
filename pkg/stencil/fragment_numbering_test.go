@@ -262,6 +262,67 @@ func TestMergedNumberingKeepsAbstractNumsBeforeNums(t *testing.T) {
 	}
 }
 
+func TestCompiledFragmentNumberingPreservesExternalAbstractReference(t *testing.T) {
+	templateDoc := createDOCXWithOptionalNumbering(t,
+		`<w:p><w:r><w:t>{{include "external-ref"}}</w:t></w:r></w:p>`,
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="42">
+    <w:lvl w:ilvl="0">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="decimal"/>
+      <w:lvlText w:val="%1."/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="42">
+    <w:abstractNumId w:val="42"/>
+  </w:num>
+</w:numbering>`,
+		true,
+	)
+	fragmentDoc := createDOCXWithOptionalNumbering(t,
+		`<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="7"/></w:numPr></w:pPr><w:r><w:t>External ref item</w:t></w:r></w:p>`,
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:num w:numId="7">
+    <w:abstractNumId w:val="42"/>
+  </w:num>
+</w:numbering>`,
+		true,
+	)
+
+	tmpl, err := ParseBytes(templateDoc)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	if err := tmpl.AddFragmentFromBytes("external-ref", fragmentDoc); err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
+
+	rendered, err := tmpl.RenderToBytes(nil)
+	if err != nil {
+		t.Fatalf("failed to render template: %v", err)
+	}
+
+	numberingXML := readDOCXPart(t, rendered, "word/numbering.xml")
+	documentXML := readDOCXPart(t, rendered, "word/document.xml")
+	remappedNumID := strconv.Itoa(fragmentNumberingIDFloor)
+
+	if strings.Contains(numberingXML, "__GO_STENCIL_ABSTRACT_REF__") {
+		t.Fatalf("expected compiled numbering path to resolve placeholder, got:\n%s", numberingXML)
+	}
+	if !strings.Contains(numberingXML, `<w:num w:numId="`+remappedNumID+`">`) {
+		t.Fatalf("expected merged numbering.xml to contain remapped numId=%s, got:\n%s", remappedNumID, numberingXML)
+	}
+	if !strings.Contains(numberingXML, `<w:abstractNumId w:val="42"/>`) {
+		t.Fatalf("expected merged numbering.xml to preserve external abstract reference 42, got:\n%s", numberingXML)
+	}
+	if !strings.Contains(documentXML, `<w:numId w:val="`+remappedNumID+`"></w:numId>`) &&
+		!strings.Contains(documentXML, `<w:numId w:val="`+remappedNumID+`"/>`) {
+		t.Fatalf("expected document.xml to reference remapped numId=%s, got:\n%s", remappedNumID, documentXML)
+	}
+}
+
 func createDOCXWithOptionalNumbering(t *testing.T, bodyXML, numberingXML string, includeNumberingRelationship bool) []byte {
 	t.Helper()
 

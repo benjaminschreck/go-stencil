@@ -423,8 +423,7 @@ func renderBodyElementRange(body *Body, plan *bodyRenderPlan, start, end int, da
 				return nil, fmt.Errorf("unmatched {{end}} at element %d", i)
 
 			default:
-				para := cloneParagraph(el)
-				renderedPara, err := RenderParagraphWithContext(para, data, ctx)
+				renderedPara, err := RenderParagraphWithContext(el, data, ctx)
 				if err != nil {
 					return nil, err
 				}
@@ -664,7 +663,13 @@ func renderIncludedFragment(fragmentName string, frag *fragment, data TemplateDa
 	}
 
 	if frag.isDocx && ctx.numbering != nil && len(frag.numberingXML) > 0 {
-		numMap, err := ctx.numbering.ensureFragmentDefinitions(fragmentName, frag.numberingXML, frag.stylesXML)
+		var numMap map[string]string
+		var err error
+		if frag.compiled != nil && frag.compiled.numbering != nil {
+			numMap, err = ctx.numbering.ensureCompiledFragmentDefinitions(fragmentName, frag.compiled.numbering)
+		} else {
+			numMap, err = ctx.numbering.ensureFragmentDefinitions(fragmentName, frag.numberingXML, frag.stylesXML)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to merge numbering for fragment %s: %w", fragmentName, err)
 		}
@@ -1443,9 +1448,8 @@ func RenderTableCell(cell *TableCell, data TemplateData, ctx *renderContext) (*T
 
 	// Convert paragraphs to BodyElements so we can handle multi-paragraph control structures
 	elements := make([]BodyElement, len(cell.Paragraphs))
-	for i, para := range cell.Paragraphs {
-		p := para // Create a copy
-		elements[i] = &p
+	for i := range cell.Paragraphs {
+		elements[i] = &cell.Paragraphs[i]
 	}
 
 	// Use renderElementsWithContext to handle control structures that span multiple paragraphs

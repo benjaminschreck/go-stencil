@@ -182,6 +182,59 @@ func (ctx *numberingContext) ensureFragmentDefinitions(fragmentName string, numb
 	return numMap, nil
 }
 
+func (ctx *numberingContext) ensureCompiledFragmentDefinitions(fragmentName string, compiled *compiledFragmentNumbering) (map[string]string, error) {
+	if compiled == nil {
+		return nil, nil
+	}
+	if existingMap, ok := ctx.fragmentNumMaps[fragmentName]; ok {
+		return existingMap, nil
+	}
+
+	ctx.xml = mergeCompiledNumberingRootAttributes(ctx.xml, compiled.rootAttributes)
+	if len(compiled.abstracts) == 0 && len(compiled.nums) == 0 {
+		ctx.fragmentNumMaps[fragmentName] = map[string]string{}
+		return ctx.fragmentNumMaps[fragmentName], nil
+	}
+
+	abstractMap := make(map[string]string, len(compiled.abstracts))
+	appendedAbstracts := make([]string, 0, len(compiled.abstracts))
+	appendedNums := make([]string, 0, len(compiled.nums))
+
+	for _, block := range compiled.abstracts {
+		newID := strconv.Itoa(ctx.nextAbstractNumID)
+		ctx.nextAbstractNumID++
+		abstractMap[block.oldID] = newID
+		appendedAbstracts = append(appendedAbstracts, strings.ReplaceAll(block.template, "__GO_STENCIL_ABSTRACT_ID__", newID))
+	}
+
+	numMap := make(map[string]string, len(compiled.nums))
+	for _, block := range compiled.nums {
+		newNumID := strconv.Itoa(ctx.nextNumID)
+		ctx.nextNumID++
+		remapped := strings.ReplaceAll(block.template, "__GO_STENCIL_NUM_ID__", newNumID)
+		if block.oldAbstractID != "" {
+			if newAbstractID, exists := abstractMap[block.oldAbstractID]; exists {
+				remapped = strings.ReplaceAll(remapped, "__GO_STENCIL_ABSTRACT_REF__", newAbstractID)
+			} else {
+				// Preserve references to abstract numbering definitions that are not
+				// declared inside the fragment. The legacy path left those IDs intact.
+				remapped = strings.ReplaceAll(remapped, "__GO_STENCIL_ABSTRACT_REF__", block.oldAbstractID)
+			}
+		}
+		appendedNums = append(appendedNums, remapped)
+		numMap[block.oldID] = newNumID
+	}
+
+	ctx.xml = insertNumberingBlocks(ctx.xml, appendedAbstracts, appendedNums)
+	ctx.modified = true
+	ctx.fragmentNumMaps[fragmentName] = numMap
+	if compiled.stylesTemplate != nil && len(numMap) > 0 {
+		ctx.fragmentStylesXML[fragmentName] = compiled.stylesTemplate.render(numMap)
+	}
+
+	return numMap, nil
+}
+
 func (ctx *numberingContext) needsRelationship() bool {
 	return ctx.modified && !ctx.relationshipExists
 }
@@ -313,6 +366,33 @@ func mergeNumberingRootAttributes(baseXML, fragmentXML string) string {
 		}
 		existingAttrs[match[1]] = true
 		additions = append(additions, fmt.Sprintf(`%s="%s"`, match[1], match[2]))
+	}
+	if len(additions) == 0 {
+		return baseXML
+	}
+
+	updatedTag := strings.TrimSuffix(baseTag, ">") + " " + strings.Join(additions, " ") + ">"
+	return strings.Replace(baseXML, baseTag, updatedTag, 1)
+}
+
+func mergeCompiledNumberingRootAttributes(baseXML string, attrs []numberingAttribute) string {
+	baseTag := numberingStartTagRegex.FindString(baseXML)
+	if baseTag == "" || len(attrs) == 0 {
+		return baseXML
+	}
+
+	existingAttrs := make(map[string]bool)
+	for _, match := range numberingAttrRegex.FindAllStringSubmatch(baseTag, -1) {
+		existingAttrs[match[1]] = true
+	}
+
+	additions := make([]string, 0, len(attrs))
+	for _, attr := range attrs {
+		if existingAttrs[attr.name] {
+			continue
+		}
+		existingAttrs[attr.name] = true
+		additions = append(additions, fmt.Sprintf(`%s="%s"`, attr.name, attr.value))
 	}
 	if len(additions) == 0 {
 		return baseXML

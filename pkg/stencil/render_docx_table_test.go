@@ -80,9 +80,9 @@ func TestRenderTableCellWithSplitRuns(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a render context
 			ctx := &renderContext{
-				linkMarkers:      make(map[string]*LinkReplacementMarker),
-				fragments:        make(map[string]*fragment),
-				ooxmlFragments:   make(map[string]interface{}),
+				linkMarkers:    make(map[string]*LinkReplacementMarker),
+				fragments:      make(map[string]*fragment),
+				ooxmlFragments: make(map[string]interface{}),
 			}
 
 			// Render the cell
@@ -130,9 +130,9 @@ func TestMergeConsecutiveRunsInTableCell(t *testing.T) {
 	originalRunCount := len(cell.Paragraphs[0].Runs)
 
 	ctx := &renderContext{
-		linkMarkers:      make(map[string]*LinkReplacementMarker),
-		fragments:        make(map[string]*fragment),
-		ooxmlFragments:   make(map[string]interface{}),
+		linkMarkers:    make(map[string]*LinkReplacementMarker),
+		fragments:      make(map[string]*fragment),
+		ooxmlFragments: make(map[string]interface{}),
 	}
 
 	// This should handle the split runs correctly even though it's a control structure
@@ -144,5 +144,37 @@ func TestMergeConsecutiveRunsInTableCell(t *testing.T) {
 	// Verify that the original cell wasn't modified
 	if len(cell.Paragraphs[0].Runs) != originalRunCount {
 		t.Errorf("RenderTableCell modified the original cell runs")
+	}
+}
+
+func TestRenderTableCellUsesCachedParagraphPlanForOriginalPointer(t *testing.T) {
+	cell := &TableCell{
+		Paragraphs: []Paragraph{
+			{
+				Runs: []Run{
+					{Text: &Text{Content: "{{name}}"}},
+				},
+			},
+		},
+	}
+
+	ctx := &renderContext{
+		linkMarkers:    make(map[string]*LinkReplacementMarker),
+		fragments:      make(map[string]*fragment),
+		ooxmlFragments: make(map[string]interface{}),
+		paragraphPlans: map[*Paragraph]*paragraphRenderPlan{
+			&cell.Paragraphs[0]: {
+				mode: paragraphRenderPlanStatic,
+			},
+		},
+	}
+
+	rendered, err := RenderTableCell(cell, TemplateData{"name": "Jane Doe"}, ctx)
+	if err != nil {
+		t.Fatalf("RenderTableCell returned error: %v", err)
+	}
+
+	if got := strings.TrimSpace(rendered.GetText()); got != "{{name}}" {
+		t.Fatalf("expected cached paragraph plan to be used for original pointer, got %q", got)
 	}
 }

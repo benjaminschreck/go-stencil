@@ -209,158 +209,146 @@ func convertNamespaceURIsToPrefix(xml string) string {
 	return namespaceURIToPrefixReplacer.Replace(xml)
 }
 
-// marshalDocumentWithNamespaces marshals a document with proper namespaces
-func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
-	// First, collect all raw XML elements indexed by a unique marker
+func prepareDocumentRawXML(doc *Document) map[string][]byte {
 	rawXMLMap := make(map[string][]byte)
 	markerIndex := 0
 
-	// Walk through all elements and replace RawXML with markers
+	if doc == nil || doc.Body == nil {
+		return rawXMLMap
+	}
+
 	for _, elem := range doc.Body.Elements {
-		switch el := elem.(type) {
-		case *Paragraph:
-			// Process paragraph properties RawXML
-			if el.Properties != nil && len(el.Properties.RawXML) > 0 {
-				// Create markers for each raw XML element
-				el.Properties.RawXMLMarkers = make([]string, len(el.Properties.RawXML))
-				for i, raw := range el.Properties.RawXML {
-					marker := fmt.Sprintf("__PARA_PROP_MARKER_%d__", markerIndex)
-					rawXMLMap[marker] = raw.Content
-					el.Properties.RawXMLMarkers[i] = marker
-					markerIndex++
-				}
-			}
+		prepareBodyElementRawXML(elem, rawXMLMap, &markerIndex)
+	}
 
-			// Check both Content and Runs for RawXML
-			// Process Content first (if it exists)
-			if len(el.Content) > 0 {
-				for _, content := range el.Content {
-					if run, ok := content.(*Run); ok {
-						if len(run.RawXML) > 0 {
-							// Save the raw XML and create a marker
-							for _, raw := range run.RawXML {
-								marker := fmt.Sprintf("__RAW_XML_MARKER_%d__", markerIndex)
-								rawXMLMap[marker] = raw.Content
-								markerIndex++
+	return rawXMLMap
+}
 
-								// Insert marker as text in the run
-								if run.Text == nil {
-									run.Text = &Text{Content: marker}
-								} else {
-									run.Text.Content += marker
-								}
-							}
-							// Clear RawXML to avoid issues during marshaling
-							run.RawXML = nil
-						}
-					}
-				}
-			}
-
-			// Also process the Runs slice (legacy field)
-			for i := range el.Runs {
-				run := &el.Runs[i]
-				if len(run.RawXML) > 0 {
-					// Save the raw XML and create a marker
-					for _, raw := range run.RawXML {
-						marker := fmt.Sprintf("__RAW_XML_MARKER_%d__", markerIndex)
-						rawXMLMap[marker] = raw.Content
-						markerIndex++
-
-						// Insert marker as text in the run
-						if run.Text == nil {
-							run.Text = &Text{Content: marker}
-						} else {
-							run.Text.Content += marker
-						}
-					}
-					// Clear RawXML to avoid issues during marshaling
-					run.RawXML = nil
+func prepareBodyElementRawXML(elem BodyElement, rawXMLMap map[string][]byte, markerIndex *int) {
+	switch e := elem.(type) {
+	case *Paragraph:
+		prepareParagraphRawXML(e, rawXMLMap, markerIndex)
+	case *Table:
+		for rowIdx := range e.Rows {
+			for cellIdx := range e.Rows[rowIdx].Cells {
+				for paraIdx := range e.Rows[rowIdx].Cells[cellIdx].Paragraphs {
+					prepareParagraphRawXML(&e.Rows[rowIdx].Cells[cellIdx].Paragraphs[paraIdx], rawXMLMap, markerIndex)
 				}
 			}
 		}
 	}
+}
 
-	// First, marshal to get the basic structure
-	data, err := xml.Marshal(doc)
-	if err != nil {
+func prepareParagraphRawXML(para *Paragraph, rawXMLMap map[string][]byte, markerIndex *int) {
+	if para == nil {
+		return
+	}
+
+	if para.Properties != nil && len(para.Properties.RawXML) > 0 {
+		para.Properties.RawXMLMarkers = make([]string, len(para.Properties.RawXML))
+		for i, raw := range para.Properties.RawXML {
+			marker := fmt.Sprintf("__PARA_PROP_MARKER_%d__", *markerIndex)
+			rawXMLMap[marker] = raw.Content
+			para.Properties.RawXMLMarkers[i] = marker
+			*markerIndex = *markerIndex + 1
+		}
+	}
+
+	if len(para.Content) > 0 {
+		for _, content := range para.Content {
+			switch c := content.(type) {
+			case *Run:
+				prepareRunRawXML(c, rawXMLMap, markerIndex)
+			case *Hyperlink:
+				for runIdx := range c.Runs {
+					prepareRunRawXML(&c.Runs[runIdx], rawXMLMap, markerIndex)
+				}
+			}
+		}
+		return
+	}
+
+	for runIdx := range para.Runs {
+		prepareRunRawXML(&para.Runs[runIdx], rawXMLMap, markerIndex)
+	}
+	for linkIdx := range para.Hyperlinks {
+		for runIdx := range para.Hyperlinks[linkIdx].Runs {
+			prepareRunRawXML(&para.Hyperlinks[linkIdx].Runs[runIdx], rawXMLMap, markerIndex)
+		}
+	}
+}
+
+func prepareRunRawXML(run *Run, rawXMLMap map[string][]byte, markerIndex *int) {
+	if run == nil || len(run.RawXML) == 0 {
+		return
+	}
+
+	for _, raw := range run.RawXML {
+		marker := fmt.Sprintf("__RAW_XML_MARKER_%d__", *markerIndex)
+		rawXMLMap[marker] = raw.Content
+		*markerIndex = *markerIndex + 1
+		if run.Text == nil {
+			run.Text = &Text{Content: marker}
+		} else {
+			run.Text.Content += marker
+		}
+	}
+	run.RawXML = nil
+}
+
+func encodeXMLChunk(value interface{}, start xml.StartElement, rawXMLMap map[string][]byte) ([]byte, error) {
+	bufBytes := getBufferBytes()
+	temp := bytes.NewBuffer(bufBytes[:0])
+	encoder := xml.NewEncoder(temp)
+	if err := encoder.EncodeElement(value, start); err != nil {
+		putBufferBytes(temp.Bytes())
+		return nil, err
+	}
+	if err := encoder.Flush(); err != nil {
+		putBufferBytes(temp.Bytes())
 		return nil, err
 	}
 
-	// Convert to string for processing
-	xmlStr := string(data)
+	chunk := postProcessXMLChunk(temp.Bytes(), rawXMLMap)
+	putBufferBytes(temp.Bytes())
+	return []byte(chunk), nil
+}
 
-	// Convert marshaled XML tags and attributes in a couple of single-pass rewrites
-	xmlStr = marshalDocumentTagReplacer.Replace(xmlStr)
-	xmlStr = marshalDocumentCleanupReplacer.Replace(xmlStr)
+func postProcessXMLChunk(chunk []byte, rawXMLMap map[string][]byte) string {
+	xmlChunk := string(chunk)
+	xmlChunk = marshalDocumentTagReplacer.Replace(xmlChunk)
+	xmlChunk = marshalDocumentCleanupReplacer.Replace(xmlChunk)
+	xmlChunk = rewritePrefixInsideTags(xmlChunk, "main:", "w:")
+	xmlChunk = rewritePrefixInsideTags(xmlChunk, "wordml:", "w14:")
 
-	// Now replace markers with actual raw XML (AFTER attribute fixing)
-	// IMPORTANT: Raw XML elements (like drawings) must be siblings of <w:t>, not children
-	// So we need to replace <w:t>marker</w:t> with just the raw XML (no text wrapper)
 	for marker, rawXML := range rawXMLMap {
-		if strings.Contains(xmlStr, marker) {
-			// Convert full namespace URIs to namespace prefixes in the raw XML
-			cleanedXML := convertNamespaceURIsToPrefix(string(rawXML))
+		if !strings.Contains(xmlChunk, marker) {
+			continue
+		}
 
-			// Check if this is a paragraph property marker
-			if strings.HasPrefix(marker, "__PARA_PROP_MARKER_") {
-				// Replace the entire <rawXMLMarker>marker</rawXMLMarker> pattern with the cleaned XML
-				markerElement := fmt.Sprintf("<rawXMLMarker>%s</rawXMLMarker>", marker)
-				xmlStr = strings.ReplaceAll(xmlStr, markerElement, cleanedXML)
-			} else {
-				// Replace the entire <w:t>marker</w:t> pattern with just the cleaned XML
-				// This ensures drawings are siblings of text elements, not children
-				textWithMarker := fmt.Sprintf("<w:t>%s</w:t>", marker)
-				textWithMarkerPreserve := fmt.Sprintf(`<w:t xml:space="preserve">%s</w:t>`, marker)
+		cleanedXML := convertNamespaceURIsToPrefix(string(rawXML))
+		if strings.HasPrefix(marker, "__PARA_PROP_MARKER_") {
+			markerElement := fmt.Sprintf("<rawXMLMarker>%s</rawXMLMarker>", marker)
+			xmlChunk = strings.ReplaceAll(xmlChunk, markerElement, cleanedXML)
+			continue
+		}
 
-				if strings.Contains(xmlStr, textWithMarker) {
-					xmlStr = strings.ReplaceAll(xmlStr, textWithMarker, cleanedXML)
-				} else if strings.Contains(xmlStr, textWithMarkerPreserve) {
-					xmlStr = strings.ReplaceAll(xmlStr, textWithMarkerPreserve, cleanedXML)
-				} else {
-					// Fallback: marker might be part of text with other content
-					// In this case, just replace the marker (but this may still cause issues)
-					xmlStr = strings.ReplaceAll(xmlStr, marker, cleanedXML)
-				}
-			}
+		textWithMarker := fmt.Sprintf("<w:t>%s</w:t>", marker)
+		textWithMarkerPreserve := fmt.Sprintf(`<w:t xml:space="preserve">%s</w:t>`, marker)
+		if strings.Contains(xmlChunk, textWithMarker) {
+			xmlChunk = strings.ReplaceAll(xmlChunk, textWithMarker, cleanedXML)
+		} else if strings.Contains(xmlChunk, textWithMarkerPreserve) {
+			xmlChunk = strings.ReplaceAll(xmlChunk, textWithMarkerPreserve, cleanedXML)
+		} else {
+			xmlChunk = strings.ReplaceAll(xmlChunk, marker, cleanedXML)
 		}
 	}
 
-	// Normalize ad-hoc namespace prefixes produced by encoding/xml for preserved attributes.
-	// We keep the original document-level declarations and rewrite element-local prefixes.
-	xmlStr = marshalDocumentCleanupReplacer.Replace(xmlStr)
-	xmlStr = rewritePrefixInsideTags(xmlStr, "main:", "w:")
-	xmlStr = rewritePrefixInsideTags(xmlStr, "wordml:", "w14:")
+	return xmlChunk
+}
 
-	// Add proper document declaration and root element with namespaces
-	var buf bytes.Buffer
-	buf.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
-	buf.WriteString("\n")
-
-	// Build root element with preserved namespace attributes
-	buf.WriteString("<w:document")
-
-	// Add all preserved namespace attributes from the original document
-	if len(doc.Attrs) > 0 {
-		for _, attr := range doc.Attrs {
-			// Skip the default xmlns declaration since we're using w:document
-			if attr.Name.Local == "xmlns" && attr.Name.Space == "" {
-				continue
-			}
-			buf.WriteString(" ")
-			if attr.Name.Space != "" {
-				// Convert namespace URI to prefix
-				prefix := namespaceURIToPrefix(attr.Name.Space)
-				buf.WriteString(prefix)
-				buf.WriteString(":")
-			}
-			buf.WriteString(attr.Name.Local)
-			buf.WriteString(`="`)
-			buf.WriteString(attr.Value)
-			buf.WriteString(`"`)
-		}
-	} else {
-		// Fallback to minimal namespaces if no attributes preserved
+func appendRootAttributes(buf *bytes.Buffer, attrs []xml.Attr) {
+	if len(attrs) == 0 {
 		buf.WriteString(` xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"`)
 		buf.WriteString(` xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"`)
 		buf.WriteString(` xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"`)
@@ -368,58 +356,87 @@ func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
 		buf.WriteString(` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"`)
 		buf.WriteString(` xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"`)
 		buf.WriteString(` xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main"`)
+		return
 	}
 
-	buf.WriteString(">")
-
-	// Extract the body content (remove the outer document tags we added)
-	start := strings.Index(xmlStr, "<w:document>")
-	end := strings.LastIndex(xmlStr, "</w:document>")
-	if start >= 0 && end > start {
-		bodyContent := xmlStr[start+len("<w:document>") : end]
-		// Trim any whitespace/newlines that might cause issues
-		bodyContent = strings.TrimSpace(bodyContent)
-		// Ensure body content starts with an element tag
-		if !strings.HasPrefix(bodyContent, "<") {
-			return nil, fmt.Errorf("invalid body content: doesn't start with '<': %s", bodyContent[:min(50, len(bodyContent))])
+	for _, attr := range attrs {
+		if attr.Name.Local == "xmlns" && attr.Name.Space == "" {
+			continue
 		}
+		buf.WriteString(" ")
+		if attr.Name.Space != "" {
+			buf.WriteString(namespaceURIToPrefix(attr.Name.Space))
+			buf.WriteString(":")
+		}
+		buf.WriteString(attr.Name.Local)
+		buf.WriteString(`="`)
+		buf.WriteString(attr.Value)
+		buf.WriteString(`"`)
+	}
+}
 
-		// Insert section properties before </w:body> if present
-		if doc.Body != nil && doc.Body.SectionProperties != nil {
-			// Find the closing </w:body> tag
-			bodyEndTag := "</w:body>"
-			bodyEndIdx := strings.LastIndex(bodyContent, bodyEndTag)
-			if bodyEndIdx >= 0 {
-				// Build the section properties XML with namespace conversion
-				var sectBuf bytes.Buffer
-				sectBuf.WriteString("<w:sectPr")
+func writeSectionPropertiesXML(buf *bytes.Buffer, raw *RawXMLElement) {
+	if raw == nil {
+		return
+	}
 
-				// Add attributes
-				for _, attr := range doc.Body.SectionProperties.Attrs {
-					sectBuf.WriteString(" w:")
-					sectBuf.WriteString(attr.Name.Local)
-					sectBuf.WriteString(`="`)
-					sectBuf.WriteString(attr.Value)
-					sectBuf.WriteString(`"`)
+	buf.WriteString("<w:sectPr")
+	for _, attr := range raw.Attrs {
+		buf.WriteString(" ")
+		if attr.Name.Space != "" {
+			buf.WriteString(namespaceURIToPrefix(attr.Name.Space))
+			buf.WriteString(":")
+		} else {
+			buf.WriteString("w:")
+		}
+		buf.WriteString(attr.Name.Local)
+		buf.WriteString(`="`)
+		buf.WriteString(attr.Value)
+		buf.WriteString(`"`)
+	}
+	buf.WriteString(">")
+	buf.WriteString(convertNamespaceURIsToPrefix(string(raw.Content)))
+	buf.WriteString("</w:sectPr>")
+}
+
+// marshalDocumentWithNamespaces marshals a document with proper namespaces
+func marshalDocumentWithNamespaces(doc *Document) ([]byte, error) {
+	rawXMLMap := prepareDocumentRawXML(doc)
+
+	var buf bytes.Buffer
+	buf.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
+	buf.WriteString("\n")
+	buf.WriteString("<w:document")
+	if doc != nil {
+		appendRootAttributes(&buf, doc.Attrs)
+	} else {
+		appendRootAttributes(&buf, nil)
+	}
+	buf.WriteString(">")
+	buf.WriteString("<w:body>")
+
+	if doc != nil && doc.Body != nil {
+		for _, elem := range doc.Body.Elements {
+			switch el := elem.(type) {
+			case *Paragraph:
+				chunk, err := encodeXMLChunk(el, xml.StartElement{Name: xml.Name{Local: "w:p"}}, rawXMLMap)
+				if err != nil {
+					return nil, err
 				}
-				sectBuf.WriteString(">")
-
-				// Add content with namespace conversion
-				sectContent := convertNamespaceURIsToPrefix(string(doc.Body.SectionProperties.Content))
-
-				sectBuf.WriteString(sectContent)
-				sectBuf.WriteString("</w:sectPr>")
-
-				// Insert section properties before </w:body>
-				bodyContent = bodyContent[:bodyEndIdx] + sectBuf.String() + bodyContent[bodyEndIdx:]
+				buf.Write(chunk)
+			case *Table:
+				chunk, err := encodeXMLChunk(el, xml.StartElement{Name: xml.Name{Local: "w:tbl"}}, rawXMLMap)
+				if err != nil {
+					return nil, err
+				}
+				buf.Write(chunk)
 			}
 		}
-
-		buf.WriteString(bodyContent)
+		writeSectionPropertiesXML(&buf, doc.Body.SectionProperties)
 	}
 
+	buf.WriteString(`</w:body>`)
 	buf.WriteString(`</w:document>`)
-
 	return buf.Bytes(), nil
 }
 

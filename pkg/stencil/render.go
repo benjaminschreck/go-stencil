@@ -50,161 +50,108 @@ func RenderParagraph(para *Paragraph, data TemplateData) (*Paragraph, error) {
 
 // RenderParagraphWithContext renders a paragraph with context
 func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderContext) (*Paragraph, error) {
-	fullText := buildParagraphRenderText(para)
-	if !strings.Contains(fullText, "{{") {
+	plan := resolveParagraphRenderPlan(para, ctx)
+	if plan == nil {
+		plan = compileParagraphRenderPlan(para)
+	}
+	if plan != nil && plan.mode == paragraphRenderPlanStatic {
 		return cloneParagraph(para), nil
 	}
 
 	// Proofing markers (w:proofErr) can split template tokens across runs.
 	// Keep a legacy run-only view for rendering in those paragraphs so
 	// split variables like "{{" + "name" + "}}" still evaluate.
-	useLegacyRunRendering := false
+	useLegacyRunRendering := plan != nil && plan.useLegacyRunRendering
 	var legacyRuns []Run
-	if len(para.Content) > 0 {
-		hasProofErr := false
-		hasHyperlink := false
-		for _, content := range para.Content {
-			switch content.(type) {
-			case *ProofErr:
-				hasProofErr = true
-			case *Hyperlink:
-				hasHyperlink = true
-			}
-		}
-
-		useLegacyRunRendering = hasProofErr && !hasHyperlink
-		if useLegacyRunRendering {
-			baseRuns := para.Runs
-			if len(baseRuns) == 0 {
-				baseRuns = make([]Run, 0, len(para.Content))
-				for _, content := range para.Content {
-					if run, ok := content.(*Run); ok {
-						baseRuns = append(baseRuns, *run)
-					}
-				}
-			}
-
-			legacyRuns = cloneRunsForLegacyRendering(baseRuns)
-			legacyPara := &Paragraph{Runs: legacyRuns}
-			render.MergeConsecutiveRuns(legacyPara)
-			legacyRuns = legacyPara.Runs
-		}
+	if len(plan.legacyRuns) > 0 {
+		legacyRuns = cloneRunsForLegacyRendering(plan.legacyRuns)
 	}
 
 	// CRITICAL: Merge consecutive runs FIRST to handle split template markers
 	// This must happen before we check for control structures, especially for
 	// paragraphs generated during for loop iterations in fragments
-	render.MergeConsecutiveRuns(para)
+	sourcePara := para
+	if plan != nil && plan.mergedParagraph != nil {
+		sourcePara = plan.mergedParagraph
+	} else {
+		sourcePara = cloneParagraph(para)
+		render.MergeConsecutiveRuns(sourcePara)
+	}
 
 	// Check if we have control structures
 	// Note: We only check for actual control structure tokens, not variable tokens
-	tokens := Tokenize(fullText)
-	hasControlStructures := false
-	for _, token := range tokens {
-		switch token.Type {
-		case TokenIf, TokenFor, TokenUnless, TokenElse, TokenElsif, TokenEnd, TokenInclude:
-			hasControlStructures = true
-		}
-	}
+	hasControlStructures := plan != nil && plan.mode == paragraphRenderPlanControl
 
 	// If we have control structures, parse and render them
 	// Only use control structure processing when actual control structures are present
 	if hasControlStructures {
-		// DEBUG: This should not happen for simple variable substitution
-		// fmt.Printf("DEBUG: Control structure processing for text: %q\n", fullText)
-		// Parse the control structures
-		structures, err := ParseControlStructures(fullText)
-		// Only proceed if we successfully parsed control structures
-		if err == nil && len(structures) > 0 {
-			// Check if we actually have control structure nodes (not just text/expression nodes)
-			hasActualControlStructures := false
-			for _, structure := range structures {
-				switch structure.(type) {
-				case *IfNode, *ForNode, *UnlessNode, *IncludeNode:
-					hasActualControlStructures = true
-				}
-			}
+		inlineRendered, handled, err := tryRenderInlineControlParagraph(sourcePara, data, ctx, useLegacyRunRendering, legacyRuns)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			return inlineRendered, nil
+		}
 
-			// Only use control structure rendering if we have actual control structures
-			if hasActualControlStructures {
-				inlineRendered, handled, err := tryRenderInlineControlParagraph(para, data, ctx, useLegacyRunRendering, legacyRuns)
-				if err != nil {
-					return nil, err
-				}
-				if handled {
-					return inlineRendered, nil
-				}
+		renderedText, err := renderControlBodyWithContext(plan.controlStructures, data, ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render control structures in paragraph: %w", err)
+		}
 
-				// This should not be reached for simple variable substitution
-				// Render the control structures
-				renderedText, err := renderControlBodyWithContext(structures, data, ctx)
-				if err != nil {
-					return nil, fmt.Errorf("failed to render control structures in paragraph: %w", err)
-				}
+		rendered := &Paragraph{
+			Properties: sourcePara.Properties,
+			Attrs:      sourcePara.Attrs,
+		}
 
-				// Create a new paragraph with the rendered text
-				rendered := &Paragraph{
-					Properties: para.Properties,
-					Attrs:      para.Attrs,
-				}
+		if len(sourcePara.Runs) > 0 {
+			lines := strings.Split(renderedText, "\n")
 
-				// Convert the rendered text into runs, preserving line breaks
-				if len(para.Runs) > 0 {
-					// Split the rendered text by newlines to preserve line breaks
-					lines := strings.Split(renderedText, "\n")
+			for i, line := range lines {
+				if line != "" {
+					textRun := Run{
+						Properties: sourcePara.Runs[0].Properties,
+						Attrs:      sourcePara.Runs[0].Attrs,
+						Text: &Text{
+							Content: line,
+						},
+					}
 
-					for i, line := range lines {
-						if line != "" {
-							// Create a text run for this line
-							textRun := Run{
-								Properties: para.Runs[0].Properties,
-								Attrs:      para.Runs[0].Attrs,
-								Text: &Text{
-									Content: line,
-								},
-							}
-
-							// Check if the run contains OOXML fragments that need to be expanded
-							if ooxmlFragmentRegex.MatchString(line) {
-								// Process the run to handle OOXML fragments
-								expandedRuns, err := expandOOXMLFragments(&textRun, data, ctx)
-								if err != nil {
-									return nil, err
-								}
-								rendered.Runs = append(rendered.Runs, expandedRuns...)
-							} else {
-								rendered.Runs = append(rendered.Runs, textRun)
-							}
+					if ooxmlFragmentRegex.MatchString(line) {
+						expandedRuns, err := expandOOXMLFragments(&textRun, data, ctx)
+						if err != nil {
+							return nil, err
 						}
-
-						// Add a line break run between lines (but not after the last line)
-						if i < len(lines)-1 {
-							breakRun := Run{
-								Properties: para.Runs[0].Properties,
-								Attrs:      para.Runs[0].Attrs,
-								Break:      &Break{},
-							}
-							rendered.Runs = append(rendered.Runs, breakRun)
-						}
+						rendered.Runs = append(rendered.Runs, expandedRuns...)
+					} else {
+						rendered.Runs = append(rendered.Runs, textRun)
 					}
 				}
 
-				return rendered, nil
+				if i < len(lines)-1 {
+					breakRun := Run{
+						Properties: sourcePara.Runs[0].Properties,
+						Attrs:      sourcePara.Runs[0].Attrs,
+						Break:      &Break{},
+					}
+					rendered.Runs = append(rendered.Runs, breakRun)
+				}
 			}
 		}
+
+		return rendered, nil
 	}
 
 	// Otherwise, render normally
 	rendered := &Paragraph{
-		Properties: para.Properties,
-		Attrs:      para.Attrs,
+		Properties: sourcePara.Properties,
+		Attrs:      sourcePara.Attrs,
 	}
 
 	// Use Content if available to preserve order of runs and hyperlinks.
 	// For proofErr-only mixed content, fall back to run rendering so split
 	// template tokens can still be evaluated.
-	if len(para.Content) > 0 && !useLegacyRunRendering {
-		for _, content := range para.Content {
+	if len(sourcePara.Content) > 0 && !useLegacyRunRendering {
+		for _, content := range sourcePara.Content {
 			switch c := content.(type) {
 			case *Run:
 				renderedRun, err := RenderRunWithContext(c, data, ctx)
@@ -241,7 +188,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 	} else {
 		// Fall back to legacy fields
 		// Render runs
-		runsToRender := para.Runs
+		runsToRender := sourcePara.Runs
 		if useLegacyRunRendering {
 			runsToRender = legacyRuns
 		}
@@ -265,7 +212,7 @@ func RenderParagraphWithContext(para *Paragraph, data TemplateData, ctx *renderC
 		}
 
 		// Render hyperlinks
-		for _, hyperlink := range para.Hyperlinks {
+		for _, hyperlink := range sourcePara.Hyperlinks {
 			renderedHyperlink, err := RenderHyperlinkWithContext(&hyperlink, data, ctx)
 			if err != nil {
 				return nil, err

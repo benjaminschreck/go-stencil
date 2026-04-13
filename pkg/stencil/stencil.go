@@ -3,7 +3,6 @@ package stencil
 import (
 	"archive/zip"
 	"bytes"
-	"compress/flate"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -40,6 +39,7 @@ type templateRenderResources struct {
 	fragmentFontOverrides map[string]fragmentFontOverrides
 	mergedStylesCache     map[string][]byte
 	bodyPlans             map[*Body]*bodyRenderPlan
+	paragraphPlans        map[*Paragraph]*paragraphRenderPlan
 	cacheMu               sync.RWMutex
 }
 
@@ -55,6 +55,7 @@ type fragment struct {
 	numberingXML  []byte            // from word/numbering.xml
 	stylesXML     []byte            // from word/styles.xml
 	namespaces    map[string]string // prefix -> URI, extracted from fragment document
+	compiled      *compiledFragmentMetadata
 }
 
 // renderContext holds the context during rendering (internal use)
@@ -78,6 +79,7 @@ type renderContext struct {
 	// Namespace collection
 	collectedNamespaces map[string]string // prefix -> URI, collected from all fragments
 	bodyPlans           map[*Body]*bodyRenderPlan
+	paragraphPlans      map[*Paragraph]*paragraphRenderPlan
 }
 
 // PreparedTemplate represents a compiled template ready for rendering.
@@ -430,60 +432,36 @@ func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext)
 	headerFooter.Paragraphs = renderedParas
 	headerFooter.Tables = renderedTables
 
-	// Create a map to track runs with RawXML that need to be injected
 	rawXMLMap := make(map[string][]byte)
 	markerIndex := 0
-
-	// Replace RawXML with markers before marshaling
 	for _, p := range renderedParas {
-		for i := range p.Runs {
-			if len(p.Runs[i].RawXML) > 0 {
-				// Create a marker
-				marker := fmt.Sprintf("__RAWXML_MARKER_%d__", markerIndex)
-				markerIndex++
-
-				// Collect all RawXML content
-				var rawContent bytes.Buffer
-				for _, raw := range p.Runs[i].RawXML {
-					rawContent.Write(raw.Content)
+		prepareParagraphRawXML(p, rawXMLMap, &markerIndex)
+	}
+	for tableIdx := range renderedTables {
+		for rowIdx := range renderedTables[tableIdx].Rows {
+			for cellIdx := range renderedTables[tableIdx].Rows[rowIdx].Cells {
+				for paraIdx := range renderedTables[tableIdx].Rows[rowIdx].Cells[cellIdx].Paragraphs {
+					prepareParagraphRawXML(&renderedTables[tableIdx].Rows[rowIdx].Cells[cellIdx].Paragraphs[paraIdx], rawXMLMap, &markerIndex)
 				}
-
-				// Store the raw XML
-				rawXMLMap[marker] = rawContent.Bytes()
-
-				// Replace RawXML with a text marker
-				p.Runs[i].Text = &Text{Content: marker}
-				p.Runs[i].RawXML = nil
 			}
 		}
 	}
 
-	// Marshal the body elements
 	var bodyXML bytes.Buffer
-	encoder := xml.NewEncoder(&bodyXML)
 	for _, p := range renderedParas {
-		if err := encoder.Encode(p); err != nil {
+		chunk, err := encodeXMLChunk(p, xml.StartElement{Name: xml.Name{Local: "w:p"}}, rawXMLMap)
+		if err != nil {
 			return nil, fmt.Errorf("failed to encode paragraph: %w", err)
 		}
+		bodyXML.Write(chunk)
 	}
 	for _, t := range renderedTables {
-		if err := encoder.Encode(t); err != nil {
+		chunk, err := encodeXMLChunk(t, xml.StartElement{Name: xml.Name{Local: "w:tbl"}}, rawXMLMap)
+		if err != nil {
 			return nil, fmt.Errorf("failed to encode table: %w", err)
 		}
+		bodyXML.Write(chunk)
 	}
-	encoder.Flush()
-
-	// Replace markers with actual RawXML
-	bodyXMLStr := bodyXML.String()
-	for marker, rawXML := range rawXMLMap {
-		// The marker will be inside <w:t>marker</w:t>, replace the entire text element
-		bodyXMLStr = strings.Replace(bodyXMLStr,
-			fmt.Sprintf("<w:t>%s</w:t>", marker),
-			string(rawXML),
-			1)
-	}
-	bodyXML.Reset()
-	bodyXML.WriteString(bodyXMLStr)
 
 	// Extract the opening tag with namespaces from the original content
 	contentStr := string(content)
@@ -577,6 +555,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		fragmentFontOverrides:  resources.fragmentFontOverrides,
 		collectedNamespaces:    make(map[string]string),
 		bodyPlans:              resources.bodyPlans,
+		paragraphPlans:         resources.paragraphPlans,
 	}
 
 	// Collect namespaces from the main template document (V5: REQUIRED)
@@ -660,7 +639,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	buf := new(bytes.Buffer)
 	w := zip.NewWriter(buf)
 	w.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
-		return flate.NewWriter(out, flate.BestSpeed)
+		return newPooledFlateWriter(out)
 	})
 
 	// Copy all parts from the original DOCX
@@ -1112,6 +1091,9 @@ func (pt *PreparedTemplate) AddFragment(name string, content string) error {
 		parsed:  parsed,
 		isDocx:  false,
 	}
+	if err := compileFragmentMetadata(frag); err != nil {
+		return fmt.Errorf("failed to compile fragment metadata: %w", err)
+	}
 
 	pt.template.fragments[name] = frag
 	pt.template.invalidateRenderResources()
@@ -1259,6 +1241,9 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 		stylesXML:     stylesXML,
 		namespaces:    namespaces,
 	}
+	if err := compileFragmentMetadata(frag); err != nil {
+		return fmt.Errorf("failed to compile fragment metadata: %w", err)
+	}
 
 	pt.template.fragments[name] = frag
 	pt.template.invalidateRenderResources()
@@ -1315,6 +1300,7 @@ func (t *template) refreshRenderResources() (*templateRenderResources, error) {
 		fragmentFontOverrides: fragmentFontOverrides,
 		mergedStylesCache:     make(map[string][]byte),
 		bodyPlans:             buildTemplateBodyPlans(t.document, t.fragments),
+		paragraphPlans:        buildTemplateParagraphPlans(t.document, t.fragments),
 	}
 	t.renderResources = resources
 	return resources, nil
