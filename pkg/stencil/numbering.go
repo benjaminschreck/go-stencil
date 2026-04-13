@@ -43,6 +43,37 @@ type numberingContext struct {
 	fragmentStylesXML  map[string][]byte
 }
 
+func (ctx *numberingContext) clone() *numberingContext {
+	if ctx == nil {
+		return nil
+	}
+
+	cloned := &numberingContext{
+		xml:                ctx.xml,
+		existsInTemplate:   ctx.existsInTemplate,
+		relationshipExists: ctx.relationshipExists,
+		modified:           ctx.modified,
+		nextAbstractNumID:  ctx.nextAbstractNumID,
+		nextNumID:          ctx.nextNumID,
+		fragmentNumMaps:    make(map[string]map[string]string, len(ctx.fragmentNumMaps)),
+		fragmentStylesXML:  make(map[string][]byte, len(ctx.fragmentStylesXML)),
+	}
+
+	for name, numMap := range ctx.fragmentNumMaps {
+		clonedMap := make(map[string]string, len(numMap))
+		for oldID, newID := range numMap {
+			clonedMap[oldID] = newID
+		}
+		cloned.fragmentNumMaps[name] = clonedMap
+	}
+
+	for name, stylesXML := range ctx.fragmentStylesXML {
+		cloned.fragmentStylesXML[name] = append([]byte(nil), stylesXML...)
+	}
+
+	return cloned
+}
+
 func newNumberingContext(docxReader *DocxReader) (*numberingContext, error) {
 	ctx := &numberingContext{
 		xml:               defaultNumberingXML(),

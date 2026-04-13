@@ -8,6 +8,7 @@ import (
 	"io"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -22,12 +23,22 @@ const (
 
 // template represents a parsed template document (internal use)
 type template struct {
-	docxReader *DocxReader
-	document   *Document
-	source     []byte
-	fragments  map[string]*fragment
-	closed     bool
-	mu         sync.RWMutex
+	docxReader      *DocxReader
+	document        *Document
+	source          []byte
+	fragments       map[string]*fragment
+	renderResources *templateRenderResources
+	closed          bool
+	mu              sync.RWMutex
+}
+
+type templateRenderResources struct {
+	mainNamespaces        map[string]string
+	mainStylesXML         []byte
+	mergedStylesXML       []byte
+	fragmentStyleNames    []string
+	baseNumbering         *numberingContext
+	fragmentFontOverrides map[string]fragmentFontOverrides
 }
 
 // fragment represents a reusable template fragment (internal use)
@@ -126,6 +137,10 @@ func prepare(r io.Reader) (*PreparedTemplate, error) {
 		document:   doc,
 		source:     source,
 		fragments:  make(map[string]*fragment),
+	}
+
+	if _, err := tmpl.ensureRenderResources(); err != nil {
+		return nil, err
 	}
 
 	return &PreparedTemplate{
@@ -472,15 +487,13 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		renderData["__functions__"] = pt.registry
 	}
 
-	// Create render context
-	numberingCtx, err := newNumberingContext(pt.template.docxReader)
+	resources, err := pt.template.ensureRenderResources()
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize numbering context: %w", err)
+		return nil, fmt.Errorf("failed to prepare template render resources: %w", err)
 	}
-	var fragmentFontOverrides map[string]fragmentFontOverrides
-	if mainStylesXML, err := pt.template.docxReader.GetPart("word/styles.xml"); err == nil {
-		fragmentFontOverrides = buildFragmentFontOverrideMap(mainStylesXML, pt.template.fragments)
-	}
+
+	// Create render context
+	numberingCtx := resources.baseNumbering.clone()
 
 	renderCtx := &renderContext{
 		linkMarkers:            make(map[string]*LinkReplacementMarker),
@@ -494,16 +507,13 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		nextFragmentIDRange:    FragmentIDRangeStart,
 		fragmentResourcesAdded: make(map[string]bool),
 		numbering:              numberingCtx,
-		fragmentFontOverrides:  fragmentFontOverrides,
+		fragmentFontOverrides:  resources.fragmentFontOverrides,
 		collectedNamespaces:    make(map[string]string),
 	}
 
 	// Collect namespaces from the main template document (V5: REQUIRED)
-	if pt.template.document != nil {
-		mainNamespaces := pt.template.document.ExtractNamespaces()
-		for prefix, uri := range mainNamespaces {
-			renderCtx.collectedNamespaces[prefix] = uri
-		}
+	for prefix, uri := range resources.mainNamespaces {
+		renderCtx.collectedNamespaces[prefix] = uri
 	}
 
 	// First pass: render the document with variable substitution
@@ -692,40 +702,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
 		} else if file.Name == "word/styles.xml" {
-			// Merge styles from fragments
-			fr, err := file.Open()
-			if err != nil {
-				return nil, fmt.Errorf("failed to open %s: %w", file.Name, err)
-			}
-			mainStyles, err := io.ReadAll(fr)
-			fr.Close()
-			if err != nil {
-				return nil, fmt.Errorf("failed to read %s: %w", file.Name, err)
-			}
-
-			// Collect fragment styles
-			var fragmentStyles [][]byte
-			for name, frag := range pt.template.fragments {
-				if frag.isDocx && len(frag.stylesXML) > 0 {
-					stylesXML := frag.stylesXML
-					if renderCtx.numbering != nil {
-						if remappedStyles, ok := renderCtx.numbering.fragmentStylesXML[name]; ok {
-							stylesXML = remappedStyles
-						}
-					}
-					fragmentStyles = append(fragmentStyles, stylesXML)
-				}
-			}
-
-			// Merge styles if we have fragments with styles
-			mergedStyles := mainStyles
-			if len(fragmentStyles) > 0 {
-				mergedStyles, err = mergeStyles(mainStyles, fragmentStyles...)
-				if err != nil {
-					// If merge fails, use original styles
-					mergedStyles = mainStyles
-				}
-			}
+			mergedStyles := resources.stylesXMLForRender(renderCtx.numbering, pt.template.fragments)
 
 			// Write merged styles
 			fw, err := w.Create(file.Name)
@@ -1023,7 +1000,8 @@ func (pt *PreparedTemplate) AddFragment(name string, content string) error {
 	}
 
 	pt.template.fragments[name] = frag
-	return nil
+	_, err = pt.template.refreshRenderResources()
+	return err
 }
 
 // AddFragmentFromBytes adds a DOCX fragment from raw bytes.
@@ -1163,7 +1141,106 @@ func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) 
 	}
 
 	pt.template.fragments[name] = frag
-	return nil
+	_, err = pt.template.refreshRenderResources()
+	return err
+}
+
+func (t *template) invalidateRenderResources() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.renderResources = nil
+}
+
+func (t *template) ensureRenderResources() (*templateRenderResources, error) {
+	t.mu.RLock()
+	resources := t.renderResources
+	t.mu.RUnlock()
+	if resources != nil {
+		return resources, nil
+	}
+
+	return t.refreshRenderResources()
+}
+
+func (t *template) refreshRenderResources() (*templateRenderResources, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	mainNamespaces := make(map[string]string)
+	if t.document != nil {
+		for prefix, uri := range t.document.ExtractNamespaces() {
+			mainNamespaces[prefix] = uri
+		}
+	}
+
+	baseNumbering, err := newNumberingContext(t.docxReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize numbering context: %w", err)
+	}
+
+	var mainStylesXML []byte
+	if t.docxReader != nil {
+		if stylesXML, err := t.docxReader.GetPart("word/styles.xml"); err == nil {
+			mainStylesXML = append([]byte(nil), stylesXML...)
+		}
+	}
+
+	var fragmentStyleNames []string
+	for name, frag := range t.fragments {
+		if frag != nil && frag.isDocx && len(frag.stylesXML) > 0 {
+			fragmentStyleNames = append(fragmentStyleNames, name)
+		}
+	}
+	sort.Strings(fragmentStyleNames)
+
+	fragmentFontOverrides := buildFragmentFontOverrideMap(mainStylesXML, t.fragments)
+
+	mergedStylesXML := mainStylesXML
+	if len(mainStylesXML) > 0 && len(fragmentStyleNames) > 0 {
+		fragmentStyles := make([][]byte, 0, len(fragmentStyleNames))
+		for _, name := range fragmentStyleNames {
+			fragmentStyles = append(fragmentStyles, t.fragments[name].stylesXML)
+		}
+		if merged, err := mergeStyles(mainStylesXML, fragmentStyles...); err == nil {
+			mergedStylesXML = merged
+		}
+	}
+
+	resources := &templateRenderResources{
+		mainNamespaces:        mainNamespaces,
+		mainStylesXML:         mainStylesXML,
+		mergedStylesXML:       mergedStylesXML,
+		fragmentStyleNames:    fragmentStyleNames,
+		baseNumbering:         baseNumbering,
+		fragmentFontOverrides: fragmentFontOverrides,
+	}
+	t.renderResources = resources
+	return resources, nil
+}
+
+func (r *templateRenderResources) stylesXMLForRender(numbering *numberingContext, fragments map[string]*fragment) []byte {
+	if r == nil {
+		return nil
+	}
+	if numbering == nil || len(numbering.fragmentStylesXML) == 0 || len(r.fragmentStyleNames) == 0 || len(r.mainStylesXML) == 0 {
+		return r.mergedStylesXML
+	}
+
+	fragmentStyles := make([][]byte, 0, len(r.fragmentStyleNames))
+	for _, name := range r.fragmentStyleNames {
+		stylesXML := fragments[name].stylesXML
+		if remappedStyles, ok := numbering.fragmentStylesXML[name]; ok {
+			stylesXML = remappedStyles
+		}
+		fragmentStyles = append(fragmentStyles, stylesXML)
+	}
+
+	mergedStyles, err := mergeStyles(r.mainStylesXML, fragmentStyles...)
+	if err != nil {
+		return r.mergedStylesXML
+	}
+	return mergedStyles
 }
 
 // wrapInDocumentXML wraps plain text content in minimal document XML structure
