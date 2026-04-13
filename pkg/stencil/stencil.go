@@ -81,10 +81,62 @@ type renderContext struct {
 // PreparedTemplate represents a compiled template ready for rendering.
 // Use Prepare() or PrepareFile() to create an instance.
 type PreparedTemplate struct {
+	state    *preparedTemplateState
 	template *template
 	closed   bool
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	registry FunctionRegistry // Function registry to use during rendering
+}
+
+type preparedTemplateState struct {
+	mu       sync.Mutex
+	template *template
+	refs     int
+}
+
+func newPreparedTemplateState(tmpl *template) *preparedTemplateState {
+	return &preparedTemplateState{
+		template: tmpl,
+		refs:     1,
+	}
+}
+
+func (s *preparedTemplateState) retain() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refs == 0 {
+		return false
+	}
+	s.refs++
+	return true
+}
+
+func (s *preparedTemplateState) release() error {
+	if s == nil {
+		return nil
+	}
+
+	s.mu.Lock()
+	if s.refs == 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	s.refs--
+	if s.refs > 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	tmpl := s.template
+	s.template = nil
+	s.mu.Unlock()
+
+	if tmpl != nil {
+		return tmpl.Close()
+	}
+	return nil
 }
 
 // TemplateData represents the data context for rendering templates.
@@ -146,6 +198,7 @@ func prepare(r io.Reader) (*PreparedTemplate, error) {
 	}
 
 	return &PreparedTemplate{
+		state:    newPreparedTemplateState(tmpl),
 		template: tmpl,
 	}, nil
 }
@@ -474,9 +527,18 @@ func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext)
 }
 
 func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
-	if pt == nil || pt.template == nil {
+	if pt == nil {
 		return nil, NewTemplateError("invalid or nil template", 0, 0)
 	}
+	pt.mu.RLock()
+	defer pt.mu.RUnlock()
+
+	if pt.closed || pt.template == nil {
+		return nil, NewTemplateError("template is closed", 0, 0)
+	}
+
+	tmpl := pt.template
+	registry := pt.registry
 
 	// Create a copy of the data to avoid modifying the original
 	renderData := make(TemplateData)
@@ -485,11 +547,11 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	}
 
 	// Inject the function registry if available and not already present
-	if pt.registry != nil && renderData["__functions__"] == nil {
-		renderData["__functions__"] = pt.registry
+	if registry != nil && renderData["__functions__"] == nil {
+		renderData["__functions__"] = registry
 	}
 
-	resources, err := pt.template.ensureRenderResources()
+	resources, err := tmpl.ensureRenderResources()
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare template render resources: %w", err)
 	}
@@ -499,7 +561,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 
 	renderCtx := &renderContext{
 		linkMarkers:            make(map[string]*LinkReplacementMarker),
-		fragments:              pt.template.fragments,
+		fragments:              tmpl.fragments,
 		fragmentStack:          make([]string, 0),
 		renderDepth:            0,
 		ooxmlFragments:         make(map[string]interface{}),
@@ -520,7 +582,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	}
 
 	// First pass: render the document with variable substitution
-	renderedDoc, err := RenderDocumentWithContext(pt.template.document, renderData, renderCtx)
+	renderedDoc, err := RenderDocumentWithContext(tmpl.document, renderData, renderCtx)
 	if err != nil {
 		return nil, WithContext(err, "rendering document", map[string]interface{}{"hasData": data != nil})
 	}
@@ -561,7 +623,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 
 	if needsRelationshipUpdate {
 		// Get current relationships
-		relsXML, err := pt.template.docxReader.GetRelationshipsXML()
+		relsXML, err := tmpl.docxReader.GetRelationshipsXML()
 		if err != nil {
 			return nil, NewDocumentError("extract", "relationships", err)
 		}
@@ -599,8 +661,8 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 	})
 
 	// Copy all parts from the original DOCX
-	reader := bytes.NewReader(pt.template.source)
-	zipReader, err := zip.NewReader(reader, int64(len(pt.template.source)))
+	reader := bytes.NewReader(tmpl.source)
+	zipReader, err := zip.NewReader(reader, int64(len(tmpl.source)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read source zip: %w", err)
 	}
@@ -719,7 +781,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 				return nil, fmt.Errorf("failed to write %s: %w", file.Name, err)
 			}
 		} else if file.Name == "word/styles.xml" {
-			mergedStyles := resources.stylesXMLForRender(renderCtx.numbering, pt.template.fragments, renderCtx.usedDocxFragments)
+			mergedStyles := resources.stylesXMLForRender(renderCtx.numbering, tmpl.fragments, renderCtx.usedDocxFragments)
 
 			// Write merged styles
 			fw, err := w.Create(file.Name)
@@ -970,12 +1032,38 @@ func (pt *PreparedTemplate) Close() error {
 
 	pt.closed = true
 
-	// Close the underlying template
-	if pt.template != nil {
-		return pt.template.Close()
+	return pt.state.release()
+}
+
+func (pt *PreparedTemplate) isClosed() bool {
+	if pt == nil {
+		return true
+	}
+	pt.mu.RLock()
+	defer pt.mu.RUnlock()
+	return pt.closed
+}
+
+func (pt *PreparedTemplate) cloneHandle() (*PreparedTemplate, bool) {
+	if pt == nil {
+		return nil, false
 	}
 
-	return nil
+	pt.mu.RLock()
+	defer pt.mu.RUnlock()
+
+	if pt.closed || pt.template == nil || pt.state == nil {
+		return nil, false
+	}
+	if !pt.state.retain() {
+		return nil, false
+	}
+
+	return &PreparedTemplate{
+		state:    pt.state,
+		template: pt.template,
+		registry: pt.registry,
+	}, true
 }
 
 // AddFragment adds a text fragment that can be included in the template
@@ -994,8 +1082,14 @@ func (pt *PreparedTemplate) Close() error {
 //
 // Then in your template: {{include "disclaimer"}}
 func (pt *PreparedTemplate) AddFragment(name string, content string) error {
-	if pt == nil || pt.template == nil {
+	if pt == nil {
 		return fmt.Errorf("invalid template")
+	}
+	pt.mu.Lock()
+	defer pt.mu.Unlock()
+
+	if pt.closed || pt.template == nil {
+		return fmt.Errorf("template is closed")
 	}
 
 	// Lazy initialize fragments map if needed
@@ -1038,8 +1132,14 @@ func (pt *PreparedTemplate) AddFragment(name string, content string) error {
 //
 // Then in your template: {{include "header"}}
 func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) error {
-	if pt == nil || pt.template == nil {
+	if pt == nil {
 		return fmt.Errorf("invalid template")
+	}
+	pt.mu.Lock()
+	defer pt.mu.Unlock()
+
+	if pt.closed || pt.template == nil {
+		return fmt.Errorf("template is closed")
 	}
 
 	// Lazy initialize fragments map if needed
@@ -1390,12 +1490,12 @@ func (t *template) Close() error {
 
 	t.closed = true
 
-	// Clear references to allow garbage collection
-	// Note: We keep source as it may be needed for rendering
+	// Clear references to allow garbage collection.
 	t.fragments = nil
-
-	// Close the DocxReader if it has a Close method
-	// Note: We keep docxReader as it may be needed for rendering
+	t.renderResources = nil
+	t.document = nil
+	t.docxReader = nil
+	t.source = nil
 
 	return nil
 }

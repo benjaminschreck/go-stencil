@@ -18,10 +18,10 @@ type CacheConfig struct {
 
 // TemplateCache provides caching for prepared templates
 type TemplateCache struct {
-	mu       sync.RWMutex
-	cache    map[string]*cacheEntry
-	lru      *list.List
-	config   CacheConfig
+	mu     sync.RWMutex
+	cache  map[string]*cacheEntry
+	lru    *list.List
+	config CacheConfig
 }
 
 type cacheEntry struct {
@@ -29,6 +29,26 @@ type cacheEntry struct {
 	template *PreparedTemplate
 	expiry   time.Time
 	element  *list.Element
+}
+
+func (ce *cacheEntry) usable() bool {
+	return ce != nil && ce.template != nil && !ce.template.isClosed()
+}
+
+func (tc *TemplateCache) removeEntryIfSame(key string, expected *cacheEntry) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	entry, exists := tc.cache[key]
+	if !exists || entry != expected {
+		return
+	}
+
+	delete(tc.cache, key)
+	tc.lru.Remove(entry.element)
+	if entry.template != nil {
+		_ = entry.template.Close()
+	}
 }
 
 // NewTemplateCache creates a new template cache with default configuration
@@ -58,73 +78,80 @@ func (tc *TemplateCache) Prepare(reader io.Reader, key string) (*PreparedTemplat
 		}
 		return Prepare(reader)
 	}
-	
+
 	// Try to get from cache first
 	tc.mu.RLock()
 	entry, exists := tc.cache[key]
 	tc.mu.RUnlock()
-	
+
 	if exists {
-		// Check if entry has expired
-		if tc.config.TTL > 0 && time.Now().After(entry.expiry) {
+		if !entry.usable() {
+			tc.removeEntryIfSame(key, entry)
+		} else if tc.config.TTL > 0 && time.Now().After(entry.expiry) {
 			// Entry has expired, remove it
-			tc.Remove(key)
+			tc.removeEntryIfSame(key, entry)
 		} else {
 			// Move to front of LRU list
 			tc.mu.Lock()
 			tc.lru.MoveToFront(entry.element)
 			tc.mu.Unlock()
-			return entry.template, nil
+			if borrowed, ok := entry.template.cloneHandle(); ok {
+				return borrowed, nil
+			}
+			tc.removeEntryIfSame(key, entry)
 		}
 	}
-	
+
 	// Not in cache or expired, need to prepare
 	if reader == nil {
 		return nil, errors.New("template not in cache and no reader provided")
 	}
-	
+
 	// Prepare the template
 	prepared, err := Prepare(reader)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Add to cache
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
-	
+
 	// Check if we need to evict
 	if tc.lru.Len() >= tc.config.MaxSize {
 		// Evict least recently used
 		oldest := tc.lru.Back()
 		if oldest != nil {
 			oldEntry := oldest.Value.(*cacheEntry)
-			// Close the evicted template
-			if oldEntry.template != nil {
-				oldEntry.template.Close()
-			}
 			delete(tc.cache, oldEntry.key)
 			tc.lru.Remove(oldest)
+			if oldEntry.template != nil {
+				_ = oldEntry.template.Close()
+			}
 		}
 	}
-	
+
 	// Create new entry
+	cachedHandle, ok := prepared.cloneHandle()
+	if !ok {
+		return nil, errors.New("failed to retain prepared template for cache")
+	}
 	entry = &cacheEntry{
 		key:      key,
-		template: prepared,
+		template: cachedHandle,
 	}
-	
+
 	if tc.config.TTL > 0 {
 		entry.expiry = time.Now().Add(tc.config.TTL)
 	}
-	
+
 	// Add to LRU list
 	element := tc.lru.PushFront(entry)
 	entry.element = element
-	
+
 	// Add to cache map
 	tc.cache[key] = entry
-	
+
 	return prepared, nil
 }
 
@@ -133,23 +160,26 @@ func (tc *TemplateCache) Get(key string) (*PreparedTemplate, bool) {
 	tc.mu.RLock()
 	entry, exists := tc.cache[key]
 	tc.mu.RUnlock()
-	
-	if !exists {
+
+	if !exists || !entry.usable() {
+		if exists {
+			tc.removeEntryIfSame(key, entry)
+		}
 		return nil, false
 	}
-	
+
 	// Check expiry
 	if tc.config.TTL > 0 && time.Now().After(entry.expiry) {
-		tc.Remove(key)
+		tc.removeEntryIfSame(key, entry)
 		return nil, false
 	}
-	
+
 	// Move to front of LRU
 	tc.mu.Lock()
 	tc.lru.MoveToFront(entry.element)
 	tc.mu.Unlock()
-	
-	return entry.template, true
+
+	return entry.template.cloneHandle()
 }
 
 // Set adds a template to the cache
@@ -158,19 +188,26 @@ func (tc *TemplateCache) Set(key string, template *PreparedTemplate) {
 	if tc.config.MaxSize == 0 {
 		return
 	}
-	
+
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
-	
+
 	// Check if key already exists
 	if existing, exists := tc.cache[key]; exists {
 		// Update existing entry
-		existing.template = template
+		replacement, ok := template.cloneHandle()
+		if !ok {
+			return
+		}
+		if existing.template != nil {
+			_ = existing.template.Close()
+		}
+		existing.template = replacement
 		existing.expiry = time.Now().Add(tc.config.TTL)
 		tc.lru.MoveToFront(existing.element)
 		return
 	}
-	
+
 	// Check if we need to evict
 	if tc.lru.Len() >= tc.config.MaxSize {
 		// Evict least recently used
@@ -180,64 +217,66 @@ func (tc *TemplateCache) Set(key string, template *PreparedTemplate) {
 			delete(tc.cache, oldEntry.key)
 			tc.lru.Remove(oldest)
 			if oldEntry.template != nil {
-				oldEntry.template.Close()
+				_ = oldEntry.template.Close()
 			}
 		}
 	}
-	
+
 	// Create new entry
 	expiry := time.Time{}
 	if tc.config.TTL > 0 {
 		expiry = time.Now().Add(tc.config.TTL)
 	}
-	
+
+	cachedHandle, ok := template.cloneHandle()
+	if !ok {
+		return
+	}
+
 	entry := &cacheEntry{
 		key:      key,
-		template: template,
+		template: cachedHandle,
 		expiry:   expiry,
 	}
-	
+
 	// Add to LRU list
 	element := tc.lru.PushFront(entry)
 	entry.element = element
-	
+
 	// Add to cache map
 	tc.cache[key] = entry
 }
 
-// Remove removes a template from the cache and closes it
+// Remove removes a template from the cache.
 func (tc *TemplateCache) Remove(key string) {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
-	
+
 	entry, exists := tc.cache[key]
 	if !exists {
 		return
 	}
-	
-	// Close the template
-	if entry.template != nil {
-		entry.template.Close()
-	}
-	
+
 	delete(tc.cache, key)
 	tc.lru.Remove(entry.element)
+	if entry.template != nil {
+		_ = entry.template.Close()
+	}
 }
 
-// Clear removes all templates from the cache and closes them
+// Clear removes all templates from the cache.
 func (tc *TemplateCache) Clear() {
 	tc.mu.Lock()
-	defer tc.mu.Unlock()
-	
-	// Close all cached templates
-	for _, entry := range tc.cache {
-		if entry.template != nil {
-			entry.template.Close()
-		}
-	}
-	
+	entries := tc.cache
 	tc.cache = make(map[string]*cacheEntry)
 	tc.lru = list.New()
+	tc.mu.Unlock()
+
+	for _, entry := range entries {
+		if entry.template != nil {
+			_ = entry.template.Close()
+		}
+	}
 }
 
 // Size returns the current number of cached templates
@@ -247,7 +286,7 @@ func (tc *TemplateCache) Size() int {
 	return len(tc.cache)
 }
 
-// Close closes all templates in the cache and clears it
+// Close clears the cache.
 func (tc *TemplateCache) Close() error {
 	tc.Clear()
 	return nil
@@ -255,4 +294,3 @@ func (tc *TemplateCache) Close() error {
 
 // defaultCache is a global cache instance for convenience
 var defaultCache = NewTemplateCache()
-
