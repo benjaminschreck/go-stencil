@@ -12,249 +12,8 @@ import (
 // renderElementsWithContext renders a slice of elements with the given context
 // This function DOES process control structures to support nested loops and conditionals
 func renderElementsWithContext(elements []BodyElement, data TemplateData, ctx *renderContext) ([]BodyElement, error) {
-	result := make([]BodyElement, 0, len(elements))
-
-	// Process elements in order, handling control structures
-	i := 0
-	for i < len(elements) {
-		elem := elements[i]
-
-		switch el := elem.(type) {
-		case *Paragraph:
-			para := cloneParagraph(el)
-
-			// Check if this paragraph contains a control structure FIRST
-			controlType, controlContent := render.DetectControlStructure(el)
-
-			switch controlType {
-			case "inline-for":
-				// Handle inline for loop (entire loop in one paragraph)
-				renderedParas, err := renderInlineForLoop(el, controlContent, data, ctx)
-				if err != nil {
-					return nil, err
-				}
-				for _, p := range renderedParas {
-					result = append(result, &p)
-				}
-				i++
-
-			case "for":
-				// Handle block-level for loop - find matching end
-				endIdx, err := render.FindMatchingEndInElements(elements, i)
-				if err != nil {
-					return nil, fmt.Errorf("no matching {{end}} for {{for}} at element %d", i)
-				}
-
-				// Parse for loop syntax
-				forNode, err := parseForSyntax(controlContent)
-				if err != nil {
-					return nil, fmt.Errorf("invalid for syntax: %w", err)
-				}
-
-				// Get the loop body (elements between for and end)
-				loopBody := elements[i+1 : endIdx]
-
-				// Evaluate the collection
-				collection, err := forNode.Collection.Evaluate(data)
-				if err != nil {
-					return nil, fmt.Errorf("failed to evaluate collection: %w", err)
-				}
-
-				// Iterate over collection
-				items, err := toSlice(collection)
-				if err != nil {
-					return nil, fmt.Errorf("failed to convert collection to slice: %w", err)
-				}
-
-				for idx, item := range items {
-					loopData := newChildTemplateData(data, 2)
-					loopData[forNode.Variable] = item
-					if forNode.IndexVar != "" {
-						loopData[forNode.IndexVar] = idx
-					}
-
-					// Render loop body RECURSIVELY
-					loopRendered, err := renderElementsWithContext(loopBody, loopData, ctx)
-					if err != nil {
-						return nil, err
-					}
-					result = append(result, loopRendered...)
-				}
-
-				// Skip to after the end marker
-				i = endIdx + 1
-
-			case "if":
-				// Handle if statement - find matching else/elsif/end
-				endIdx, elseBranches, err := render.FindIfStructureInElements(elements, i)
-				if err != nil {
-					return nil, fmt.Errorf("no matching {{end}} for {{if}} at element %d: %w", i, err)
-				}
-
-				// Parse if condition
-				expr, err := ParseExpression(controlContent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse if condition: %w", err)
-				}
-
-				// Evaluate condition
-				condValue, err := expr.Evaluate(data)
-				if err != nil {
-					return nil, fmt.Errorf("failed to evaluate if condition: %w", err)
-				}
-
-				if isTruthy(condValue) {
-					// Render the if branch
-					var branchEnd int
-					if len(elseBranches) > 0 {
-						branchEnd = elseBranches[0].Index
-					} else {
-						branchEnd = endIdx
-					}
-
-					branchBody := elements[i+1 : branchEnd]
-					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
-					if err != nil {
-						return nil, err
-					}
-					result = append(result, branchElements...)
-				} else {
-					// Check elsif branches
-					branchRendered := false
-					for j, branch := range elseBranches {
-						if branch.BranchType == "elsif" || branch.BranchType == "elif" || branch.BranchType == "elseif" {
-							expr, err := ParseExpression(branch.Condition)
-							if err != nil {
-								return nil, fmt.Errorf("failed to parse elsif condition: %w", err)
-							}
-
-							condValue, err := expr.Evaluate(data)
-							if err != nil {
-								return nil, fmt.Errorf("failed to evaluate elsif condition: %w", err)
-							}
-
-							if isTruthy(condValue) {
-								// Render this elsif branch
-								var branchEnd int
-								if j+1 < len(elseBranches) {
-									branchEnd = elseBranches[j+1].Index
-								} else {
-									branchEnd = endIdx
-								}
-
-								branchBody := elements[branch.Index+1 : branchEnd]
-								branchElements, err := renderElementsWithContext(branchBody, data, ctx)
-								if err != nil {
-									return nil, err
-								}
-								result = append(result, branchElements...)
-								branchRendered = true
-								break
-							}
-						} else if branch.BranchType == "else" && !branchRendered {
-							// Render else branch
-							branchBody := elements[branch.Index+1 : endIdx]
-							branchElements, err := renderElementsWithContext(branchBody, data, ctx)
-							if err != nil {
-								return nil, err
-							}
-							result = append(result, branchElements...)
-							break
-						}
-					}
-				}
-
-				// Skip to after the end marker
-				i = endIdx + 1
-
-			case "unless":
-				// Handle unless statement (similar to if but inverted)
-				endIdx, elseBranches, err := render.FindIfStructureInElements(elements, i)
-				if err != nil {
-					return nil, fmt.Errorf("no matching {{end}} for {{unless}} at element %d", i)
-				}
-
-				// Parse unless condition
-				expr, err := ParseExpression(controlContent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse unless condition: %w", err)
-				}
-
-				// Evaluate condition
-				condValue, err := expr.Evaluate(data)
-				if err != nil {
-					return nil, fmt.Errorf("failed to evaluate unless condition: %w", err)
-				}
-
-				// Unless renders if condition is falsy (opposite of if)
-				if !isTruthy(condValue) {
-					// Render the unless branch
-					var branchEnd int
-					if len(elseBranches) > 0 && elseBranches[0].BranchType == "else" {
-						branchEnd = elseBranches[0].Index
-					} else {
-						branchEnd = endIdx
-					}
-
-					branchBody := elements[i+1 : branchEnd]
-					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
-					if err != nil {
-						return nil, err
-					}
-					result = append(result, branchElements...)
-				} else if len(elseBranches) > 0 && elseBranches[0].BranchType == "else" {
-					// Render else branch
-					branchBody := elements[elseBranches[0].Index+1 : endIdx]
-					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
-					if err != nil {
-						return nil, err
-					}
-					result = append(result, branchElements...)
-				}
-
-				// Skip to after the end marker
-				i = endIdx + 1
-
-			default:
-				// Regular paragraph, render normally
-				renderedPara, err := RenderParagraphWithContext(para, data, ctx)
-				if err != nil {
-					return nil, err
-				}
-
-				fragmentElements, handled, err := expandDOCXFragmentParagraph(renderedPara, data, ctx, func(fragment *fragment) ([]BodyElement, error) {
-					return renderElementsWithContext(fragment.parsed.Body.Elements, data, ctx)
-				})
-				if err != nil {
-					return nil, err
-				}
-				if handled {
-					result = append(result, fragmentElements...)
-					i++
-					continue
-				}
-
-				result = append(result, renderedPara)
-				i++
-			}
-
-		case *Table:
-			table := cloneTable(el)
-			rendered, err := RenderTableWithControlStructures(table, data, ctx)
-			if err != nil {
-				return nil, err
-			}
-			result = append(result, rendered)
-			i++
-
-		default:
-			// For unknown elements, keep as-is
-			result = append(result, elem)
-			i++
-		}
-	}
-
-	return result, nil
+	body := &Body{Elements: elements}
+	return renderBodyElementRange(body, compileBodyRenderPlan(body), 0, len(elements), data, ctx)
 }
 
 // getFragmentKeys returns the keys of fragments in the context for debugging
@@ -431,74 +190,100 @@ func extractRunsBetweenTextOffsets(runs []Run, start, end int) []Run {
 	return extracted
 }
 
-// RenderBodyWithControlStructures renders a document body handling control structures
-func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
-	rendered, err := renderBodyWithElementOrder(body, data, ctx)
-	if err != nil {
-		return nil, err
+func planEntryAt(plan *bodyRenderPlan, idx int) bodyRenderPlanEntry {
+	if plan == nil || idx < 0 || idx >= len(plan.entries) {
+		return bodyRenderPlanEntry{endIdx: -1}
 	}
-
-	// Apply table merging to fix split tables from for loops outside tables
-	rendered.Elements = MergeConsecutiveTables(rendered.Elements)
-
-	return rendered, nil
+	return plan.entries[idx]
 }
 
-// renderBodyWithElementOrder renders using the new Elements field that preserves order
-func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
-	rendered := &Body{
-		Elements:          make([]BodyElement, 0),
-		SectionProperties: body.SectionProperties, // Preserve section properties
+func fallbackFindMatchingEnd(elements []BodyElement, startIdx int) (int, error) {
+	return render.FindMatchingEndInElements(elements, startIdx)
+}
+
+func fallbackFindIfStructure(elements []BodyElement, startIdx int) (int, []render.ElseBranch, error) {
+	return render.FindIfStructureInElements(elements, startIdx)
+}
+
+func branchBodiesForEntry(entry bodyRenderPlanEntry, endIdx int) []render.ElseBranch {
+	if len(entry.branches) == 0 {
+		return nil
 	}
 
-	// Process elements in order
-	i := 0
-	for i < len(body.Elements) {
+	branches := make([]render.ElseBranch, 0, len(entry.branches))
+	for _, branch := range entry.branches {
+		branches = append(branches, render.ElseBranch{
+			Index:      branch.index,
+			BranchType: branch.branchType,
+			Condition:  branch.condition,
+		})
+	}
+	if endIdx < 0 {
+		return nil
+	}
+	return branches
+}
 
+func renderBodyElementRange(body *Body, plan *bodyRenderPlan, start, end int, data TemplateData, ctx *renderContext) ([]BodyElement, error) {
+	if body == nil {
+		return nil, nil
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end > len(body.Elements) {
+		end = len(body.Elements)
+	}
+
+	result := make([]BodyElement, 0, max(end-start, 0))
+
+	for i := start; i < end; {
 		elem := body.Elements[i]
+		entry := planEntryAt(plan, i)
 
 		switch el := elem.(type) {
 		case *Paragraph:
-			para := cloneParagraph(el)
-
-			// Check if this paragraph contains a control structure
-			controlType, controlContent := render.DetectControlStructure(el)
+			controlType := entry.controlType
+			controlContent := entry.controlContent
+			if controlType == "" && plan == nil {
+				controlType, controlContent = render.DetectControlStructure(el)
+			}
 
 			switch controlType {
 			case "inline-for":
-				// Handle inline for loop (entire loop in one paragraph)
 				renderedParas, err := renderInlineForLoop(el, controlContent, data, ctx)
 				if err != nil {
 					return nil, err
 				}
 				for _, p := range renderedParas {
-					rendered.Elements = append(rendered.Elements, &p)
+					result = append(result, &p)
 				}
 				i++
 
 			case "for":
-				// Handle for loop
-				endIdx, err := render.FindMatchingEndInElements(body.Elements, i)
-				if err != nil {
-					return nil, fmt.Errorf("no matching {{end}} for {{for}} at element %d", i)
+				forNode := entry.forNode
+				if forNode == nil {
+					var err error
+					forNode, err = parseForSyntax(controlContent)
+					if err != nil {
+						return nil, fmt.Errorf("invalid for syntax: %w", err)
+					}
 				}
 
-				// Parse for loop syntax
-				forNode, err := parseForSyntax(controlContent)
-				if err != nil {
-					return nil, fmt.Errorf("invalid for syntax: %w", err)
+				endIdx := entry.endIdx
+				if endIdx < 0 {
+					var err error
+					endIdx, err = fallbackFindMatchingEnd(body.Elements, i)
+					if err != nil {
+						return nil, fmt.Errorf("no matching {{end}} for {{for}} at element %d", i)
+					}
 				}
 
-				// Get the loop body (elements between for and end)
-				loopBody := body.Elements[i+1 : endIdx]
-
-				// Evaluate the collection
 				collection, err := forNode.Collection.Evaluate(data)
 				if err != nil {
 					return nil, fmt.Errorf("failed to evaluate collection: %w", err)
 				}
 
-				// Iterate over collection
 				items, err := toSlice(collection)
 				if err != nil {
 					return nil, fmt.Errorf("failed to convert collection to slice: %w", err)
@@ -511,262 +296,107 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 						loopData[forNode.IndexVar] = idx
 					}
 
-					// Render loop body
-					loopRendered, err := renderElementsWithContext(loopBody, loopData, ctx)
+					loopRendered, err := renderBodyElementRange(body, plan, i+1, endIdx, loopData, ctx)
 					if err != nil {
 						return nil, err
 					}
-					rendered.Elements = append(rendered.Elements, loopRendered...)
+					result = append(result, loopRendered...)
 				}
 
-				// Skip to after the end marker
-				if endIdx >= 0 && endIdx < len(body.Elements) {
-					i = endIdx + 1
-				} else {
-					// This should not happen if findMatchingEndInElements worked correctly
-					return nil, fmt.Errorf("invalid endIdx %d for for loop at element %d", endIdx, i)
-				}
+				i = endIdx + 1
 
 			case "if":
-				// Preserve any literal text before "{{if " in the opening paragraph.
-				// This must work even when Word split "{{if ...}}" across multiple runs.
+				endIdx := entry.endIdx
+				branches := branchBodiesForEntry(entry, endIdx)
+				if endIdx < 0 {
+					var err error
+					endIdx, branches, err = fallbackFindIfStructure(body.Elements, i)
+					if err != nil {
+						return nil, fmt.Errorf("no matching {{end}} for {{if}} at element %d: %w", i, err)
+					}
+				}
+
+				expr := entry.conditionExpr
+				if expr == nil {
+					var err error
+					expr, err = ParseExpression(controlContent)
+					if err != nil {
+						return nil, fmt.Errorf("failed to parse if condition: %w", err)
+					}
+				}
+
 				prefixRuns := extractPrefixRunsBeforeControlMarker(el.Runs, "{{if ")
 
-				// Handle if statement
-				endIdx, elseBranches, err := render.FindIfStructureInElements(body.Elements, i)
-				if err != nil {
-					return nil, fmt.Errorf("no matching {{end}} for {{if}} at element %d: %w", i, err)
-				}
-
-				// Parse if condition
-				expr, err := ParseExpression(controlContent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse if condition: %w", err)
-				}
-
-				// Evaluate condition
 				condValue, err := expr.Evaluate(data)
 				if err != nil {
 					return nil, fmt.Errorf("failed to evaluate if condition: %w", err)
 				}
 
-				branchRendered := false
-
-				if isTruthy(condValue) {
-					// Render the if branch
-					var branchEnd int
-					if len(elseBranches) > 0 {
-						branchEnd = elseBranches[0].Index
-					} else {
-						branchEnd = endIdx
-					}
-
-					branchBody := body.Elements[i+1 : branchEnd]
-					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
-					if err != nil {
-						return nil, err
-					}
-
-					// If there were runs before the {{if}}, prepend them to the first element
-					if len(prefixRuns) > 0 && len(branchElements) > 0 {
-						if firstPara, ok := branchElements[0].(*Paragraph); ok {
-							// Create a new paragraph with the prefix runs
-							newPara := &Paragraph{
-								Properties: firstPara.Properties,
-							}
-
-							// Add all prefix runs (including any line breaks)
-							newPara.Runs = append(newPara.Runs, prefixRuns...)
-
-							// Add all runs from the first paragraph
-							newPara.Runs = append(newPara.Runs, firstPara.Runs...)
-
-							// Replace the first element
-							branchElements[0] = newPara
-						} else if len(prefixRuns) > 0 {
-							// If the first element is not a paragraph, create a new paragraph with the prefix
-							prefixPara := &Paragraph{
-								Properties: para.Properties,
-								Runs:       prefixRuns,
-							}
-							// Insert the prefix paragraph at the beginning
-							branchElements = append([]BodyElement{prefixPara}, branchElements...)
-						}
-					}
-
-					rendered.Elements = append(rendered.Elements, branchElements...)
-					branchRendered = true
-				} else {
-					// Check elsif branches
-					for j, branch := range elseBranches {
-						if branch.BranchType == "elsif" || branch.BranchType == "elif" || branch.BranchType == "elseif" {
-							expr, err := ParseExpression(branch.Condition)
-							if err != nil {
-								return nil, fmt.Errorf("failed to parse elsif condition: %w", err)
-							}
-
-							condValue, err := expr.Evaluate(data)
-							if err != nil {
-								return nil, fmt.Errorf("failed to evaluate elsif condition: %w", err)
-							}
-
-							if isTruthy(condValue) {
-								// Render this elsif branch
-								var branchEnd int
-								if j+1 < len(elseBranches) {
-									branchEnd = elseBranches[j+1].Index
-								} else {
-									branchEnd = endIdx
-								}
-
-								branchBody := body.Elements[branch.Index+1 : branchEnd]
-								branchElements, err := renderElementsWithContext(branchBody, data, ctx)
-								if err != nil {
-									return nil, err
-								}
-
-								// If there were runs before the {{if}}, prepend them to the first element
-								if len(prefixRuns) > 0 && len(branchElements) > 0 {
-									if firstPara, ok := branchElements[0].(*Paragraph); ok {
-										// Create a new paragraph with the prefix runs
-										newPara := &Paragraph{
-											Properties: firstPara.Properties,
-										}
-
-										// Add all prefix runs (including any line breaks)
-										newPara.Runs = append(newPara.Runs, prefixRuns...)
-
-										// Add all runs from the first paragraph
-										newPara.Runs = append(newPara.Runs, firstPara.Runs...)
-
-										// Replace the first element
-										branchElements[0] = newPara
-									} else if len(prefixRuns) > 0 {
-										// If the first element is not a paragraph, create a new paragraph with the prefix
-										prefixPara := &Paragraph{
-											Properties: para.Properties,
-											Runs:       prefixRuns,
-										}
-										// Insert the prefix paragraph at the beginning
-										branchElements = append([]BodyElement{prefixPara}, branchElements...)
-									}
-								}
-
-								rendered.Elements = append(rendered.Elements, branchElements...)
-								branchRendered = true
-								break
-							}
-						} else if branch.BranchType == "else" && !branchRendered {
-							// Render else branch
-							branchBody := body.Elements[branch.Index+1 : endIdx]
-							branchElements, err := renderElementsWithContext(branchBody, data, ctx)
-							if err != nil {
-								return nil, err
-							}
-
-							// If there were runs before the {{if}}, prepend them to the first element
-							if len(prefixRuns) > 0 && len(branchElements) > 0 {
-								if firstPara, ok := branchElements[0].(*Paragraph); ok {
-									// Create a new paragraph with the prefix runs
-									newPara := &Paragraph{
-										Properties: firstPara.Properties,
-									}
-
-									// Add all prefix runs (including any line breaks)
-									newPara.Runs = append(newPara.Runs, prefixRuns...)
-
-									// Add all runs from the first paragraph
-									newPara.Runs = append(newPara.Runs, firstPara.Runs...)
-
-									// Replace the first element
-									branchElements[0] = newPara
-								} else if len(prefixRuns) > 0 {
-									// If the first element is not a paragraph, create a new paragraph with the prefix
-									prefixPara := &Paragraph{
-										Properties: para.Properties,
-										Runs:       prefixRuns,
-									}
-									// Insert the prefix paragraph at the beginning
-									branchElements = append([]BodyElement{prefixPara}, branchElements...)
-								}
-							}
-
-							rendered.Elements = append(rendered.Elements, branchElements...)
-							break
-						}
-					}
+				branchElements, err := renderSelectedIfBranch(body, plan, el, i, endIdx, branches, prefixRuns, isTruthy(condValue), data, ctx)
+				if err != nil {
+					return nil, err
 				}
-
-				// Skip to after the end marker
-				if endIdx >= 0 && endIdx < len(body.Elements) {
-					i = endIdx + 1
-				} else {
-					// This should not happen if findIfStructureInElements worked correctly
-					return nil, fmt.Errorf("invalid endIdx %d for if statement at element %d", endIdx, i)
-				}
+				result = append(result, branchElements...)
+				i = endIdx + 1
 
 			case "unless":
-				// Handle unless statement (similar to if but inverted)
-				endIdx, elseBranches, err := render.FindIfStructureInElements(body.Elements, i)
-				if err != nil {
-					return nil, fmt.Errorf("no matching {{end}} for {{unless}} at element %d", i)
+				endIdx := entry.endIdx
+				branches := branchBodiesForEntry(entry, endIdx)
+				if endIdx < 0 {
+					var err error
+					endIdx, branches, err = fallbackFindIfStructure(body.Elements, i)
+					if err != nil {
+						return nil, fmt.Errorf("no matching {{end}} for {{unless}} at element %d", i)
+					}
 				}
 
-				// Parse unless condition
-				expr, err := ParseExpression(controlContent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse unless condition: %w", err)
+				expr := entry.conditionExpr
+				if expr == nil {
+					var err error
+					expr, err = ParseExpression(controlContent)
+					if err != nil {
+						return nil, fmt.Errorf("failed to parse unless condition: %w", err)
+					}
 				}
 
-				// Evaluate condition
 				condValue, err := expr.Evaluate(data)
 				if err != nil {
 					return nil, fmt.Errorf("failed to evaluate unless condition: %w", err)
 				}
 
-				// Unless renders if condition is falsy (opposite of if)
 				if !isTruthy(condValue) {
-					// Render the unless branch
-					var branchEnd int
-					if len(elseBranches) > 0 && elseBranches[0].BranchType == "else" {
-						branchEnd = elseBranches[0].Index
-					} else {
-						branchEnd = endIdx
+					branchEnd := endIdx
+					if len(branches) > 0 && branches[0].BranchType == "else" {
+						branchEnd = branches[0].Index
 					}
-
-					branchBody := body.Elements[i+1 : branchEnd]
-					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
+					branchElements, err := renderBodyElementRange(body, plan, i+1, branchEnd, data, ctx)
 					if err != nil {
 						return nil, err
 					}
-					rendered.Elements = append(rendered.Elements, branchElements...)
-				} else if len(elseBranches) > 0 && elseBranches[0].BranchType == "else" {
-					// Render else branch
-					branchBody := body.Elements[elseBranches[0].Index+1 : endIdx]
-					branchElements, err := renderElementsWithContext(branchBody, data, ctx)
+					result = append(result, branchElements...)
+				} else if len(branches) > 0 && branches[0].BranchType == "else" {
+					branchElements, err := renderBodyElementRange(body, plan, branches[0].Index+1, endIdx, data, ctx)
 					if err != nil {
 						return nil, err
 					}
-					rendered.Elements = append(rendered.Elements, branchElements...)
+					result = append(result, branchElements...)
 				}
-
-				// Skip to after the end marker
-				if endIdx >= 0 && endIdx < len(body.Elements) {
-					i = endIdx + 1
-				} else {
-					// This should not happen if findIfStructureInElements worked correctly
-					return nil, fmt.Errorf("invalid endIdx %d for unless statement at element %d", endIdx, i)
-				}
+				i = endIdx + 1
 
 			case "include":
-				// Handle include directive
-				// Parse the fragment name expression
-				expr, err := ParseExpression(controlContent)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse include expression: %w", err)
+				if ctx == nil || ctx.fragments == nil {
+					return nil, fmt.Errorf("fragments not available in render context")
 				}
 
-				// Evaluate the fragment name
+				expr := entry.includeExpr
+				if expr == nil {
+					var err error
+					expr, err = ParseExpression(controlContent)
+					if err != nil {
+						return nil, fmt.Errorf("failed to parse include expression: %w", err)
+					}
+				}
+
 				fragmentNameValue, err := expr.Evaluate(data)
 				if err != nil {
 					return nil, fmt.Errorf("failed to evaluate fragment name: %w", err)
@@ -777,180 +407,23 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					return nil, fmt.Errorf("fragment name must be a string, got %T", fragmentNameValue)
 				}
 
-				// Get fragments from context
-				if ctx.fragments == nil {
-					return nil, fmt.Errorf("fragments not available in render context")
-				}
-
-				// Find the fragment
 				frag, exists := ctx.fragments[fragmentName]
 				if !exists {
 					return nil, fmt.Errorf("fragment not found: %s", fragmentName)
 				}
 
-				// V5: Collect namespaces IMMEDIATELY (before defer, before rendering)
-				if frag.namespaces != nil {
-					for prefix, uri := range frag.namespaces {
-						if existingURI, exists := ctx.collectedNamespaces[prefix]; exists {
-							// Prefix already used
-							if existingURI != uri {
-								// CONFLICT: Same prefix, different URI
-								// V5: Special handling for default namespace
-								if prefix == "" {
-									// Default namespace conflict - log warning but don't fail
-									// (documented limitation: main template wins)
-									// Note: In production, this should use a logger
-									// For now, we continue without adding
-									continue
-								}
-
-								// Regular namespace conflict - this is an error
-								return nil, fmt.Errorf(
-									"namespace conflict in fragment %q: prefix %q used for both %q and %q",
-									fragmentName, prefix, existingURI, uri)
-							}
-							// Same prefix, same URI → OK, already collected
-						} else {
-							// New namespace → collect it
-							ctx.collectedNamespaces[prefix] = uri
-						}
-					}
+				fragmentElements, err := renderIncludedFragment(fragmentName, frag, data, ctx)
+				if err != nil {
+					return nil, err
 				}
-
-				// Render the fragment content
-				if frag.parsed != nil && frag.parsed.Body != nil {
-					if ctx != nil && frag.isDocx {
-						ctx.usedDocxFragments[fragmentName] = true
-					}
-
-					// Check for circular references (same fragment already in current stack)
-					for _, f := range ctx.fragmentStack {
-						if f == fragmentName {
-							return nil, fmt.Errorf("circular fragment reference detected: %s", fragmentName)
-						}
-					}
-
-					// Push fragment to stack for circular reference detection
-					ctx.fragmentStack = append(ctx.fragmentStack, fragmentName)
-
-					// Check render depth
-					maxDepth := 10
-					if ctx.renderDepth > 0 {
-						maxDepth = ctx.renderDepth
-					}
-					if len(ctx.fragmentStack) > maxDepth {
-						ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
-						return nil, fmt.Errorf("maximum render depth exceeded")
-					}
-
-					// Render the fragment body first
-					renderedBody, err := func() (*Body, error) {
-						defer func() {
-							ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
-						}()
-						return RenderBodyWithControlStructures(frag.parsed.Body, data, ctx)
-					}()
-					if err != nil {
-						return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
-					}
-					applyFragmentFontOverrides(renderedBody.Elements, fragmentName, ctx)
-
-					// Handle fragment resources (media files and relationships) AFTER rendering
-					if frag.isDocx && len(frag.relationships) > 0 {
-						// Allocate ID range for this fragment (if not already allocated)
-						rangeStart, exists := ctx.fragmentIDAllocations[fragmentName]
-						if !exists {
-							rangeStart = ctx.nextFragmentIDRange
-							ctx.fragmentIDAllocations[fragmentName] = rangeStart
-							ctx.nextFragmentIDRange += FragmentIDRangeSize
-						}
-
-						// Add fragment resources only once
-						if !ctx.fragmentResourcesAdded[fragmentName] {
-							imageCounter := 1
-
-							for _, rel := range frag.relationships {
-								// Only process media relationships (images, videos, etc.)
-								// Skip other relationships (headers, footers, styles, etc.) as they're not part of the fragment content
-								if !isMediaRelationship(rel) {
-									continue
-								}
-
-								// Extract ID number from rId6 → 6
-								idNum, err := extractRelationshipNumber(rel.ID)
-								if err != nil {
-									return nil, fmt.Errorf("invalid relationship ID %s in fragment %s: %w", rel.ID, fragmentName, err)
-								}
-
-								// Check if ID fits in allocated range
-								if idNum >= FragmentIDRangeSize {
-									return nil, fmt.Errorf("fragment %s relationship ID %s exceeds range size %d",
-										fragmentName, rel.ID, FragmentIDRangeSize)
-								}
-
-								// Create new relationship with offset ID
-								newID := fmt.Sprintf("rId%d", rangeStart+idNum)
-								newTarget := renameMediaPath(rel.Target, fragmentName, imageCounter)
-
-								// Copy media file with new name
-								if mediaContent, ok := frag.mediaFiles[rel.Target]; ok {
-									newFilename := filepath.Base(newTarget)
-									ctx.fragmentMedia[newFilename] = mediaContent
-								}
-
-								newRel := Relationship{
-									ID:     newID,
-									Type:   rel.Type,
-									Target: newTarget,
-								}
-
-								ctx.fragmentRelationships = append(ctx.fragmentRelationships, newRel)
-								imageCounter++
-							}
-
-							// Mark this fragment's resources as added
-							ctx.fragmentResourcesAdded[fragmentName] = true
-						}
-
-						// Build ID mapping for XML updates (always needed, even on second inclusion)
-						// Only remap media relationship IDs
-						idMap := make(map[string]string)
-						for _, rel := range frag.relationships {
-							if !isMediaRelationship(rel) {
-								continue
-							}
-							idNum, _ := extractRelationshipNumber(rel.ID)
-							newID := fmt.Sprintf("rId%d", rangeStart+idNum)
-							idMap[rel.ID] = newID
-						}
-
-						// Update relationship IDs in the rendered body
-						tempDoc := &Document{Body: renderedBody}
-						updateDocumentRelationshipIDs(tempDoc, idMap)
-					}
-
-					if frag.isDocx && ctx.numbering != nil && len(frag.numberingXML) > 0 {
-						numMap, err := ctx.numbering.ensureFragmentDefinitions(fragmentName, frag.numberingXML, frag.stylesXML)
-						if err != nil {
-							return nil, fmt.Errorf("failed to merge numbering for fragment %s: %w", fragmentName, err)
-						}
-						if len(numMap) > 0 {
-							tempDoc := &Document{Body: renderedBody}
-							updateDocumentNumberingIDs(tempDoc, numMap)
-						}
-					}
-
-					// Append the rendered (and ID-updated) fragment elements
-					rendered.Elements = append(rendered.Elements, renderedBody.Elements...)
-				}
+				result = append(result, fragmentElements...)
 				i++
 
 			case "end":
-				// Unmatched end marker - this should not happen in well-formed templates
 				return nil, fmt.Errorf("unmatched {{end}} at element %d", i)
 
 			default:
-				// Regular paragraph, render normally
+				para := cloneParagraph(el)
 				renderedPara, err := RenderParagraphWithContext(para, data, ctx)
 				if err != nil {
 					return nil, err
@@ -967,25 +440,266 @@ func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContex
 					return nil, err
 				}
 				if handled {
-					rendered.Elements = append(rendered.Elements, fragmentElements...)
+					result = append(result, fragmentElements...)
 					i++
 					continue
 				}
 
-				rendered.Elements = append(rendered.Elements, renderedPara)
+				result = append(result, renderedPara)
 				i++
 			}
 
 		case *Table:
-			// Render table with control structures
-			renderedTable, err := RenderTableWithControlStructures(cloneTable(el), data, ctx)
+			table := cloneTable(el)
+			renderedTable, err := RenderTableWithControlStructures(table, data, ctx)
 			if err != nil {
-				return nil, fmt.Errorf("failed to render table: %w", err)
+				return nil, err
 			}
-			rendered.Elements = append(rendered.Elements, renderedTable)
+			result = append(result, renderedTable)
+			i++
+
+		default:
+			result = append(result, elem)
 			i++
 		}
 	}
+
+	return result, nil
+}
+
+func renderSelectedIfBranch(body *Body, plan *bodyRenderPlan, openingPara *Paragraph, startIdx, endIdx int, branches []render.ElseBranch, prefixRuns []Run, branchTruth bool, data TemplateData, ctx *renderContext) ([]BodyElement, error) {
+	var branchElements []BodyElement
+	var err error
+
+	if branchTruth {
+		branchEnd := endIdx
+		if len(branches) > 0 {
+			branchEnd = branches[0].Index
+		}
+		branchElements, err = renderBodyElementRange(body, plan, startIdx+1, branchEnd, data, ctx)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		for j, branch := range branches {
+			if branch.BranchType == "elsif" || branch.BranchType == "elif" || branch.BranchType == "elseif" {
+				branchEntry := bodyRenderBranch{
+					index:      branch.Index,
+					branchType: branch.BranchType,
+					condition:  branch.Condition,
+				}
+				entry := planEntryAt(plan, startIdx)
+				for _, candidate := range entry.branches {
+					if candidate.index == branch.Index {
+						branchEntry = candidate
+						break
+					}
+				}
+
+				elsifExpr := branchEntry.expr
+				if elsifExpr == nil {
+					elsifExpr, err = ParseExpression(branch.Condition)
+					if err != nil {
+						return nil, fmt.Errorf("failed to parse elsif condition: %w", err)
+					}
+				}
+
+				condValue, err := elsifExpr.Evaluate(data)
+				if err != nil {
+					return nil, fmt.Errorf("failed to evaluate elsif condition: %w", err)
+				}
+				if !isTruthy(condValue) {
+					continue
+				}
+
+				branchEnd := endIdx
+				if j+1 < len(branches) {
+					branchEnd = branches[j+1].Index
+				}
+				branchElements, err = renderBodyElementRange(body, plan, branch.Index+1, branchEnd, data, ctx)
+				if err != nil {
+					return nil, err
+				}
+				break
+			}
+			if branch.BranchType == "else" {
+				branchElements, err = renderBodyElementRange(body, plan, branch.Index+1, endIdx, data, ctx)
+				if err != nil {
+					return nil, err
+				}
+				break
+			}
+		}
+	}
+
+	if len(prefixRuns) == 0 || len(branchElements) == 0 {
+		return branchElements, nil
+	}
+
+	if firstPara, ok := branchElements[0].(*Paragraph); ok {
+		newPara := &Paragraph{
+			Properties: firstPara.Properties,
+		}
+		newPara.Runs = append(newPara.Runs, prefixRuns...)
+		newPara.Runs = append(newPara.Runs, firstPara.Runs...)
+		branchElements[0] = newPara
+		return branchElements, nil
+	}
+
+	prefixPara := &Paragraph{
+		Properties: openingPara.Properties,
+		Runs:       prefixRuns,
+	}
+	return append([]BodyElement{prefixPara}, branchElements...), nil
+}
+
+func renderIncludedFragment(fragmentName string, frag *fragment, data TemplateData, ctx *renderContext) ([]BodyElement, error) {
+	if frag == nil {
+		return nil, fmt.Errorf("fragment not found: %s", fragmentName)
+	}
+
+	if frag.namespaces != nil {
+		for prefix, uri := range frag.namespaces {
+			if existingURI, exists := ctx.collectedNamespaces[prefix]; exists {
+				if existingURI != uri {
+					if prefix == "" {
+						continue
+					}
+					return nil, fmt.Errorf(
+						"namespace conflict in fragment %q: prefix %q used for both %q and %q",
+						fragmentName, prefix, existingURI, uri)
+				}
+			} else {
+				ctx.collectedNamespaces[prefix] = uri
+			}
+		}
+	}
+
+	if frag.parsed == nil || frag.parsed.Body == nil {
+		return nil, nil
+	}
+	if ctx != nil && frag.isDocx {
+		ctx.usedDocxFragments[fragmentName] = true
+	}
+
+	for _, f := range ctx.fragmentStack {
+		if f == fragmentName {
+			return nil, fmt.Errorf("circular fragment reference detected: %s", fragmentName)
+		}
+	}
+
+	ctx.fragmentStack = append(ctx.fragmentStack, fragmentName)
+	maxDepth := 10
+	if ctx.renderDepth > 0 {
+		maxDepth = ctx.renderDepth
+	}
+	if len(ctx.fragmentStack) > maxDepth {
+		ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
+		return nil, fmt.Errorf("maximum render depth exceeded")
+	}
+
+	renderedBody, err := func() (*Body, error) {
+		defer func() {
+			ctx.fragmentStack = ctx.fragmentStack[:len(ctx.fragmentStack)-1]
+		}()
+		return RenderBodyWithControlStructures(frag.parsed.Body, data, ctx)
+	}()
+	if err != nil {
+		return nil, fmt.Errorf("failed to render fragment %s: %w", fragmentName, err)
+	}
+	applyFragmentFontOverrides(renderedBody.Elements, fragmentName, ctx)
+
+	if frag.isDocx && len(frag.relationships) > 0 {
+		rangeStart, exists := ctx.fragmentIDAllocations[fragmentName]
+		if !exists {
+			rangeStart = ctx.nextFragmentIDRange
+			ctx.fragmentIDAllocations[fragmentName] = rangeStart
+			ctx.nextFragmentIDRange += FragmentIDRangeSize
+		}
+
+		if !ctx.fragmentResourcesAdded[fragmentName] {
+			imageCounter := 1
+			for _, rel := range frag.relationships {
+				if !isMediaRelationship(rel) {
+					continue
+				}
+
+				idNum, err := extractRelationshipNumber(rel.ID)
+				if err != nil {
+					return nil, fmt.Errorf("invalid relationship ID %s in fragment %s: %w", rel.ID, fragmentName, err)
+				}
+				if idNum >= FragmentIDRangeSize {
+					return nil, fmt.Errorf("fragment %s relationship ID %s exceeds range size %d",
+						fragmentName, rel.ID, FragmentIDRangeSize)
+				}
+
+				newID := fmt.Sprintf("rId%d", rangeStart+idNum)
+				newTarget := renameMediaPath(rel.Target, fragmentName, imageCounter)
+				if mediaContent, ok := frag.mediaFiles[rel.Target]; ok {
+					newFilename := filepath.Base(newTarget)
+					ctx.fragmentMedia[newFilename] = mediaContent
+				}
+
+				ctx.fragmentRelationships = append(ctx.fragmentRelationships, Relationship{
+					ID:     newID,
+					Type:   rel.Type,
+					Target: newTarget,
+				})
+				imageCounter++
+			}
+			ctx.fragmentResourcesAdded[fragmentName] = true
+		}
+
+		idMap := make(map[string]string)
+		for _, rel := range frag.relationships {
+			if !isMediaRelationship(rel) {
+				continue
+			}
+			idNum, _ := extractRelationshipNumber(rel.ID)
+			idMap[rel.ID] = fmt.Sprintf("rId%d", rangeStart+idNum)
+		}
+
+		tempDoc := &Document{Body: renderedBody}
+		updateDocumentRelationshipIDs(tempDoc, idMap)
+	}
+
+	if frag.isDocx && ctx.numbering != nil && len(frag.numberingXML) > 0 {
+		numMap, err := ctx.numbering.ensureFragmentDefinitions(fragmentName, frag.numberingXML, frag.stylesXML)
+		if err != nil {
+			return nil, fmt.Errorf("failed to merge numbering for fragment %s: %w", fragmentName, err)
+		}
+		if len(numMap) > 0 {
+			tempDoc := &Document{Body: renderedBody}
+			updateDocumentNumberingIDs(tempDoc, numMap)
+		}
+	}
+
+	return renderedBody.Elements, nil
+}
+
+// RenderBodyWithControlStructures renders a document body handling control structures
+func RenderBodyWithControlStructures(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
+	rendered, err := renderBodyWithElementOrder(body, data, ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply table merging to fix split tables from for loops outside tables
+	rendered.Elements = MergeConsecutiveTables(rendered.Elements)
+
+	return rendered, nil
+}
+
+// renderBodyWithElementOrder renders using the new Elements field that preserves order
+func renderBodyWithElementOrder(body *Body, data TemplateData, ctx *renderContext) (*Body, error) {
+	rendered := &Body{
+		SectionProperties: body.SectionProperties,
+	}
+	elements, err := renderBodyElementRange(body, resolveBodyRenderPlan(body, ctx), 0, len(body.Elements), data, ctx)
+	if err != nil {
+		return nil, err
+	}
+	rendered.Elements = elements
 
 	return rendered, nil
 }

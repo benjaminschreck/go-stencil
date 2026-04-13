@@ -39,6 +39,7 @@ type templateRenderResources struct {
 	baseNumbering         *numberingContext
 	fragmentFontOverrides map[string]fragmentFontOverrides
 	mergedStylesCache     map[string][]byte
+	bodyPlans             map[*Body]*bodyRenderPlan
 	cacheMu               sync.RWMutex
 }
 
@@ -76,6 +77,7 @@ type renderContext struct {
 
 	// Namespace collection
 	collectedNamespaces map[string]string // prefix -> URI, collected from all fragments
+	bodyPlans           map[*Body]*bodyRenderPlan
 }
 
 // PreparedTemplate represents a compiled template ready for rendering.
@@ -574,6 +576,7 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		numbering:              numberingCtx,
 		fragmentFontOverrides:  resources.fragmentFontOverrides,
 		collectedNamespaces:    make(map[string]string),
+		bodyPlans:              resources.bodyPlans,
 	}
 
 	// Collect namespaces from the main template document (V5: REQUIRED)
@@ -1311,6 +1314,7 @@ func (t *template) refreshRenderResources() (*templateRenderResources, error) {
 		baseNumbering:         baseNumbering,
 		fragmentFontOverrides: fragmentFontOverrides,
 		mergedStylesCache:     make(map[string][]byte),
+		bodyPlans:             buildTemplateBodyPlans(t.document, t.fragments),
 	}
 	t.renderResources = resources
 	return resources, nil

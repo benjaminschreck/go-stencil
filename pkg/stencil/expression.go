@@ -5,12 +5,63 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // ExpressionNode represents a node in the expression AST
 type ExpressionNode interface {
 	String() string
 	Evaluate(data TemplateData) (interface{}, error)
+}
+
+type expressionCacheKey struct {
+	expr       string
+	requireEOF bool
+}
+
+type expressionCacheEntry struct {
+	node ExpressionNode
+	err  error
+}
+
+const maxExpressionParseCacheEntries = 2048
+
+type expressionParseCacheStore struct {
+	mu      sync.RWMutex
+	entries map[expressionCacheKey]expressionCacheEntry
+	order   []expressionCacheKey
+}
+
+var expressionParseCache = expressionParseCacheStore{
+	entries: make(map[expressionCacheKey]expressionCacheEntry),
+	order:   make([]expressionCacheKey, 0, maxExpressionParseCacheEntries),
+}
+
+func (c *expressionParseCacheStore) get(key expressionCacheKey) (expressionCacheEntry, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	entry, ok := c.entries[key]
+	return entry, ok
+}
+
+func (c *expressionParseCacheStore) add(key expressionCacheKey, entry expressionCacheEntry) expressionCacheEntry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if existing, ok := c.entries[key]; ok {
+		return existing
+	}
+
+	if len(c.entries) >= maxExpressionParseCacheEntries && len(c.order) > 0 {
+		evict := c.order[0]
+		c.order = c.order[1:]
+		delete(c.entries, evict)
+	}
+
+	c.entries[key] = entry
+	c.order = append(c.order, key)
+	return entry
 }
 
 // LiteralNode represents a literal value (string, number, boolean)
@@ -443,13 +494,31 @@ func TokenizeExpression(expr string) ([]ExpressionToken, error) {
 
 // ParseExpression parses an expression string into an AST
 func ParseExpression(expr string) (ExpressionNode, error) {
-	return parseExpressionWithMode(expr, false)
+	return parseExpressionWithModeCached(expr, false)
 }
 
 // ParseExpressionStrict parses an expression string into an AST and requires full token consumption.
 // This is used by validation flows to reject trailing tokens such as "name name2".
 func ParseExpressionStrict(expr string) (ExpressionNode, error) {
-	return parseExpressionWithMode(expr, true)
+	return parseExpressionWithModeCached(expr, true)
+}
+
+func parseExpressionWithModeCached(expr string, requireEOF bool) (ExpressionNode, error) {
+	key := expressionCacheKey{
+		expr:       expr,
+		requireEOF: requireEOF,
+	}
+	if entry, ok := expressionParseCache.get(key); ok {
+		return entry.node, entry.err
+	}
+
+	node, err := parseExpressionWithMode(expr, requireEOF)
+	entry := expressionCacheEntry{
+		node: node,
+		err:  err,
+	}
+	stored := expressionParseCache.add(key, entry)
+	return stored.node, stored.err
 }
 
 func parseExpressionWithMode(expr string, requireEOF bool) (ExpressionNode, error) {
