@@ -18,6 +18,19 @@ type seqFieldFrame struct {
 	resultRuns  []*Run
 }
 
+type seqFieldFormat int
+
+const (
+	seqFieldFormatArabic seqFieldFormat = iota
+	seqFieldFormatRomanUpper
+	seqFieldFormatRomanLower
+)
+
+type seqFieldSpec struct {
+	identifier string
+	format     seqFieldFormat
+}
+
 func renumberSEQFieldsInElements(elements []BodyElement) {
 	if len(elements) == 0 {
 		return
@@ -135,13 +148,13 @@ func (state *seqFieldRenumberState) finishCurrentSEQField() {
 	frame := state.stack[idx]
 	state.stack = state.stack[:idx]
 
-	identifier, ok := parseSEQFieldIdentifier(frame.instruction.String())
+	spec, ok := parseSEQFieldInstruction(frame.instruction.String())
 	if !ok || len(frame.resultRuns) == 0 {
 		return
 	}
 
-	state.counters[identifier]++
-	setSEQFieldResult(frame.resultRuns, strconv.Itoa(state.counters[identifier]))
+	state.counters[spec.identifier]++
+	setSEQFieldResult(frame.resultRuns, formatSEQFieldValue(state.counters[spec.identifier], spec.format))
 }
 
 func parseFieldInstructionRawXML(raw []byte) (kind, value string, ok bool) {
@@ -191,12 +204,78 @@ func parseFieldInstructionRawXML(raw []byte) (kind, value string, ok bool) {
 	}
 }
 
-func parseSEQFieldIdentifier(instruction string) (string, bool) {
+func parseSEQFieldInstruction(instruction string) (seqFieldSpec, bool) {
 	parts := strings.Fields(instruction)
 	if len(parts) < 2 || !strings.EqualFold(parts[0], "SEQ") {
-		return "", false
+		return seqFieldSpec{}, false
 	}
-	return parts[1], true
+
+	spec := seqFieldSpec{
+		identifier: parts[1],
+		format:     seqFieldFormatArabic,
+	}
+
+	for idx := 2; idx < len(parts)-1; idx++ {
+		if parts[idx] != `\*` {
+			continue
+		}
+		switch parts[idx+1] {
+		case "ROMAN":
+			spec.format = seqFieldFormatRomanUpper
+		case "roman":
+			spec.format = seqFieldFormatRomanLower
+		case "ARABIC", "Arabic", "arabic":
+			spec.format = seqFieldFormatArabic
+		}
+	}
+
+	return spec, true
+}
+
+func formatSEQFieldValue(value int, format seqFieldFormat) string {
+	switch format {
+	case seqFieldFormatRomanUpper:
+		return intToRoman(value)
+	case seqFieldFormatRomanLower:
+		return strings.ToLower(intToRoman(value))
+	default:
+		return strconv.Itoa(value)
+	}
+}
+
+func intToRoman(value int) string {
+	if value <= 0 {
+		return strconv.Itoa(value)
+	}
+
+	var result strings.Builder
+	numerals := []struct {
+		value  int
+		symbol string
+	}{
+		{1000, "M"},
+		{900, "CM"},
+		{500, "D"},
+		{400, "CD"},
+		{100, "C"},
+		{90, "XC"},
+		{50, "L"},
+		{40, "XL"},
+		{10, "X"},
+		{9, "IX"},
+		{5, "V"},
+		{4, "IV"},
+		{1, "I"},
+	}
+
+	for _, numeral := range numerals {
+		for value >= numeral.value {
+			result.WriteString(numeral.symbol)
+			value -= numeral.value
+		}
+	}
+
+	return result.String()
 }
 
 func setSEQFieldResult(runs []*Run, value string) {
