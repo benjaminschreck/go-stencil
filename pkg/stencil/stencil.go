@@ -441,6 +441,8 @@ func renderHeaderOrFooter(file *zip.File, data TemplateData, ctx *renderContext)
 		normalizeRenderedTable(t)
 	}
 
+	renumberSEQFieldsInElements(renderedElements)
+
 	headerFooter.Paragraphs = renderedParas
 	headerFooter.Tables = renderedTables
 
@@ -599,6 +601,10 @@ func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error) {
 		err = ProcessTableColumnMarkers(renderedDoc)
 		if err != nil {
 			return nil, WithContext(err, "processing table column markers", nil)
+		}
+
+		if renderedDoc != nil && renderedDoc.Body != nil {
+			renumberSEQFieldsInElements(renderedDoc.Body.Elements)
 		}
 
 		// V5: Merge collected namespaces from fragments into main document
