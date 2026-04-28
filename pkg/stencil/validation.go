@@ -742,13 +742,32 @@ func validateSemanticTokenSpans(
 	strict bool,
 ) []StencilValidationIssue {
 	issues := make([]StencilValidationIssue, 0)
-	fieldIndex := indexFieldDefinitions(schema.Fields)
-	functionIndex := indexFunctionDefinitions(schema.Functions)
-	severity := semanticSeverity(strict)
+	validateSemanticTokenSpansWithContext(
+		spans,
+		indexFieldDefinitions(schema.Fields),
+		indexFunctionDefinitions(schema.Functions),
+		semanticSeverity(strict),
+		[]map[string]semanticScopedVar{{}},
+		nil,
+		&issues,
+	)
+	return issues
+}
 
-	scopeStack := []map[string]semanticScopedVar{{}}
+func validateSemanticTokenSpansWithContext(
+	spans []tokenSpan,
+	fieldIndex map[string]FieldDefinition,
+	functionIndex map[string]FunctionDefinition,
+	severity IssueSeverity,
+	initialScopeStack []map[string]semanticScopedVar,
+	includeHook func(tokenSpan, []map[string]semanticScopedVar) []StencilValidationIssue,
+	issues *[]StencilValidationIssue,
+) {
+	scopeStack := cloneSemanticScopeStack(initialScopeStack)
+	if len(scopeStack) == 0 {
+		scopeStack = []map[string]semanticScopedVar{{}}
+	}
 	controlStack := make([]semanticControlFrame, 0)
-
 	for _, span := range spans {
 		if span.Malformed {
 			continue
@@ -760,17 +779,17 @@ func validateSemanticTokenSpans(
 			if err != nil {
 				continue
 			}
-			_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, &issues)
+			_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, issues)
 		case TokenIf:
 			node, err := ParseExpressionStrict(span.Token.Value)
 			if err == nil {
-				_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, &issues)
+				_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, issues)
 			}
 			controlStack = append(controlStack, semanticControlFrame{TokenType: TokenIf})
 		case TokenUnless:
 			node, err := ParseExpressionStrict(span.Token.Value)
 			if err == nil {
-				_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, &issues)
+				_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, issues)
 			}
 			controlStack = append(controlStack, semanticControlFrame{TokenType: TokenUnless})
 		case TokenElsif:
@@ -778,7 +797,7 @@ func validateSemanticTokenSpans(
 			if err != nil {
 				continue
 			}
-			_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, &issues)
+			_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, issues)
 		case TokenFor:
 			pushedScope := false
 			forNode, err := parseForSyntaxWithExpressionParser(span.Token.Value, ParseExpressionStrict)
@@ -790,7 +809,7 @@ func validateSemanticTokenSpans(
 					fieldIndex,
 					functionIndex,
 					severity,
-					&issues,
+					issues,
 				)
 
 				localScope := make(map[string]semanticScopedVar)
@@ -816,7 +835,10 @@ func validateSemanticTokenSpans(
 			if err != nil {
 				continue
 			}
-			_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, &issues)
+			_ = inferExpressionType(node, span, scopeStack, fieldIndex, functionIndex, severity, issues)
+			if includeHook != nil {
+				*issues = append(*issues, includeHook(span, scopeStack)...)
+			}
 		case TokenEnd:
 			if len(controlStack) == 0 {
 				continue
@@ -830,8 +852,18 @@ func validateSemanticTokenSpans(
 			}
 		}
 	}
+}
 
-	return issues
+func cloneSemanticScopeStack(scopeStack []map[string]semanticScopedVar) []map[string]semanticScopedVar {
+	cloned := make([]map[string]semanticScopedVar, 0, len(scopeStack))
+	for _, scope := range scopeStack {
+		scopeClone := make(map[string]semanticScopedVar, len(scope))
+		for name, scopedVar := range scope {
+			scopeClone[name] = scopedVar
+		}
+		cloned = append(cloned, scopeClone)
+	}
+	return cloned
 }
 
 func inferExpressionType(
@@ -850,14 +882,18 @@ func inferExpressionType(
 	if path, ok := referencePathFromNode(node); ok {
 		fieldType, _, found := resolveFieldReference(path, scopeStack, fieldIndex)
 		if !found {
-			appendValidationIssue(
+			appendValidationIssueWithSuggestions(
 				issues,
 				severity,
 				IssueCodeUnknownField,
-				fmt.Sprintf("unknown field: %s", path),
+				fmt.Sprintf("unknown field: %s. Add %q to the validation schema or update the template expression to use an existing schema field.", path, path),
 				span,
 				TokenKindVariable,
 				path,
+				[]string{
+					fmt.Sprintf("Add a FieldDefinition for %q to the validation schema.", path),
+					"Check the template expression for a typo or stale field name.",
+				},
 			)
 			return semanticUnknownType()
 		}
@@ -884,25 +920,29 @@ func inferExpressionType(
 		functionName := normalizeFunctionName(n.Name)
 		functionDef, exists := functionIndex[functionName]
 		if !exists {
-			appendValidationIssue(
+			appendValidationIssueWithSuggestions(
 				issues,
 				severity,
 				IssueCodeUnknownFunction,
-				fmt.Sprintf("unknown function: %s", n.Name),
+				fmt.Sprintf("unknown function: %s. Register this function before validation or change the template to call a known function.", n.Name),
 				span,
 				TokenKindFunction,
 				n.Name,
+				[]string{
+					fmt.Sprintf("Register a function named %q in the function registry used for validation.", n.Name),
+					"Check the function name for casing, spelling, or namespace differences.",
+				},
 			)
 			return semanticUnknownType()
 		}
 
 		if len(n.Args) < functionDef.MinArgs || (functionDef.MaxArgs >= 0 && len(n.Args) > functionDef.MaxArgs) {
-			appendValidationIssue(
+			appendValidationIssueWithSuggestions(
 				issues,
 				severity,
 				IssueCodeFunctionArgError,
 				fmt.Sprintf(
-					"function %s expects %s arguments, got %d",
+					"function %s expects %s arguments, got %d. Update the call to pass a supported number of arguments.",
 					n.Name,
 					formatArgumentRange(functionDef.MinArgs, functionDef.MaxArgs),
 					len(n.Args),
@@ -910,6 +950,10 @@ func inferExpressionType(
 				span,
 				TokenKindFunction,
 				n.Name,
+				[]string{
+					fmt.Sprintf("Change %s(...) to pass %s arguments.", n.Name, formatArgumentRange(functionDef.MinArgs, functionDef.MaxArgs)),
+					"If this arity is valid at runtime, update the validation function definition.",
+				},
 			)
 		}
 
@@ -925,12 +969,12 @@ func inferExpressionType(
 				continue
 			}
 
-			appendValidationIssue(
+			appendValidationIssueWithSuggestions(
 				issues,
 				severity,
 				IssueCodeTypeMismatch,
 				fmt.Sprintf(
-					"function %s argument %d expects %s, got %s",
+					"function %s argument %d expects %s, got %s. Pass a value with a compatible schema type or update the function definition.",
 					n.Name,
 					i+1,
 					strings.Join(allowedKinds, "/"),
@@ -939,6 +983,10 @@ func inferExpressionType(
 				span,
 				TokenKindFunction,
 				n.Name,
+				[]string{
+					fmt.Sprintf("Use a %s value for argument %d of %s.", strings.Join(allowedKinds, "/"), i+1, n.Name),
+					"If the template is valid, update the validation schema or function argument kinds.",
+				},
 			)
 		}
 
@@ -983,11 +1031,25 @@ func appendValidationIssue(
 	kind TokenKind,
 	expression string,
 ) {
+	appendValidationIssueWithSuggestions(issues, severity, code, message, span, kind, expression, nil)
+}
+
+func appendValidationIssueWithSuggestions(
+	issues *[]StencilValidationIssue,
+	severity IssueSeverity,
+	code StencilIssueCode,
+	message string,
+	span tokenSpan,
+	kind TokenKind,
+	expression string,
+	suggestions []string,
+) {
 	location := locationFromSpan(span)
 	*issues = append(*issues, StencilValidationIssue{
-		Severity: severity,
-		Code:     code,
-		Message:  message,
+		Severity:    severity,
+		Code:        code,
+		Message:     message,
+		Suggestions: suggestions,
 		Token: TemplateTokenRef{
 			Raw:        span.Raw,
 			Kind:       kind,

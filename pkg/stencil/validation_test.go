@@ -484,8 +484,14 @@ func TestValidateTemplate_UnknownFieldAndFunctionDetection(t *testing.T) {
 		switch issue.Code {
 		case IssueCodeUnknownField:
 			seenUnknownField = true
+			if len(issue.Suggestions) == 0 {
+				t.Fatalf("expected unknown-field suggestions, got %+v", issue)
+			}
 		case IssueCodeUnknownFunction:
 			seenUnknownFunction = true
+			if len(issue.Suggestions) == 0 {
+				t.Fatalf("expected unknown-function suggestions, got %+v", issue)
+			}
 		}
 	}
 
@@ -534,8 +540,14 @@ func TestValidateTemplate_FunctionArgumentAndTypeMismatch(t *testing.T) {
 		switch issue.Code {
 		case IssueCodeFunctionArgError:
 			countArgErrors++
+			if len(issue.Suggestions) == 0 {
+				t.Fatalf("expected function-argument suggestions, got %+v", issue)
+			}
 		case IssueCodeTypeMismatch:
 			countTypeMismatch++
+			if len(issue.Suggestions) == 0 {
+				t.Fatalf("expected type-mismatch suggestions, got %+v", issue)
+			}
 		}
 	}
 
