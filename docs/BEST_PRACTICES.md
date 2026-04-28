@@ -111,8 +111,12 @@ stencil.SetCacheConfig(50, 30*time.Minute)
 
 // Or use a custom engine with caching
 engine := stencil.NewWithOptions(
-    stencil.WithCache(100),
-    stencil.WithCacheTTL(1*time.Hour),
+    stencil.WithConfig(&stencil.Config{
+        CacheMaxSize:   100,
+        CacheTTL:       1 * time.Hour,
+        LogLevel:       "info",
+        MaxRenderDepth: 100,
+    }),
 )
 ```
 
@@ -158,7 +162,12 @@ tmpl.AddFragment("companyHeader", "ACME Corp - Professional Services")
 
 ```go
 engine := stencil.NewWithOptions(
-    stencil.WithStrictMode(true),
+    stencil.WithConfig(&stencil.Config{
+        CacheMaxSize:   100,
+        LogLevel:       "info",
+        MaxRenderDepth: 100,
+        StrictMode:     true,
+    }),
 )
 ```
 
@@ -234,7 +243,7 @@ if err := validateInvoiceData(data); err != nil {
 **For conditional columns:**
 
 ```
-| Name | {{if showPrices}}Price{{else}}{{hideColumn}}{{end}} |
+| Name | {{if showPrices}}Price{{else}}{{hideColumn()}}{{end}} |
 ```
 
 ### 3. Use Page Breaks Wisely
@@ -242,7 +251,7 @@ if err := validateInvoiceData(data); err != nil {
 ```
 {{for chapter in chapters}}
 {{if not(chapter.isFirst)}}
-{{pageBreak}}
+{{pageBreak()}}
 {{end}}
 {{chapter.content}}
 {{end}}
@@ -318,7 +327,11 @@ Maintain a set of test templates with edge cases:
 
 ```go
 engine := stencil.NewWithOptions(
-    stencil.WithLogLevel("debug"),
+    stencil.WithConfig(&stencil.Config{
+        CacheMaxSize:   100,
+        LogLevel:       "debug",
+        MaxRenderDepth: 100,
+    }),
 )
 ```
 

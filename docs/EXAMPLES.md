@@ -123,7 +123,7 @@ Key Metrics:
 {{end}}
 {{end}}
 
-{{pageBreak}}
+{{pageBreak()}}
 
 APPENDIX
 {{for appendix in appendices}}
@@ -178,11 +178,11 @@ INVENTORY REPORT
 {{for category in categories}}
 {{uppercase(category.name)}}
 
-| Product | Stock | Price | Status |
-|---------|-------|-------|---------|
+| Product | Stock | Price | Value | Status |
+|---------|-------|-------|-------|---------|
 {{for product in category.products}}
 {{if product.stock > 0}}
-| {{product.name}} | {{product.stock}} | ${{format("%.2f", product.price)}} | {{if product.stock < 10}}Low Stock{{else}}Available{{end}} |
+| {{product.name}} | {{product.stock}} | ${{format("%.2f", product.price)}} | ${{format("%.2f", productValue(product))}} | {{if product.stock < 10}}Low Stock{{else}}Available{{end}} |
 {{else}}
 {{hideRow()}}
 {{end}}
@@ -197,18 +197,27 @@ Total {{category.name}} Value: ${{format("%.2f", sum(map("value", category.produ
 
 ```go
 // Custom function to calculate product value
-type ProductValueFunction struct{}
+productValueFunction := stencil.NewSimpleFunction("productValue", 1, 1, func(args ...interface{}) (interface{}, error) {
+    product, ok := args[0].(map[string]interface{})
+    if !ok {
+        return 0, fmt.Errorf("productValue expects a product map")
+    }
 
-func (f ProductValueFunction) Name() string {
-    return "productValue"
-}
+    stock, ok := product["stock"].(int)
+    if !ok {
+        return 0, fmt.Errorf("product stock must be an int")
+    }
 
-func (f ProductValueFunction) Call(args ...interface{}) (interface{}, error) {
-    // Implementation to calculate stock * price
-}
+    price, ok := product["price"].(float64)
+    if !ok {
+        return 0, fmt.Errorf("product price must be a number")
+    }
+
+    return float64(stock) * price, nil
+})
 
 engine := stencil.NewWithOptions(
-    stencil.WithFunction("productValue", ProductValueFunction{}),
+    stencil.WithFunction("productValue", productValueFunction),
 )
 
 data := stencil.TemplateData{
@@ -216,9 +225,9 @@ data := stencil.TemplateData{
         {
             "name": "Electronics",
             "products": []map[string]interface{}{
-                {"name": "Laptop", "stock": 15, "price": 999.99},
-                {"name": "Mouse", "stock": 0, "price": 29.99}, // Will be hidden
-                {"name": "Keyboard", "stock": 8, "price": 79.99},
+                {"name": "Laptop", "stock": 15, "price": 999.99, "value": 14999.85},
+                {"name": "Mouse", "stock": 0, "price": 29.99, "value": 0}, // Will be hidden
+                {"name": "Keyboard", "stock": 8, "price": 79.99, "value": 639.92},
             },
         },
     },
@@ -522,14 +531,10 @@ func generateDocument(templatePath string, data stencil.TemplateData) error {
     if err != nil {
         var templateErr *stencil.TemplateError
         if errors.As(err, &templateErr) {
-            switch templateErr.Type {
-            case "ParseError":
-                return fmt.Errorf("template syntax error: %s", templateErr.Message)
-            case "ValidationError":
-                return fmt.Errorf("template validation failed: %s", templateErr.Message)
-            default:
-                return fmt.Errorf("template error (%s): %s", templateErr.Type, templateErr.Message)
+            if templateErr.Line > 0 {
+                return fmt.Errorf("template error at line %d: %s", templateErr.Line, templateErr.Message)
             }
+            return fmt.Errorf("template error: %s", templateErr.Message)
         }
         return fmt.Errorf("failed to prepare template: %w", err)
     }
@@ -539,13 +544,9 @@ func generateDocument(templatePath string, data stencil.TemplateData) error {
     if err != nil {
         var templateErr *stencil.TemplateError
         if errors.As(err, &templateErr) {
-            // Log detailed error information
-            log.Printf("Render error details: %+v", templateErr.Details)
-
-            if varName, ok := templateErr.Details["variable"].(string); ok {
-                return fmt.Errorf("undefined variable '%s' in template", varName)
+            if templateErr.Line > 0 && templateErr.Column > 0 {
+                log.Printf("Render error at line %d, column %d", templateErr.Line, templateErr.Column)
             }
-
             return fmt.Errorf("render error: %s", templateErr.Message)
         }
         return fmt.Errorf("failed to render template: %w", err)

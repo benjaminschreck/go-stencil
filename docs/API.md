@@ -6,32 +6,23 @@ The `stencil` package provides a powerful template engine for Microsoft Word doc
 
 ## Core Types
 
-### Template
-Represents a prepared template ready for rendering.
-
-```go
-type Template interface {
-    // Render executes the template with the provided data
-    Render(data TemplateData) (io.Reader, error)
-    
-    // Close releases resources associated with the template
-    Close() error
-    
-    // AddFragment adds a named text fragment
-    AddFragment(name, content string) error
-    
-    // AddFragmentFromBytes adds a named fragment from DOCX bytes
-    AddFragmentFromBytes(name string, docxBytes []byte) error
-}
-```
-
 ### PreparedTemplate
-The concrete implementation of the Template interface.
+Represents a prepared template ready for rendering.
 
 ```go
 type PreparedTemplate struct {
     // Contains prepared template data
 }
+```
+
+Common methods:
+
+```go
+func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error)
+func (pt *PreparedTemplate) Validate(schema TemplateSchema) (ValidateTemplateResult, error)
+func (pt *PreparedTemplate) Close() error
+func (pt *PreparedTemplate) AddFragment(name, content string) error
+func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) error
 ```
 
 ### TemplateData
@@ -41,14 +32,49 @@ Type alias for template data context.
 type TemplateData = map[string]interface{}
 ```
 
+### TemplateSchema
+Render-shaped type schema used by `PreparedTemplate.Validate`.
+
+```go
+type TemplateSchema map[string]TemplateType
+
+var (
+    String TemplateType
+    Number TemplateType
+    Bool   TemplateType
+    Any    TemplateType
+)
+
+func Object(fields TemplateSchema) TemplateType
+func List(element TemplateType) TemplateType
+func Nullable(t TemplateType) TemplateType
+```
+
+Example:
+
+```go
+result, err := tmpl.Validate(stencil.TemplateSchema{
+    "user": stencil.Object(stencil.TemplateSchema{
+        "name": stencil.String,
+        "age":  stencil.Number,
+    }),
+    "items": stencil.List(stencil.Object(stencil.TemplateSchema{
+        "title": stencil.String,
+        "price": stencil.Number,
+    })),
+})
+```
+
+`Validate` checks the prepared template body, main-template header/footer parts, and the bodies of all statically reachable fragment includes such as `{{include "header"}}`. Dynamic includes such as `{{include fragmentName}}` are syntax/type-checked, but not traversed because the concrete fragment cannot be known without render data. DOCX fragment validation currently scans the fragment document body, not fragment header/footer parts.
+
 ### Engine
 The main template engine that manages template preparation and rendering.
 
 ```go
 type Engine struct {
-    config    *Config
-    functions map[string]Function
-    cache     *TemplateCache
+    config   *Config
+    cache    *TemplateCache
+    registry FunctionRegistry
 }
 ```
 
@@ -159,14 +185,14 @@ Key behavior:
 Prepares a template from a file path.
 
 ```go
-func PrepareFile(filePath string) (Template, error)
+func PrepareFile(filePath string) (*PreparedTemplate, error)
 ```
 
 **Parameters:**
 - `filePath`: Path to the template file (.docx)
 
 **Returns:**
-- `Template`: Prepared template ready for rendering
+- `*PreparedTemplate`: Prepared template ready for rendering
 - `error`: Error if preparation fails
 
 **Example:**
@@ -182,14 +208,14 @@ defer tmpl.Close()
 Prepares a template from an io.Reader.
 
 ```go
-func Prepare(reader io.Reader) (Template, error)
+func Prepare(reader io.Reader) (*PreparedTemplate, error)
 ```
 
 **Parameters:**
 - `reader`: Reader containing the template data
 
 **Returns:**
-- `Template`: Prepared template ready for rendering
+- `*PreparedTemplate`: Prepared template ready for rendering
 - `error`: Error if preparation fails
 
 **Example:**
@@ -220,21 +246,22 @@ func NewWithOptions(opts ...Option) *Engine
 ```
 
 **Available Options:**
+- `WithConfig(config *Config)`: Set a complete engine configuration
 - `WithCache(maxSize int)`: Enable caching with maximum templates
-- `WithCacheTTL(ttl time.Duration)`: Set cache TTL
 - `WithFunction(name string, fn Function)`: Register a custom function
-- `WithFunctionsProvider(provider FunctionProvider)`: Register multiple functions
-- `WithLogger(logger *log.Logger)`: Set custom logger
-- `WithLogLevel(level string)`: Set log level (debug, info, warn, error)
-- `WithStrictMode(strict bool)`: Enable strict mode for undefined variables
+- `WithFunctionProvider(provider FunctionProvider)`: Register multiple functions
 
 **Example:**
 ```go
 engine := stencil.NewWithOptions(
-    stencil.WithCache(100),
-    stencil.WithCacheTTL(10*time.Minute),
-    stencil.WithFunction("custom", myCustomFunc),
-    stencil.WithLogLevel("debug"),
+    stencil.WithConfig(&stencil.Config{
+        CacheMaxSize:   100,
+        CacheTTL:       10 * time.Minute,
+        LogLevel:       "debug",
+        MaxRenderDepth: 100,
+        StrictMode:     true,
+    }),
+    stencil.WithFunction("myUpper", myUpperFunc),
 )
 ```
 
@@ -247,11 +274,11 @@ func NewWithConfig(config *Config) *Engine
 
 ### Template Rendering
 
-#### (Template) Render
+#### (*PreparedTemplate) Render
 Renders the template with provided data.
 
 ```go
-func (t *Template) Render(data TemplateData) (io.Reader, error)
+func (pt *PreparedTemplate) Render(data TemplateData) (io.Reader, error)
 ```
 
 **Parameters:**
@@ -283,11 +310,11 @@ if err != nil {
 
 ### Fragment Management
 
-#### (Template) AddFragment
+#### (*PreparedTemplate) AddFragment
 Adds a named text fragment to the template.
 
 ```go
-func (t *Template) AddFragment(name, content string) error
+func (pt *PreparedTemplate) AddFragment(name, content string) error
 ```
 
 **Parameters:**
@@ -299,11 +326,11 @@ func (t *Template) AddFragment(name, content string) error
 err := tmpl.AddFragment("copyright", "© 2024 My Company. All rights reserved.")
 ```
 
-#### (Template) AddFragmentFromBytes
+#### (*PreparedTemplate) AddFragmentFromBytes
 Adds a pre-formatted DOCX fragment.
 
 ```go
-func (t *Template) AddFragmentFromBytes(name string, docxBytes []byte) error
+func (pt *PreparedTemplate) AddFragmentFromBytes(name string, docxBytes []byte) error
 ```
 
 **Parameters:**
@@ -326,11 +353,17 @@ Interface for custom template functions.
 
 ```go
 type Function interface {
-    // Name returns the function name
-    Name() string
-    
     // Call executes the function with arguments
     Call(args ...interface{}) (interface{}, error)
+
+    // Name returns the function name
+    Name() string
+
+    // MinArgs returns the minimum number of arguments required
+    MinArgs() int
+
+    // MaxArgs returns the maximum number of arguments allowed (-1 for unlimited)
+    MaxArgs() int
 }
 ```
 
@@ -343,20 +376,14 @@ func RegisterGlobalFunction(name string, fn Function) error
 
 **Example:**
 ```go
-type UppercaseFunction struct{}
-
-func (f UppercaseFunction) Name() string {
-    return "myUpper"
-}
-
-func (f UppercaseFunction) Call(args ...interface{}) (interface{}, error) {
+myUpperFunc := stencil.NewSimpleFunction("myUpper", 1, 1, func(args ...interface{}) (interface{}, error) {
     if len(args) < 1 {
         return "", fmt.Errorf("uppercase requires at least one argument")
     }
     return strings.ToUpper(fmt.Sprint(args[0])), nil
-}
+})
 
-stencil.RegisterGlobalFunction("myUpper", UppercaseFunction{})
+stencil.RegisterGlobalFunction("myUpper", myUpperFunc)
 ```
 
 #### FunctionProvider Interface
@@ -410,21 +437,12 @@ type Config struct {
     
     // LogLevel controls logging verbosity (debug, info, warn, error)
     LogLevel string
-    
-    // Logger is a custom logger instance
-    Logger *log.Logger
-    
+
     // MaxRenderDepth prevents infinite recursion in templates
     MaxRenderDepth int
-    
+
     // StrictMode enables strict variable checking
     StrictMode bool
-    
-    // CustomFunctions is a map of custom template functions
-    CustomFunctions map[string]Function
-    
-    // FunctionProviders is a list of function providers
-    FunctionProviders []FunctionProvider
 }
 ```
 
@@ -442,9 +460,9 @@ Base error type for template-related errors.
 
 ```go
 type TemplateError struct {
-    Type    string
     Message string
-    Details map[string]interface{}
+    Line    int
+    Column  int
 }
 ```
 
@@ -462,7 +480,7 @@ See the [Functions Documentation](FUNCTIONS.md) for a complete list of built-in 
 ## Thread Safety
 
 - `Engine` instances are thread-safe and can be shared across goroutines
-- `Template` instances are NOT thread-safe; use one per goroutine or synchronize access
+- `PreparedTemplate` instances are NOT thread-safe; use one per goroutine or synchronize access
 - The global template cache is thread-safe
 - Custom functions should be thread-safe if used concurrently
 
@@ -488,7 +506,11 @@ See the [Functions Documentation](FUNCTIONS.md) for a complete list of built-in 
    if err != nil {
        var templateErr *stencil.TemplateError
        if errors.As(err, &templateErr) {
-           log.Printf("Template error: %s - %s", templateErr.Type, templateErr.Message)
+           log.Printf("Template error at line %d, column %d: %s",
+               templateErr.Line,
+               templateErr.Column,
+               templateErr.Message,
+           )
        }
    }
    ```
@@ -496,7 +518,12 @@ See the [Functions Documentation](FUNCTIONS.md) for a complete list of built-in 
 4. **Use strict mode** during development to catch undefined variables:
    ```go
    engine := stencil.NewWithOptions(
-       stencil.WithStrictMode(true),
+       stencil.WithConfig(&stencil.Config{
+           CacheMaxSize:   100,
+           LogLevel:       "info",
+           MaxRenderDepth: 100,
+           StrictMode:     true,
+       }),
    )
    ```
 

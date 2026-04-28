@@ -233,30 +233,22 @@ Add your own template functions:
 
 ```go
 // Define a custom function
-type TaxCalculator struct {
-    rate float64
-}
-
-func (t TaxCalculator) Name() string {
-    return "calculateTax"
-}
-
-func (t TaxCalculator) Call(args ...interface{}) (interface{}, error) {
+taxCalculator := stencil.NewSimpleFunction("calculateTax", 1, 1, func(args ...interface{}) (interface{}, error) {
     if len(args) < 1 {
         return 0, fmt.Errorf("calculateTax requires an amount")
     }
-    
+
     amount, ok := args[0].(float64)
     if !ok {
         return 0, fmt.Errorf("amount must be a number")
     }
-    
-    return amount * t.rate, nil
-}
+
+    return amount * 0.08, nil
+})
 
 // Register the function
 engine := stencil.NewWithOptions(
-    stencil.WithFunction("calculateTax", TaxCalculator{rate: 0.08}),
+    stencil.WithFunction("calculateTax", taxCalculator),
 )
 
 // Use in template
@@ -314,9 +306,12 @@ For more control, use the Engine API:
 ```go
 // Create a custom engine
 engine := stencil.NewWithOptions(
-    stencil.WithCache(50),
-    stencil.WithLogLevel("debug"),
-    stencil.WithStrictMode(true), // Fail on undefined variables
+    stencil.WithConfig(&stencil.Config{
+        CacheMaxSize:   50,
+        LogLevel:       "debug",
+        MaxRenderDepth: 100,
+        StrictMode:     true, // Fail on undefined variables
+    }),
 )
 
 // Prepare templates using the engine
@@ -332,12 +327,13 @@ output, err := tmpl.Render(data)
 if err != nil {
     var templateErr *stencil.TemplateError
     if errors.As(err, &templateErr) {
-        log.Printf("Error type: %s", templateErr.Type)
         log.Printf("Error message: %s", templateErr.Message)
-        
-        // Access error details
-        if lineNum, ok := templateErr.Details["line"].(int); ok {
-            log.Printf("Error at line: %d", lineNum)
+
+        if templateErr.Line > 0 {
+            log.Printf("Error at line: %d", templateErr.Line)
+        }
+        if templateErr.Column > 0 {
+            log.Printf("Error at column: %d", templateErr.Column)
         }
     }
 }
@@ -358,7 +354,11 @@ If you encounter issues:
 2. Enable debug logging to see what's happening:
    ```go
    engine := stencil.NewWithOptions(
-       stencil.WithLogLevel("debug"),
+       stencil.WithConfig(&stencil.Config{
+           CacheMaxSize:   100,
+           LogLevel:       "debug",
+           MaxRenderDepth: 100,
+       }),
    )
    ```
 3. Review the examples in the `examples/` directory
