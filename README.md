@@ -14,8 +14,9 @@ go-stencil is a powerful template engine that allows you to create dynamic Micro
 - **Support for tables** and complex document structures
 - **Typographic quote support** - Works with German („..."), French (»...«), and ASCII quotes
 - **High performance** with template caching
-- **Thread-safe** rendering with concurrent template support
+- **Reusable prepared templates** for repeated renders
 - **Extensible** with custom functions and providers
+- **Template validation** for schema-aware checks before rendering
 - **Minimal dependencies** - uses only the Go standard library
 
 ## Installation
@@ -51,7 +52,7 @@ func main() {
     // Create data for rendering
     data := stencil.TemplateData{
         "name": "John Doe",
-		"date": time.Now().Format("January 2, 2006"),
+        "date": time.Now().Format("January 2, 2006"),
         "items": []map[string]interface{}{
             {"name": "Item 1", "price": 10.00},
             {"name": "Item 2", "price": 20.00},
@@ -211,36 +212,63 @@ You can extend go-stencil with custom functions:
 
 ```go
 // Define a custom function
-type GreetingFunction struct{}
-
-func (f GreetingFunction) Name() string {
-    return "greeting"
-}
-
-func (f GreetingFunction) Call(args ...interface{}) (interface{}, error) {
+greeting := stencil.NewSimpleFunction("greeting", 0, 1, func(args ...interface{}) (interface{}, error) {
     if len(args) < 1 {
         return "Hello!", nil
     }
     return fmt.Sprintf("Hello, %v!", args[0]), nil
-}
+})
 
 // Register the function
-stencil.RegisterGlobalFunction("greeting", GreetingFunction{})
+stencil.RegisterGlobalFunction("greeting", greeting)
 
 // Use in template: {{greeting("World")}} or {{greeting()}}
 // Note: Functions always require parentheses, even with no arguments
 
 // Or use a function provider for multiple functions
-type MyFunctionProvider struct{}
-
-func (p MyFunctionProvider) ProvideFunctions() map[string]stencil.Function {
-    return map[string]stencil.Function{
-        "greeting": GreetingFunction{},
-        "farewell": FarewellFunction{},
+farewell := stencil.NewSimpleFunction("farewell", 0, 1, func(args ...interface{}) (interface{}, error) {
+    if len(args) < 1 {
+        return "Goodbye!", nil
     }
+    return fmt.Sprintf("Goodbye, %v!", args[0]), nil
+})
+
+type MyFunctionProvider struct {
+    functions map[string]stencil.Function
 }
 
-stencil.RegisterFunctionsFromProvider(MyFunctionProvider{})
+func (p MyFunctionProvider) ProvideFunctions() map[string]stencil.Function {
+    return p.functions
+}
+
+stencil.RegisterFunctionsFromProvider(MyFunctionProvider{
+    functions: map[string]stencil.Function{
+        "greeting": greeting,
+        "farewell": farewell,
+    },
+})
+```
+
+### Template Validation
+
+Prepared templates can be validated against a schema before rendering:
+
+```go
+result, err := tmpl.Validate(stencil.TemplateSchema{
+    "customer": stencil.Object(stencil.TemplateSchema{
+        "name": stencil.String,
+    }),
+    "items": stencil.List(stencil.Object(stencil.TemplateSchema{
+        "name":  stencil.String,
+        "price": stencil.Number,
+    })),
+})
+if err != nil {
+    log.Fatal(err)
+}
+if !result.Valid {
+    log.Printf("template validation failed: %+v", result.Issues)
+}
 ```
 
 ### Template Fragments
@@ -293,7 +321,7 @@ go-stencil includes a comprehensive set of built-in functions:
 - `uppercase(text)` - Convert to uppercase
 - `titlecase(text)` - Convert to title case
 - `join(items, separator)` - Join items with separator
-- `joinAnd(items)` - Join items with commas and "and"
+- `joinAnd(items, separator, finalSeparator)` - Join items with custom separators
 - `replace(text, old, new)` - Replace text
 - `length(value)` - Get length of string, array, or map
 
@@ -304,7 +332,7 @@ go-stencil includes a comprehensive set of built-in functions:
 - `round(number)` - Round to nearest integer
 - `floor(number)` - Round down
 - `ceil(number)` - Round up
-- `sum(numbers...)` - Sum of numbers
+- `sum(numbers)` - Sum a list of numbers
 
 ### Formatting Functions
 
@@ -324,7 +352,8 @@ go-stencil includes a comprehensive set of built-in functions:
 
 - `pageBreak()` - Insert a page break (no arguments required)
 - `hideRow()` - Hide the current table row (no arguments required)
-- `hideColumn()` - Hide the current table column (no arguments required)
+- `hideColumn()` - Hide the current table column
+- `hideColumn(columnIndex, strategy)` - Hide a specific column with `redistribute`, `proportional`, or `fixed`
 - `html(content)` - Insert HTML-formatted content
 - `xml(content)` - Insert raw XML content
 - `replaceLink(url)` - Replace a hyperlink
