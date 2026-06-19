@@ -6,21 +6,21 @@ import (
 
 func TestHTMLFunction(t *testing.T) {
 	registry := GetDefaultFunctionRegistry()
-	
+
 	// Test that HTML function is registered
 	htmlFn, exists := registry.GetFunction("html")
 	if !exists {
 		t.Fatal("html() function should be registered")
 	}
-	
+
 	if htmlFn.Name() != "html" {
 		t.Errorf("Expected function name 'html', got %s", htmlFn.Name())
 	}
-	
+
 	if htmlFn.MinArgs() != 1 {
 		t.Errorf("Expected min args 1, got %d", htmlFn.MinArgs())
 	}
-	
+
 	if htmlFn.MaxArgs() != 1 {
 		t.Errorf("Expected max args 1, got %d", htmlFn.MaxArgs())
 	}
@@ -29,7 +29,7 @@ func TestHTMLFunction(t *testing.T) {
 func TestHTMLFunctionCall(t *testing.T) {
 	registry := GetDefaultFunctionRegistry()
 	htmlFn, _ := registry.GetFunction("html")
-	
+
 	tests := []struct {
 		name     string
 		input    string
@@ -112,7 +112,7 @@ func TestHTMLFunctionCall(t *testing.T) {
 		},
 		{
 			name:     "invalid tag",
-			input:    "<div>Invalid</div>",
+			input:    "<section>Invalid</section>",
 			expected: false,
 		},
 		{
@@ -121,31 +121,31 @@ func TestHTMLFunctionCall(t *testing.T) {
 			expected: false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := htmlFn.Call(tt.input)
-			
+
 			if tt.expected {
 				if err != nil {
 					t.Errorf("Expected success, got error: %v", err)
 					return
 				}
-				
+
 				// Check that result is an OOXMLFragment containing HTML runs
 				fragment, ok := result.(*OOXMLFragment)
 				if !ok {
 					t.Errorf("Expected *OOXMLFragment, got %T", result)
 					return
 				}
-				
+
 				// Check that content is HTMLRuns
 				htmlRuns, ok := fragment.Content.(*HTMLRuns)
 				if !ok {
 					t.Errorf("Expected *HTMLRuns in fragment content, got %T", fragment.Content)
 					return
 				}
-				
+
 				if len(htmlRuns.Runs) == 0 && tt.input != "" {
 					t.Errorf("Expected non-empty runs for input %q", tt.input)
 				}
@@ -161,12 +161,12 @@ func TestHTMLFunctionCall(t *testing.T) {
 func TestHTMLFunctionNilInput(t *testing.T) {
 	registry := GetDefaultFunctionRegistry()
 	htmlFn, _ := registry.GetFunction("html")
-	
+
 	result, err := htmlFn.Call(nil)
 	if err != nil {
 		t.Errorf("Expected success with nil input, got error: %v", err)
 	}
-	
+
 	if result != nil {
 		t.Errorf("Expected nil result for nil input, got %v", result)
 	}
@@ -175,13 +175,13 @@ func TestHTMLFunctionNilInput(t *testing.T) {
 func TestHTMLFunctionArgumentValidation(t *testing.T) {
 	registry := GetDefaultFunctionRegistry()
 	htmlFn, _ := registry.GetFunction("html")
-	
+
 	// Test no arguments
 	_, err := htmlFn.Call()
 	if err == nil {
 		t.Error("Expected error with no arguments")
 	}
-	
+
 	// Test too many arguments
 	_, err = htmlFn.Call("test", "extra")
 	if err == nil {
@@ -241,10 +241,10 @@ func TestHTMLParsingBasicTags(t *testing.T) {
 			expected: "one run with no special formatting",
 		},
 	}
-	
+
 	registry := GetDefaultFunctionRegistry()
 	htmlFn, _ := registry.GetFunction("html")
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := htmlFn.Call(tt.html)
@@ -252,24 +252,24 @@ func TestHTMLParsingBasicTags(t *testing.T) {
 				t.Errorf("Expected success, got error: %v", err)
 				return
 			}
-			
+
 			fragment, ok := result.(*OOXMLFragment)
 			if !ok {
 				t.Errorf("Expected *OOXMLFragment, got %T", result)
 				return
 			}
-			
+
 			htmlRuns, ok := fragment.Content.(*HTMLRuns)
 			if !ok {
 				t.Errorf("Expected *HTMLRuns, got %T", fragment.Content)
 				return
 			}
-			
+
 			if len(htmlRuns.Runs) == 0 {
 				t.Errorf("Expected at least one run, got empty runs")
 				return
 			}
-			
+
 			// For basic single-tag tests, we expect exactly one run
 			if len(htmlRuns.Runs) != 1 {
 				t.Errorf("Expected exactly one run for basic tag, got %d", len(htmlRuns.Runs))
@@ -310,10 +310,10 @@ func TestHTMLParsingComplexStructures(t *testing.T) {
 			expected: 3, // bold, bold+italic, bold
 		},
 	}
-	
+
 	registry := GetDefaultFunctionRegistry()
 	htmlFn, _ := registry.GetFunction("html")
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := htmlFn.Call(tt.html)
@@ -321,19 +321,19 @@ func TestHTMLParsingComplexStructures(t *testing.T) {
 				t.Errorf("Expected success, got error: %v", err)
 				return
 			}
-			
+
 			fragment, ok := result.(*OOXMLFragment)
 			if !ok {
 				t.Errorf("Expected *OOXMLFragment, got %T", result)
 				return
 			}
-			
+
 			htmlRuns, ok := fragment.Content.(*HTMLRuns)
 			if !ok {
 				t.Errorf("Expected *HTMLRuns, got %T", fragment.Content)
 				return
 			}
-			
+
 			if len(htmlRuns.Runs) != tt.expected {
 				t.Errorf("Expected %d runs, got %d", tt.expected, len(htmlRuns.Runs))
 			}

@@ -133,6 +133,40 @@ func expandDOCXFragmentParagraph(
 	return result, true, nil
 }
 
+func expandHTMLBodyFragmentParagraph(renderedPara *Paragraph, ctx *renderContext) ([]BodyElement, bool) {
+	if renderedPara == nil || ctx == nil || ctx.ooxmlFragments == nil {
+		return nil, false
+	}
+
+	text := buildParagraphRenderText(renderedPara)
+	matches := ooxmlFragmentRegex.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) != 1 {
+		return nil, false
+	}
+
+	match := matches[0]
+	if strings.TrimSpace(text[:match[0]]) != "" || strings.TrimSpace(text[match[1]:]) != "" {
+		return nil, false
+	}
+
+	fragmentKey := text[match[2]:match[3]]
+	fragmentContent := ctx.ooxmlFragments[fragmentKey]
+	switch htmlContent := fragmentContent.(type) {
+	case *HTMLBody:
+		if htmlContent == nil {
+			return nil, false
+		}
+		return htmlContent.Elements, true
+	case *HTMLTable:
+		if htmlContent == nil || htmlContent.Table == nil {
+			return nil, false
+		}
+		return []BodyElement{htmlContent.Table}, true
+	default:
+		return nil, false
+	}
+}
+
 func newParagraphWithRunsLike(base *Paragraph, runs []Run) *Paragraph {
 	if len(runs) == 0 {
 		return nil
@@ -422,6 +456,12 @@ func renderBodyElementRange(body *Body, plan *bodyRenderPlan, start, end int, da
 				renderedPara, err := RenderParagraphWithContext(el, data, ctx)
 				if err != nil {
 					return nil, err
+				}
+
+				if htmlElements, handled := expandHTMLBodyFragmentParagraph(renderedPara, ctx); handled {
+					result = append(result, htmlElements...)
+					i++
+					continue
 				}
 
 				fragmentElements, handled, err := expandDOCXFragmentParagraph(renderedPara, data, ctx, func(fragmentName string, fragment *fragment) ([]BodyElement, error) {
