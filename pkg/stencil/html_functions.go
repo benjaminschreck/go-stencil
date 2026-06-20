@@ -5,8 +5,14 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"math"
 	"strconv"
 	"strings"
+)
+
+const (
+	htmlDefaultTableColumnWidth = 2400
+	htmlDefaultTableWidth       = 0
 )
 
 // HTMLRuns represents a collection of OOXML runs generated from HTML
@@ -291,11 +297,13 @@ func htmlToOOXMLTable(content string) (*HTMLTable, error) {
 func htmlNodeToOOXMLTable(tableNode *HTMLNode) *Table {
 	rows := htmlTableRows(tableNode)
 	if len(rows) == 0 {
-		return newHTMLTable(nil)
+		return newHTMLTable(nil, htmlNodeStyle(tableNode))
 	}
 
+	tableStyle := htmlNodeStyle(tableNode)
 	maxCols := 0
 	tableRows := make([]TableRow, 0, len(rows))
+	columnWidths := []int{}
 	for _, rowNode := range rows {
 		cells := htmlTableCells(rowNode)
 		if len(cells) == 0 {
@@ -305,10 +313,12 @@ func htmlNodeToOOXMLTable(tableNode *HTMLNode) *Table {
 		row := TableRow{Cells: make([]TableCell, 0, len(cells))}
 		colCount := 0
 		for _, cellNode := range cells {
+			cellStyle := htmlNodeStyle(cellNode)
 			colspan := htmlNodeIntAttr(cellNode, "colspan", 1)
 			if colspan < 1 {
 				colspan = 1
 			}
+			cellColumnStart := colCount
 			colCount += colspan
 
 			cellRuns := convertNodeChildrenToRuns(cellNode, []string{})
@@ -316,10 +326,15 @@ func htmlNodeToOOXMLTable(tableNode *HTMLNode) *Table {
 				Properties: &TableCellProperties{
 					Width: &Width{Type: "auto", Val: 0},
 				},
-				Paragraphs: []Paragraph{paragraphFromHTMLRuns(cellRuns)},
+				Paragraphs: []Paragraph{paragraphFromHTMLRunsWithStyle(cellRuns, cellStyle, cellNode.Type == "th")},
 			}
+			applyHTMLCellStyle(&cell, cellStyle, cellNode.Type == "th")
 			if colspan > 1 {
 				cell.Properties.GridSpan = &GridSpan{Val: colspan}
+			}
+			if width, ok := parseHTMLWidth(cellStyle["width"]); ok && colspan == 1 {
+				columnWidths = ensureIntSliceLength(columnWidths, cellColumnStart+1)
+				columnWidths[cellColumnStart] = width.Val
 			}
 			row.Cells = append(row.Cells, cell)
 		}
@@ -330,7 +345,7 @@ func htmlNodeToOOXMLTable(tableNode *HTMLNode) *Table {
 		tableRows = append(tableRows, row)
 	}
 
-	return newHTMLTableWithColumnCount(tableRows, maxCols)
+	return newHTMLTableWithColumnCount(tableRows, maxCols, tableStyle, columnWidths)
 }
 
 func htmlNeedsBodyRendering(content string) bool {
@@ -443,11 +458,276 @@ func htmlRunsHaveVisibleContent(htmlRuns []HTMLRun) bool {
 	return false
 }
 
-func newHTMLTable(rows []TableRow) *Table {
-	return newHTMLTableWithColumnCount(rows, 0)
+func parseHTMLStyle(style string) map[string]string {
+	result := map[string]string{}
+	for _, declaration := range strings.Split(style, ";") {
+		name, value, ok := strings.Cut(declaration, ":")
+		if !ok {
+			continue
+		}
+		name = strings.ToLower(strings.TrimSpace(name))
+		value = strings.TrimSpace(value)
+		if name == "" || value == "" {
+			continue
+		}
+		result[name] = value
+	}
+	return result
 }
 
-func newHTMLTableWithColumnCount(rows []TableRow, columnCount int) *Table {
+func htmlNodeStyle(node *HTMLNode) map[string]string {
+	if node == nil || node.Attrs == nil {
+		return map[string]string{}
+	}
+	return parseHTMLStyle(node.Attrs["style"])
+}
+
+func parseHTMLWidth(value string) (*Width, bool) {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return nil, false
+	}
+	if strings.HasSuffix(value, "%") {
+		n, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(value, "%")), 64)
+		if err != nil || n < 0 {
+			return nil, false
+		}
+		return &Width{Type: "pct", Val: int(math.Round(n * 50))}, true
+	}
+	if strings.HasSuffix(value, "px") {
+		n, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(value, "px")), 64)
+		if err != nil || n < 0 {
+			return nil, false
+		}
+		return &Width{Type: "dxa", Val: int(math.Round(n * 15))}, true
+	}
+	if strings.HasSuffix(value, "pt") {
+		n, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(value, "pt")), 64)
+		if err != nil || n < 0 {
+			return nil, false
+		}
+		return &Width{Type: "dxa", Val: int(math.Round(n * 20))}, true
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 0 {
+		return nil, false
+	}
+	return &Width{Type: "dxa", Val: n}, true
+}
+
+func normalizeHTMLColor(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	if strings.HasPrefix(value, "#") {
+		value = strings.TrimPrefix(value, "#")
+	}
+	value = strings.ToUpper(value)
+	switch value {
+	case "BLACK":
+		return "000000", true
+	case "WHITE":
+		return "FFFFFF", true
+	case "RED":
+		return "FF0000", true
+	case "GREEN":
+		return "008000", true
+	case "BLUE":
+		return "0000FF", true
+	case "YELLOW":
+		return "FFFF00", true
+	case "GRAY", "GREY":
+		return "808080", true
+	case "TRANSPARENT", "NONE":
+		return "", false
+	}
+	if len(value) == 3 && isHexColor(value) {
+		return strings.Repeat(value[:1], 2) + strings.Repeat(value[1:2], 2) + strings.Repeat(value[2:], 2), true
+	}
+	if len(value) == 6 && isHexColor(value) {
+		return value, true
+	}
+	return "", false
+}
+
+func isHexColor(value string) bool {
+	for _, r := range value {
+		if !((r >= '0' && r <= '9') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseHTMLBorder(style map[string]string) (*BorderProperties, bool) {
+	borderValue := strings.ToLower(strings.TrimSpace(style["border"]))
+	if borderValue == "" {
+		borderValue = strings.ToLower(strings.TrimSpace(style["border-width"]))
+	}
+	if borderValue == "" {
+		return nil, false
+	}
+	if borderValue == "none" || borderValue == "0" || borderValue == "0px" {
+		return &BorderProperties{Val: "nil"}, true
+	}
+
+	border := &BorderProperties{Val: "single", Sz: "4", Space: "0", Color: "auto"}
+	fields := strings.Fields(borderValue)
+	for _, field := range fields {
+		switch field {
+		case "none", "hidden":
+			border.Val = "nil"
+		case "solid":
+			border.Val = "single"
+		case "dashed":
+			border.Val = "dashed"
+		case "dotted":
+			border.Val = "dotted"
+		default:
+			if size, ok := parseHTMLBorderSize(field); ok {
+				border.Sz = size
+				continue
+			}
+			if color, ok := normalizeHTMLColor(field); ok {
+				border.Color = color
+			}
+		}
+	}
+	if color, ok := normalizeHTMLColor(style["border-color"]); ok {
+		border.Color = color
+	}
+	if size, ok := parseHTMLBorderSize(style["border-width"]); ok {
+		border.Sz = size
+	}
+	return border, true
+}
+
+func parseHTMLBorderSize(value string) (string, bool) {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return "", false
+	}
+	var points float64
+	var err error
+	switch {
+	case strings.HasSuffix(value, "px"):
+		points, err = strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(value, "px")), 64)
+	case strings.HasSuffix(value, "pt"):
+		points, err = strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(value, "pt")), 64)
+	default:
+		points, err = strconv.ParseFloat(value, 64)
+	}
+	if err != nil || points < 0 {
+		return "", false
+	}
+	return strconv.Itoa(max(1, int(math.Round(points*8)))), true
+}
+
+func allTableBorders(border *BorderProperties) *TableBorders {
+	if border == nil {
+		return nil
+	}
+	return &TableBorders{
+		Top:     cloneBorderProperties(border),
+		Left:    cloneBorderProperties(border),
+		Bottom:  cloneBorderProperties(border),
+		Right:   cloneBorderProperties(border),
+		InsideH: cloneBorderProperties(border),
+		InsideV: cloneBorderProperties(border),
+	}
+}
+
+func allCellBorders(border *BorderProperties) *TableCellBorders {
+	if border == nil {
+		return nil
+	}
+	return &TableCellBorders{
+		Top:    cloneBorderProperties(border),
+		Bottom: cloneBorderProperties(border),
+		Left:   cloneBorderProperties(border),
+		Right:  cloneBorderProperties(border),
+	}
+}
+
+func cloneBorderProperties(border *BorderProperties) *BorderProperties {
+	if border == nil {
+		return nil
+	}
+	clone := *border
+	return &clone
+}
+
+func applyHTMLCellStyle(cell *TableCell, style map[string]string, header bool) {
+	if cell.Properties == nil {
+		cell.Properties = &TableCellProperties{}
+	}
+	if width, ok := parseHTMLWidth(style["width"]); ok {
+		cell.Properties.Width = width
+	}
+	background := style["background-color"]
+	if background == "" {
+		background = style["background"]
+	}
+	if color, ok := normalizeHTMLColor(background); ok {
+		cell.Properties.Shading = &Shading{Val: "clear", Color: "auto", Fill: color}
+	} else if header {
+		cell.Properties.Shading = &Shading{Val: "clear", Color: "auto", Fill: "EDEDED"}
+	}
+	if border, ok := parseHTMLBorder(style); ok {
+		cell.Properties.TcBorders = allCellBorders(border)
+	}
+	switch strings.ToLower(strings.TrimSpace(style["vertical-align"])) {
+	case "top":
+		cell.Properties.VAlign = &VerticalAlign{Val: "top"}
+	case "middle", "center":
+		cell.Properties.VAlign = &VerticalAlign{Val: "center"}
+	case "bottom":
+		cell.Properties.VAlign = &VerticalAlign{Val: "bottom"}
+	}
+}
+
+func paragraphFromHTMLRunsWithStyle(htmlRuns []HTMLRun, style map[string]string, header bool) Paragraph {
+	para := paragraphFromHTMLRuns(htmlRuns)
+	if header {
+		for i := range para.Runs {
+			if para.Runs[i].Properties == nil {
+				para.Runs[i].Properties = &RunProperties{}
+			}
+			para.Runs[i].Properties.Bold = &Empty{}
+		}
+	}
+	if alignment := htmlTextAlignment(style["text-align"]); alignment != "" {
+		para.Properties = &ParagraphProperties{
+			Alignment: &Alignment{Val: alignment},
+		}
+	}
+	return para
+}
+
+func htmlTextAlignment(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "left", "center", "right", "both":
+		return strings.ToLower(strings.TrimSpace(value))
+	case "justify":
+		return "both"
+	default:
+		return ""
+	}
+}
+
+func ensureIntSliceLength(values []int, length int) []int {
+	for len(values) < length {
+		values = append(values, 0)
+	}
+	return values
+}
+
+func newHTMLTable(rows []TableRow, style map[string]string) *Table {
+	return newHTMLTableWithColumnCount(rows, 0, style, nil)
+}
+
+func newHTMLTableWithColumnCount(rows []TableRow, columnCount int, style map[string]string, columnWidths []int) *Table {
 	if columnCount < 1 {
 		for _, row := range rows {
 			count := 0
@@ -465,21 +745,25 @@ func newHTMLTableWithColumnCount(rows []TableRow, columnCount int) *Table {
 
 	columns := make([]GridColumn, columnCount)
 	for i := range columns {
-		columns[i] = GridColumn{Width: 2400}
+		width := htmlDefaultTableColumnWidth
+		if i < len(columnWidths) && columnWidths[i] > 0 {
+			width = columnWidths[i]
+		}
+		columns[i] = GridColumn{Width: width}
 	}
 
 	border := &BorderProperties{Val: "single", Sz: "4", Space: "0", Color: "auto"}
+	if parsedBorder, ok := parseHTMLBorder(style); ok {
+		border = parsedBorder
+	}
+	width := &Width{Type: "auto", Val: htmlDefaultTableWidth}
+	if parsedWidth, ok := parseHTMLWidth(style["width"]); ok {
+		width = parsedWidth
+	}
 	return &Table{
 		Properties: &TableProperties{
-			Width: &Width{Type: "auto", Val: 0},
-			Borders: &TableBorders{
-				Top:     border,
-				Left:    border,
-				Bottom:  border,
-				Right:   border,
-				InsideH: border,
-				InsideV: border,
-			},
+			Width:   width,
+			Borders: allTableBorders(border),
 			CellMargins: &TableCellMargins{
 				Top:    &CellMargin{Width: 80, Type: "dxa"},
 				Left:   &CellMargin{Width: 80, Type: "dxa"},

@@ -65,6 +65,93 @@ func TestHTMLFunctionTableColspan(t *testing.T) {
 	}
 }
 
+func TestHTMLFunctionTableProperties(t *testing.T) {
+	registry := GetDefaultFunctionRegistry()
+	htmlFn, _ := registry.GetFunction("html")
+
+	result, err := htmlFn.Call(`<table style="width:100%; border:2px dashed #336699;"><tr><th style="width:120px; background-color:#eeeeee;">Name</th><th style="text-align:right; width:80px;">Amount</th></tr><tr><td style="background-color:#ffeecc;">Fee</td><td style="text-align:right;">12.50</td></tr></table>`)
+	if err != nil {
+		t.Fatalf("html() returned error: %v", err)
+	}
+
+	fragment := result.(*OOXMLFragment)
+	htmlBody := fragment.Content.(*HTMLBody)
+	table := htmlBody.Elements[0].(*Table)
+
+	if table.Properties == nil || table.Properties.Width == nil {
+		t.Fatal("expected table width")
+	}
+	if table.Properties.Width.Type != "pct" || table.Properties.Width.Val != 5000 {
+		t.Fatalf("table width = %#v, want pct 5000", table.Properties.Width)
+	}
+	if table.Properties.Borders == nil || table.Properties.Borders.Top == nil {
+		t.Fatal("expected table borders")
+	}
+	if table.Properties.Borders.Top.Val != "dashed" || table.Properties.Borders.Top.Sz != "16" || table.Properties.Borders.Top.Color != "336699" {
+		t.Fatalf("top border = %#v, want dashed 16 336699", table.Properties.Borders.Top)
+	}
+	if len(table.Grid.Columns) != 2 {
+		t.Fatalf("grid columns = %d, want 2", len(table.Grid.Columns))
+	}
+	if table.Grid.Columns[0].Width != 1800 || table.Grid.Columns[1].Width != 1200 {
+		t.Fatalf("grid widths = %v, want [1800 1200]", table.Grid.Columns)
+	}
+
+	headerName := table.Rows[0].Cells[0]
+	if headerName.Properties == nil || headerName.Properties.Shading == nil {
+		t.Fatal("expected header cell shading")
+	}
+	if headerName.Properties.Shading.Fill != "EEEEEE" {
+		t.Fatalf("header shading = %q, want EEEEEE", headerName.Properties.Shading.Fill)
+	}
+	if props := headerName.Paragraphs[0].Runs[0].Properties; props == nil || props.Bold == nil {
+		t.Fatal("expected th content to be bold")
+	}
+
+	headerAmount := table.Rows[0].Cells[1]
+	if headerAmount.Paragraphs[0].Properties == nil || headerAmount.Paragraphs[0].Properties.Alignment == nil {
+		t.Fatal("expected header amount alignment")
+	}
+	if headerAmount.Paragraphs[0].Properties.Alignment.Val != "right" {
+		t.Fatalf("header alignment = %q, want right", headerAmount.Paragraphs[0].Properties.Alignment.Val)
+	}
+
+	bodyName := table.Rows[1].Cells[0]
+	if bodyName.Properties == nil || bodyName.Properties.Shading == nil || bodyName.Properties.Shading.Fill != "FFEECC" {
+		t.Fatalf("body cell shading = %#v, want FFEECC", bodyName.Properties)
+	}
+	bodyAmount := table.Rows[1].Cells[1]
+	if bodyAmount.Paragraphs[0].Properties == nil || bodyAmount.Paragraphs[0].Properties.Alignment == nil || bodyAmount.Paragraphs[0].Properties.Alignment.Val != "right" {
+		t.Fatalf("body amount paragraph properties = %#v, want right alignment", bodyAmount.Paragraphs[0].Properties)
+	}
+}
+
+func TestHTMLFunctionTableNoBorders(t *testing.T) {
+	registry := GetDefaultFunctionRegistry()
+	htmlFn, _ := registry.GetFunction("html")
+
+	result, err := htmlFn.Call(`<table style="border:none;"><tr><td style="border:0;">No border</td></tr></table>`)
+	if err != nil {
+		t.Fatalf("html() returned error: %v", err)
+	}
+
+	fragment := result.(*OOXMLFragment)
+	table := fragment.Content.(*HTMLBody).Elements[0].(*Table)
+	if table.Properties == nil || table.Properties.Borders == nil || table.Properties.Borders.Top == nil {
+		t.Fatal("expected nil table border markers")
+	}
+	if table.Properties.Borders.Top.Val != "nil" {
+		t.Fatalf("table top border = %q, want nil", table.Properties.Borders.Top.Val)
+	}
+	cell := table.Rows[0].Cells[0]
+	if cell.Properties == nil || cell.Properties.TcBorders == nil || cell.Properties.TcBorders.Top == nil {
+		t.Fatal("expected nil cell border markers")
+	}
+	if cell.Properties.TcBorders.Top.Val != "nil" {
+		t.Fatalf("cell top border = %q, want nil", cell.Properties.TcBorders.Top.Val)
+	}
+}
+
 func TestRenderBodyReplacesStandaloneHTMLTableFragment(t *testing.T) {
 	body := &Body{
 		Elements: []BodyElement{
