@@ -396,7 +396,10 @@ Hides a table column
 ```
 
 ### html
-Renders HTML content as formatted text
+Renders HTML content as formatted DOCX content. Inline HTML renders inside the
+current paragraph. Block HTML (`p`, `div`, `table`) should be placed in its own
+template paragraph and can generate multiple DOCX body elements from one
+variable.
 
 **Syntax:** `html(htmlContent)`
 
@@ -408,15 +411,38 @@ Renders HTML content as formatted text
 - `<sub>` - Subscript
 - `<sup>` - Superscript
 - `<br>` - Line break
-- `<span style="">` - Custom styling
-- `<a href="">` - Hyperlinks
-- Lists: `<ul>`, `<ol>`, `<li>`
+- `<span>` - Grouping without additional styling
+- Blocks: `<p>`, `<div>`
+- Tables: `<table>`, `<thead>`, `<tbody>`, `<tfoot>`, `<tr>`, `<td>`, `<th>`
+
+**Supported table styling:**
+- Table width: `<table style="width:100%">`
+- Cell/column width: `<td style="width:120px">`
+- Cell background: `<td style="background-color:#ffeecc">`
+- Table borders: `<table style="border:1px solid #000">`
+- No borders: `<table style="border:none">`, `<td style="border:0">`
+- Border width/color/style: `border`, `border-width`, `border-color`
+- Cell text alignment: `<td style="text-align:right">`
+- Cell vertical alignment: `<td style="vertical-align:middle">`
+- Header cells: `<th>` renders bold with a default light background unless overridden
+
+Supported width units are `%`, `px`, `pt`, and raw DOCX twips. Supported colors
+are hex values (`#rgb`, `#rrggbb`) and basic names (`black`, `white`, `red`,
+`green`, `blue`, `yellow`, `gray`/`grey`). Unsupported CSS properties are
+ignored.
 
 **Examples:**
 ```
 {{html("<b>Important:</b> Please <u>review</u> carefully")}}
 {{html("First line<br>Second line<br>Third line")}}  // Line breaks
 {{html(product.description)}}  // If description contains HTML
+{{html(tableHtml)}}  // If tableHtml contains a complete <table>...</table>
+{{html(documentHtml)}}  // Can contain text paragraphs, line breaks, and tables
+```
+
+Styled table example:
+```
+{{html("<table style=\"width:100%; border:1px solid #000\"><tr><th style=\"background-color:#eeeeee; width:70%\">Position</th><th style=\"background-color:#eeeeee; text-align:right\">Betrag</th></tr><tr><td>Gebuehr</td><td style=\"text-align:right\">10,00 EUR</td></tr></table>")}}
 ```
 
 ### xml
